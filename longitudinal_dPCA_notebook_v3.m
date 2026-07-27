@@ -273,8 +273,8 @@ for c = 1:num_conds
 end
 %% 2.0 & 2.1 Task-Specific dPCA Models
 
-%% 2.0 & 2.1 Task-Specific dPCA Models (Option A: Shared Spaces)
-disp('Building Tensors and Running Task-Specific dPCA Models...');
+%% 2.0 & 2.1 Task-Specific dPCA Models (Global + Leave-One-Subject-Out)
+disp('Building Tensors and Running Task-Specific dPCA Models (with LOSO)...');
 
 % Define the 3 Task Spaces and their participating conditions
 dpca_configs = struct();
@@ -288,66 +288,93 @@ num_comps = 10; % Number of components to extract
 
 % Extract dimensions using P1 as a reference
 [num_ch, nTime] = size(data_grand_avg.P1);
-margNames = {'Condition', 'Time', 'Cond x Time Interaction'};
 
 for m = 1:length(model_names)
     m_name = model_names{m};
     conds = dpca_configs.(m_name);
     num_c = length(conds);
+    num_subjs = size(data_subj_avg.(conds{1}), 3);
     
     fprintf('\n=== Running dPCA for %s Space ===\n', m_name);
     
-    % 1. Pre-allocate the trial-averaged dPCA Tensor
-    X_avg = zeros(num_ch, num_c, nTime);
-    
-    % 2. Populate the Tensor
+    % ==========================================================
+    % STEP 1: Compute GLOBAL Model (for general plotting & sign alignment)
+    % ==========================================================
+    X_avg_global = zeros(num_ch, num_c, nTime);
     for c = 1:num_c
         c_name = conds{c};
-        X_avg(:, c, :) = data_grand_avg.(c_name);
+        X_avg_global(:, c, :) = mean(data_subj_avg.(c_name), 3, 'omitnan');
     end
     
-    % 3. Calculate Global Mean for this specific space
-    X_flat = reshape(X_avg, num_ch, []);
-    mu = mean(X_flat, 2);
+    X_flat_global = reshape(X_avg_global, num_ch, []);
+    mu_global = mean(X_flat_global, 2);
     
-    % 4. Run dPCA (W = Decoder, V = Encoder)
-    [W, V, whichMarg] = dpca(X_avg, num_comps);
+    [W_global, V_global, whichMarg] = dpca(X_avg_global, num_comps);
     
-    % 5. Store the model weights and parameters
-    dpca_models.(m_name).W = W;
-    dpca_models.(m_name).V = V;
-    dpca_models.(m_name).mu = mu;
+    dpca_models.(m_name).W = W_global;
+    dpca_models.(m_name).V = V_global;
+    dpca_models.(m_name).mu = mu_global;
     
-    % Find dominant marginalization for labeling plots
+    % Store dominant marginalization
     dominant_marg = zeros(1, num_comps);
     for comp = 1:num_comps
         [~, dominant_marg(comp)] = max(whichMarg(:, comp));
     end
     dpca_models.(m_name).dominant_marg = dominant_marg;
     
-    % 6. Store the extracted projections (Mean and Std Dev)
-    for c = 1:num_c
-        c_name = conds{c};
+    % ==========================================================
+    % STEP 2: Compute LEAVE-ONE-SUBJECT-OUT (LOSO) Models
+    % ==========================================================
+    % Initialize struct array to hold the N-1 models
+    dpca_models.(m_name).loso = struct('W', cell(num_subjs, 1), 'V', cell(num_subjs, 1), 'mu', cell(num_subjs, 1));
+    
+    fprintf('Building LOSO Cross-Validation Models (%d Subjects)...\n', num_subjs);
+    for s = 1:num_subjs
+        X_avg_loso = zeros(num_ch, num_c, nTime);
+        other_subjs = setdiff(1:num_subjs, s); % The N-1 subjects
         
-        % Project Grand Average: W' * (Condition Data - Shared Mean)
-        dpca_models.(m_name).projections.(c_name) = W' * (data_grand_avg.(c_name) - mu);
-        
-        % --- NEW: Project individual subjects to calculate standard deviation ---
-        num_subjs = size(data_subj_avg.(c_name), 3);
-        subj_projs = zeros(num_comps, nTime, num_subjs);
-        
-        for s = 1:num_subjs
-            subj_data = data_subj_avg.(c_name)(:, :, s);
-            subj_projs(:, :, s) = W' * (subj_data - mu);
+        for c = 1:num_c
+            c_name = conds{c};
+            X_avg_loso(:, c, :) = mean(data_subj_avg.(c_name)(:, :, other_subjs), 3, 'omitnan');
         end
-        % Calculate standard deviation across the subject dimension (3)
-        dpca_models.(m_name).projections_std.(c_name) = std(subj_projs, 0, 3, 'omitnan');
+        
+        X_flat_loso = reshape(X_avg_loso, num_ch, []);
+        mu_loso = mean(X_flat_loso, 2);
+        
+        warnState = warning('off', 'all');
+        try
+            [W_loso, V_loso, ~] = dpca(X_avg_loso, num_comps, 'lambda', 0.01);
+        catch
+            [W_loso, V_loso, ~] = dpca(X_avg_loso, num_comps, 'lambda', 0.1); % Fallback
+        end
+        warning(warnState);
+        
+        % Secure padding if algorithm returns fewer than requested components
+        act_k = min(num_comps, size(W_loso, 2));
+        W_pad = zeros(num_ch, num_comps); V_pad = zeros(num_ch, num_comps);
+        W_pad(:, 1:act_k) = W_loso(:, 1:act_k); V_pad(:, 1:act_k) = V_loso(:, 1:act_k);
+        
+        % CRITICAL FIX: Sign Alignment to Global Model
+        % PCA/dPCA components can arbitrarily flip polarity between LOSO runs.
+        for pc = 1:num_comps
+            if dot(W_global(:, pc), W_pad(:, pc)) < 0
+                W_pad(:, pc) = -W_pad(:, pc);
+                V_pad(:, pc) = -V_pad(:, pc);
+            end
+        end
+        
+        % Save LOSO model for Subject 's'
+        dpca_models.(m_name).loso(s).W = W_pad;
+        dpca_models.(m_name).loso(s).V = V_pad;
+        dpca_models.(m_name).loso(s).mu = mu_loso;
     end
 end
+disp('Task-Specific & LOSO dPCA Models Complete.');
 %% 2.2 Visualizing Top 4 dPCA Components Overlaid
 
 %% 2.2 Plotting Top 4 dPCA Components (Segmented Macro-Windows)
 disp('Plotting Top 4 dPCA Components (Mean ± Std) with Segmented Windows...');
+warning('off', 'all'); % Suppress topoplot layout warnings
 
 num_comps_plot = 4;
 
@@ -361,23 +388,22 @@ color_map = struct(...
 dark_green = [0 0.5 0];
 light_green = [0.4 0.8 0.4];
 
-warning('off', 'all'); % Suppress topoplot layout warnings
-
 for m = 1:length(model_names)
     m_name = model_names{m};
     conds = dpca_configs.(m_name);
+    num_subjs = size(data_subj_avg.(conds{1}), 3);
     
     % --- Configure the Split Axes (Macro-Windows) ---
     if strcmp(m_name, 'Temp') % Temporal Uncertainty has 3 windows
         macro_windows = {
-            struct('xlim', [0.4 1.0], 'ylim', [-20 20]),
-            struct('xlim', [1.0 1.5], 'ylim', [-10 10]),
-            struct('xlim', [2.4 3.0], 'ylim', [-10 10])
+            struct('xlim', [0.4 1.0], 'ylim', [-2.5 2.5]),
+            struct('xlim', [1.0 1.5], 'ylim', [-1 1]),
+            struct('xlim', [2.4 3.0], 'ylim', [-1 1])
         };
     else % Multisensory and Stimulus Uncertainty have 2 windows
         macro_windows = {
-            struct('xlim', [0.4 1.0], 'ylim', [-20 20]),
-            struct('xlim', [1.0 1.5], 'ylim', [-10 10])
+            struct('xlim', [0.4 1.0], 'ylim', [-2.5 2.5]),
+            struct('xlim', [1.0 1.5], 'ylim', [-1 1])
         };
     end
     num_cols = length(macro_windows) + 1; % +1 for the Topoplot column
@@ -422,14 +448,34 @@ for m = 1:length(model_names)
                 if ismember(c_name, {'BLA', 'BLT', 'P1'}), l_style = '-'; l_width = 2.5;
                 else, l_style = '--'; l_width = 2.0; end
                 
-                % Extract Mean and Std Dev for this condition and window
-                comp_mean = dpca_models.(m_name).projections.(c_name)(pc, t_idx);
-                comp_std  = dpca_models.(m_name).projections_std.(c_name)(pc, t_idx);
+                % --- NEW: Extract and aggregate Subject-Level LOSO Projections ---
+                subj_projs_win = zeros(num_subjs, length(time_win));
+                for s = 1:num_subjs
+                    master_decoder = dpca_models.(m_name).loso(s).W(:, pc);
+                    mu_s           = dpca_models.(m_name).loso(s).mu;
+                    
+                    % Extract subject data for this exact window
+                    subj_data_win = data_subj_avg.(c_name)(:, t_idx, s);
+                    if ~all(isnan(subj_data_win(:)))
+                        % Project windowed data through subject's LOSO decoder
+                        subj_projs_win(s, :) = master_decoder' * (subj_data_win - mu_s);
+                    else
+                        subj_projs_win(s, :) = NaN;
+                    end
+                end
+                
+                % Calculate multi-subject mean and standard deviation for the ribbon
+                comp_mean = mean(subj_projs_win, 1, 'omitnan');
+                comp_std  = std(subj_projs_win, 0, 1, 'omitnan');
                 
                 % --- Plot Shaded Standard Deviation Ribbon ---
                 x_patch = [time_win(:)', fliplr(time_win(:)')];
                 y_patch = [comp_mean + comp_std, fliplr(comp_mean - comp_std)];
-                patch(x_patch, y_patch, clr, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                
+                % Only draw patch if we have valid non-NaN data
+                if ~all(isnan(comp_mean))
+                    patch(x_patch, y_patch, clr, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                end
                 
                 % --- Plot Solid Mean Line ---
                 p = plot(time_win, comp_mean, 'Color', clr, 'LineStyle', l_style, 'LineWidth', l_width);
@@ -441,13 +487,13 @@ for m = 1:length(model_names)
             % Add Vertical Event Lines dynamically based on the window
             if mw == 1 % 0.4s to 1.0s window
                 xline(0.5, 'k--', 'LineWidth', 2, 'HandleVisibility', 'off'); 
-                xline(1.0, '--', 'Color', dark_green, 'LineWidth', 2, 'HandleVisibility', 'off'); % Appears on the right edge
+                xline(1.0, '--', 'Color', dark_green, 'LineWidth', 2, 'HandleVisibility', 'off'); % Right edge
             elseif mw == 2 % 1.0s to 1.5s window
-                xline(1.0, '--', 'Color', dark_green, 'LineWidth', 2, 'HandleVisibility', 'off'); % Appears on the left edge
+                xline(1.0, '--', 'Color', dark_green, 'LineWidth', 2, 'HandleVisibility', 'off'); % Left edge
                 if strcmp(m_name, 'Stim')
                     xline(1.0, 'r:', 'LineWidth', 2, 'HandleVisibility', 'off'); % Missing tactile
                 end
-            elseif mw == 3 % 1.9s to 3.0s window
+            elseif mw == 3 % 2.4s to 3.0s window
                 if strcmp(m_name, 'Temp')
                     xline(2.5, '--', 'Color', light_green, 'LineWidth', 2, 'HandleVisibility', 'off');
                 end
@@ -459,15 +505,9 @@ for m = 1:length(model_names)
             xlim(mw_info.xlim);
             ylim(mw_info.ylim);
             grid on;
-            set(gca, 'FontSize', 16);
-            
-            % Only show Y-label on the first trace column
-            if mw == 1 || mw == 2 || mw == 3 
-                ylabel('Amplitude', 'FontSize', 16, 'FontWeight', 'bold');
-            else
-                yticklabels({});
-            end
-            
+            set(gca, 'FontSize', 16);                      
+            ylabel('Amplitude', 'FontSize', 16, 'FontWeight', 'bold');
+                        
             % Only show X-label on the bottom row
             if pc == num_comps_plot
                 xlabel('Time (sec)', 'FontSize', 16, 'FontWeight', 'bold');
@@ -487,10 +527,6 @@ for m = 1:length(model_names)
 end
 
 warning('on', 'all');
-disp('dPCA segment visualization complete.');
-
-warning('on', 'all');
-disp('dPCA visualization complete.');
 %% 3.0 Sliding Window dPCA (64ms window, 20ms step)
 
 %% 3.0 Sliding Window dPCA (Global Time Alignment)
@@ -865,8 +901,9 @@ for g = 1:length(plot_groups)
     end
 end
 disp('Variance visualization complete.');
-%%
 %% 3.3 Visualizing Dynamic Topoplots and Segmented Time Courses
+
+
 disp('Plotting Dynamic dPCA Topoplots with Segmented Traces...');
 warning('off', 'all');
 
@@ -1059,14 +1096,23 @@ for g = 1:length(plot_groups)
 end
 warning('on', 'all');
 disp('Segmented Dynamic dPCA visualization complete.');
-%%
-%% 5.0 Statistical Quantification: Repeated Measures ANOVA on dPCs
-disp('Running Repeated Measures ANOVA (Condition x Time Window) on dPC amplitudes...');
+%% 4.0 Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
+
+%% 4.0 Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
+disp('Running RM ANOVA and Generating Statistical Bar Charts (Normalized AUC)...');
 
 num_comps_stat = 4; % Test top 2 dPCs
 
 % Helper to guarantee MATLAB-safe table variable names
 clean_var_name = @(name) matlab.lang.makeValidName(strrep(name, '_', ''));
+get_clean_name = @(x) strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(x, ...
+    'P2_500', 'Unpred. 500'), 'P2_2000', 'Unpred. 2000'), 'P3_500', 'Rand. Cued 500'), ...
+    'P3_missing', 'Rand. Missing'), 'BLA', 'Auditory'), 'BLT', 'Tactile'), ...
+    'P1', 'Cued'), 'P2', 'Unpred.'), 'P3', 'Rand. Cued');
+
+color_map = struct('BLA', [0.6 0.6 0.6], 'BLT', [0.0 0.0 0.0], 'P1', [0.9 0.1 0.1], ...
+    'P2', [0.0 0.4 0.6], 'P2_500', [0.2 0.8 0.2], 'P2_2000', [0.0 0.4 0.0], ...
+    'P3', [0.9 0.8 0.5], 'P3_500', [1.0 0.5 0.0], 'P3_missing', [0.6 0.2 0.8]);
 
 for m = 1:length(model_names)
     m_name = model_names{m};
@@ -1075,363 +1121,497 @@ for m = 1:length(model_names)
     
     fprintf('\n======================================================\n');
     fprintf('  ANOVA RESULTS FOR SPACE: %s\n', m_name);
-    fprintf('  Conditions tested: %s\n', strjoin(conds, ', '));
     fprintf('======================================================\n');
+    
+    % --- DYNAMIC WINDOW ASSIGNMENT based on Space ---
+    if strcmp(m_name, 'MS')
+        win_bounds = [0.50 0.85; 0.85 1.00; 1.00 1.35];
+        win_labels = {'Aud. Sensory', 'Cognitive', 'Tac. Sensory'};
+    elseif strcmp(m_name, 'Temp')
+        win_bounds = [0.50 0.85; 0.85 1.00; 1.00 1.35; 1.35 2.50; 2.50 2.85];
+        win_labels = {'Aud. Sens.', 'Cog Wait 1', 'Tac1 Sens.', 'Cog Wait 2', 'Tac2 Sens.'};
+    elseif strcmp(m_name, 'Stim')
+        win_bounds = [0.50 0.85; 0.85 1.00; 1.00 1.35];
+        win_labels = {'Aud. Sensory', 'Cognitive', 'Tac. Sensory'};
+    else
+        % Fallback
+        win_bounds = [1.00 1.35; 1.35 1.50];
+        win_labels = {'Sensory', 'Cognitive'};
+    end
+    num_windows = size(win_bounds, 1);
     
     for pc = 1:num_comps_stat
         fprintf('\n--- Analyzing dPC %d ---\n', pc);
         
-        % We assume the same subjects exist across conditions in a group.
         num_subjs = length(data_all_conds.(conds{1})); 
-        anova_data = zeros(num_subjs, num_c * 2); 
-        varNames = cell(1, num_c * 2);
+        anova_data = zeros(num_subjs, num_c * num_windows); 
+        varNames = cell(1, num_c * num_windows);
+        cond_factors = cell(num_c * num_windows, 1);
+        win_factors  = cell(num_c * num_windows, 1);
         
-        cond_factors = cell(num_c * 2, 1);
-        win_factors  = cell(num_c * 2, 1);
         col_idx = 1;
-        
-        master_decoder = dpca_models.(m_name).W(:, pc);
-        mu_global = dpca_models.(m_name).mu;
-        
         for c = 1:num_c
             c_name = conds{c};
             
-            % --- Define Windows Dynamically based on the Condition Group ---
-            % We use nx2 arrays where col 1 is start time, col 2 is end time.
-            if strcmp(m_name, 'Temp')
-                win_sensory   = [0.50 0.85; 1.00 1.35; 2.50 2.85];
-                win_cognitive = [0.85 1.00; 1.35 1.50; 2.50 2.85; 2.85 3.00]; % Note: 2.50-2.85 overlaps here in your prompt, adjust if needed!
-            else
-                win_sensory   = [0.50 0.85];
-                win_cognitive = [0.85 1.00];
-            end
-            
-            % Build binary logic masks that combine all sub-windows
-            idx_sensory = false(size(time_ms_eeg));
-            for w_idx = 1:size(win_sensory, 1)
-                idx_sensory = idx_sensory | (time_ms_eeg >= win_sensory(w_idx,1) & time_ms_eeg <= win_sensory(w_idx,2));
-            end
-            
-            idx_cognitive = false(size(time_ms_eeg));
-            for w_idx = 1:size(win_cognitive, 1)
-                idx_cognitive = idx_cognitive | (time_ms_eeg >= win_cognitive(w_idx,1) & time_ms_eeg <= win_cognitive(w_idx,2));
-            end
-            
-            % Extract Data for each Subject
-            for s = 1:num_subjs
-                subj_data = mean(data_all_conds.(c_name){s}, 3, 'omitnan');
-                subj_trace = master_decoder' * (subj_data - mu_global);
+            for w = 1:num_windows
+                t_start = win_bounds(w, 1);
+                t_end = win_bounds(w, 2);
                 
-                % Take the mean across all compiled window indices
-                anova_data(s, col_idx)     = mean(subj_trace(idx_sensory));
-                anova_data(s, col_idx + 1) = mean(subj_trace(idx_cognitive));
+                for s = 1:num_subjs
+                    master_decoder = dpca_models.(m_name).loso(s).W(:, pc);
+                    mu_s           = dpca_models.(m_name).loso(s).mu;
+                    
+                    subj_data = mean(data_all_conds.(c_name){s}, 3, 'omitnan');
+                    subj_trace = master_decoder' * (subj_data - mu_s);
+                    
+                    % Calculate Absolute AUC for the specific temporal window
+                    idx = find(time_ms_eeg >= t_start & time_ms_eeg <= t_end);
+                    tot_area = 0; tot_time = 0;
+                    
+                    if length(idx) > 1
+                        t_sub = time_ms_eeg(idx); 
+                        tr_sub = abs(subj_trace(idx)); % Rectify signal
+                        valid = ~isnan(tr_sub);
+                        
+                        if sum(valid) > 1
+                            tot_area = trapz(t_sub(valid), tr_sub(valid));
+                            tot_time = t_sub(find(valid, 1, 'last')) - t_sub(find(valid, 1, 'first'));
+                        end
+                    end
+                    
+                    anova_data(s, col_idx) = tot_area / max(tot_time, eps); % Avoid div 0
+                end
+                
+                safe_c_name = clean_var_name(c_name);
+                varNames{col_idx} = sprintf('%s_W%d', safe_c_name, w);
+                cond_factors{col_idx} = c_name;
+                win_factors{col_idx} = win_labels{w};
+                
+                col_idx = col_idx + 1;
             end
-            
-            % Set up exact, MATLAB-safe Variable Names
-            safe_c_name = clean_var_name(c_name);
-            varNames{col_idx}     = sprintf('%s_Sens', safe_c_name);
-            varNames{col_idx + 1} = sprintf('%s_Cog', safe_c_name);
-            
-            cond_factors{col_idx}     = c_name;
-            cond_factors{col_idx + 1} = c_name;
-            win_factors{col_idx}      = 'Sensory';
-            win_factors{col_idx + 1}  = 'Cognitive';
-            
-            col_idx = col_idx + 2;
         end
         
-        % Build the MATLAB Tables
-        tbl = array2table(anova_data, 'VariableNames', varNames);
+        % Dynamic Missing Data Filter for RM ANOVA
+        valid_cols = ~any(isnan(anova_data), 1);
+        anova_data_bal = anova_data(:, valid_cols);
         
-        Condition = categorical(cond_factors);
-        Window    = categorical(win_factors);
+        if isempty(anova_data_bal) || size(anova_data_bal, 2) < 2
+            disp('Insufficient valid data to run ANOVA for this group.'); continue;
+        end
+        
+        % --- Build Table and Run ANOVA ---
+        tbl = array2table(anova_data_bal, 'VariableNames', varNames(valid_cols));
+        Condition = categorical(cond_factors(valid_cols)); 
+        Window = categorical(win_factors(valid_cols));
         withinTbl = table(Condition, Window);
         
-        % Run the Repeated Measures ANOVA
-        model_spec = sprintf('%s-%s ~ 1', varNames{1}, varNames{end});
+        model_spec = sprintf('%s-%s ~ 1', varNames{find(valid_cols, 1, 'first')}, varNames{find(valid_cols, 1, 'last')});
         
         try
             rm = fitrm(tbl, model_spec, 'WithinDesign', withinTbl);
             ranovatbl = ranova(rm, 'WithinModel', 'Condition*Window');
-            
             disp(ranovatbl);
             
-            % Check Interaction p-value
-            interaction_pval = ranovatbl.pValue(6);
-            if interaction_pval < 0.05
-                fprintf('*** SIGNIFICANT INTERACTION (p = %.4e): The effect of Condition changes between Sensory and Cognitive windows! ***\n', interaction_pval);
-            else
-                fprintf('--- No significant interaction (p = %.4f). The differences between conditions are stable across time. ---\n', interaction_pval);
+            rowNames = ranovatbl.Properties.RowNames;
+            
+            cond_idx = strcmp(rowNames, '(Intercept):Condition');
+            pval_cond = ranovatbl.pValue(cond_idx);
+            
+            win_idx = strcmp(rowNames, '(Intercept):Window');
+            pval_win = ranovatbl.pValue(win_idx);
+            
+            int_idx = strcmp(rowNames, '(Intercept):Condition:Window');
+            pval_int = ranovatbl.pValue(int_idx);
+            
+            % --- PLOTTING ---
+            figure('Position', [100 + (m*30), 100 + (pc*30), max(900, num_windows*210), 600], 'Name', sprintf('ANOVA: %s Space - dPC %d', m_name, pc));
+            plot_means = zeros(num_windows, num_c); 
+            plot_sems  = zeros(num_windows, num_c); 
+            legend_names = cell(1, num_c);
+            
+            % Map data correctly into the grouped bar chart array
+            for c = 1:num_c
+                for w = 1:num_windows
+                    col = (c-1)*num_windows + w;
+                    plot_means(w, c) = mean(anova_data(:, col), 'omitnan');
+                    plot_sems(w, c)  = std(anova_data(:, col), 'omitnan') / sqrt(num_subjs);
+                end
+                legend_names{c} = get_clean_name(conds{c});
             end
             
+            b = bar(plot_means, 'grouped'); hold on;
+            for c = 1:num_c
+                if isfield(color_map, conds{c}), b(c).FaceColor = color_map.(conds{c}); end
+                errorbar(b(c).XEndPoints, plot_means(:, c), plot_sems(:, c), 'k', 'linestyle', 'none', 'LineWidth', 1.5, 'CapSize', 8);
+            end
+            
+            % =====================================================================
+            % --- POST-HOC TESTS & SIGNIFICANCE BRACKETS ---
+            % =====================================================================
+            max_y_val = max(plot_means + plot_sems, [], 'all'); % Find tallest bar
+            y_offset = max_y_val * 0.08; % Dynamically scale spacing for AUC
+            bracket_drop = max_y_val * 0.02; % Dynamically scale bracket legs
+            
+            for w = 1:num_windows
+                % Compare Condition 2 (and 3) against Condition 1 (Baseline)
+                for c = 2:num_c 
+                    col_1 = (1-1)*num_windows + w; 
+                    col_c = (c-1)*num_windows + w;
+                    
+                    % --- CONTEXT-AWARE ONE-TAILED TESTS ---
+                    if strcmp(m_name, 'Stim')
+                        
+                        % If testing against Rand. Cued 500
+                        if contains(conds{c}, '500') 
+                            % Hypothesis: Cued (Bar 1) is LESS THAN Rand. Cued 500 (Bar c)
+                            [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_c), 'Tail', 'left');
+                            
+                        % If testing against Rand. Missing
+                        else
+                            % Hypothesis: No assumed direction (Two-Tailed)
+                            [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_c), 'Tail', 'both');
+                        end
+                        
+                    % For MS and Temp Spaces
+                    else % else if for Temp conditions
+                        if contains(win_labels{w}, 'Aud') || contains(win_labels{w}, 'Tac1') 
+                            [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_c), 'Tail', 'right');
+                        elseif contains(win_labels{w}, 'Tac') && ~contains(win_labels{w}, 'Tac1')
+                            [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_c), 'Tail', 'left');
+                        else
+                            [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_c), 'Tail', 'both');
+                        end
+                    end
+                    
+                    % --- DRAW BRACKETS IF SIGNIFICANT ---
+                    if p_posthoc < 0.05
+                        x1 = b(1).XEndPoints(w);
+                        xc = b(c).XEndPoints(w);
+                        
+                        % Dynamically stack heights if multiple pairs are significant
+                        y_h = max_y_val + (y_offset * (c - 0.5)); 
+                        
+                        plot([x1, x1, xc, xc], [y_h-bracket_drop, y_h, y_h, y_h-bracket_drop], '-k', 'LineWidth', 1.5);
+                        
+                        star_str = get_sig_star(p_posthoc);
+                        text(mean([x1, xc]), y_h + (y_offset * 0.2), star_str, 'HorizontalAlignment', 'center', ...
+                             'FontSize', 18, 'FontWeight', 'bold');
+                    end
+                end
+            end
+            hold off;
+            % =====================================================================
+            
+            set(gca, 'XTick', 1:num_windows, 'XTickLabel', win_labels, 'FontSize', 14);
+            if num_windows > 3, xtickangle(15); end
+            
+            % Dynamically extend Y-Limit so brackets/stars are never cut off
+            ylim([0, max_y_val + (y_offset * num_c) + y_offset]); 
+            
+            ylabel('Normalized AUC (\pm SEM)', 'FontSize', 16, 'FontWeight', 'bold');
+            title(sprintf('%s: dPC %d Amplitude (Norm. AUC)', m_name, pc), 'FontSize', 20, 'FontWeight', 'bold'); grid on;
+            legend(b, legend_names, 'Location', 'eastoutside', 'FontSize', 12);
+            
+            % Updated Annotation Box
+            % stat_str = {
+            %     'Repeated Measures ANOVA';
+            %     '-------------------------------';
+            %     sprintf('Main Effect (Condition):  p = %.4f %s', pval_cond, get_sig_star(pval_cond));
+            %     sprintf('Main Effect (Window):     p = %.4f %s', pval_win, get_sig_star(pval_win));
+            %     sprintf('Interaction (Cond x Win): p = %.4f %s', pval_int, get_sig_star(pval_int))
+            % };
+            % annotation('textbox', [0.15 0.75 0.3 0.15], 'String', stat_str, 'FitBoxToText', 'on', 'BackgroundColor', 'w', 'EdgeColor', 'k', 'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'none');
         catch ME
-            fprintf('Error running ANOVA for %s dPC %d.\n', m_name, pc);
-            disp(ME.message);
+            fprintf('Error running ANOVA for %s dPC %d.\n', m_name, pc); disp(ME.message);
         end
     end
 end
-disp('Statistical quantification complete.');
-%%
-%% 5.0 Statistical Quantification: RM ANOVA & Bar Charts on Global dPC1 Similarity
-disp('Running RM ANOVA on Subject-Level Global dPC1 Alignment...');
+%% 5.0 Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
+
+%% 5.0 Statistical Quantification: RM ANOVA & Bar Charts on Latent Trajectory Similarity
+disp('Running RM ANOVA on Latent Trajectory Cosine Similarity (LOSO)...');
 warning('off', 'all');
 
-num_comps_sim = 1; % Lock strictly to dPC1
+num_comps_sim = 4; % Loop through top 4 dPCs
 
-% Helper to guarantee MATLAB-safe table variable names
 clean_var_name = @(name) matlab.lang.makeValidName(strrep(name, '_', ''));
-
-% Intelligent naming function for legends
 get_clean_name = @(x) strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(x, ...
     'P2_500', 'Unpred. 500'), 'P2_2000', 'Unpred. 2000'), 'P3_500', 'Rand. Cued 500'), ...
     'P3_missing', 'Rand. Missing'), 'BLA', 'Auditory'), 'BLT', 'Tactile'), ...
     'P1', 'Cued'), 'P2', 'Unpred.'), 'P3', 'Rand. Cued');
 
-% Shared Color Map
-color_map = struct(...
-    'BLA', [0.6 0.6 0.6], 'BLT', [0.0 0.0 0.0], 'P1',  [0.9 0.1 0.1], ...
+color_map = struct('BLA', [0.6 0.6 0.6], 'BLT', [0.0 0.0 0.0], 'P1', [0.9 0.1 0.1], ...
     'P2', [0.0 0.4 0.6], 'P2_500', [0.2 0.8 0.2], 'P2_2000', [0.0 0.4 0.0], ...
-    'P3', [0.9 0.8 0.5], 'P3_500', [1.0 0.5 0.0], 'P3_missing', [0.6 0.2 0.8] ...
-);
+    'P3', [0.9 0.8 0.5], 'P3_500', [1.0 0.5 0.0], 'P3_missing', [0.6 0.2 0.8]);
 
-% Define Groups, Pairs, and Exact Windows
 stat_groups = {
-    {'MS', {'P1', 'BLA'; 'P1', 'BLT'}, ...
-     [0.50 0.85; 0.85 1.00; 1.00 1.35], ...
-     {'Aud. Sensory', 'Cognitive', 'Tac. Sensory'}}, ...
-     
-    {'Temp', {'P2', 'P1'; 'P2_500', 'P1'; 'P2_2000', 'P1'}, ...
-     [0.50 0.85; 0.85 1.00; 1.00 1.35; 1.35 2.50; 2.50 2.85], ...
-     {'Aud. Sens.', 'Cog Wait 1', 'Tac1 Sens.', 'Cog Wait 2', 'Tac2 Sens.'}}, ...
-     
-    {'Stim', {'P3', 'P1'; 'P3_500', 'P1'; 'P3_missing', 'P1'}, ...
-     [0.50 0.85; 0.85 1.00; 1.00 1.35], ...
-     {'Aud. Sensory', 'Cognitive', 'Tac. Sensory'}}
-};
+    {'MS', {'P1', 'BLA'; 'P1', 'BLT'}, [0.50 0.85; 0.85 1.00; 1.00 1.35], {'Aud. Sensory', 'Cognitive', 'Tac. Sensory'}}, ...
+    {'Temp', {'P2_500', 'P1'; 'P2_2000', 'P1'}, [0.50 0.85; 0.85 1.00; 1.00 1.35; 1.35 2.50; 2.50 2.85], {'Aud. Sens.', 'Cog Wait 1', 'Tac1 Sens.', 'Cog Wait 2', 'Tac2 Sens.'}}, ...
+    {'Stim', {'P3_500', 'P1'; 'P3_missing', 'P1'}, [0.50 0.85; 0.85 1.00; 1.00 1.35], {'Aud. Sensory', 'Cognitive', 'Tac. Sensory'}}
+}; 
 
 for g = 1:length(stat_groups)
-    m_name     = stat_groups{g}{1};
-    pairs      = stat_groups{g}{2};
-    win_bounds = stat_groups{g}{3};
-    win_labels = stat_groups{g}{4};
+    m_name = stat_groups{g}{1}; pairs = stat_groups{g}{2};
+    win_bounds = stat_groups{g}{3}; win_labels = stat_groups{g}{4};
     
-    num_pairs   = size(pairs, 1);
-    num_windows = size(win_bounds, 1);
-    num_subjs   = length(data_all_conds.(pairs{1,1}));
+    num_pairs = size(pairs, 1); num_windows = size(win_bounds, 1);
+    num_subjs = length(data_all_conds.(pairs{1,1}));
     
-    fprintf('\n======================================================\n');
-    fprintf('  ANOVA RESULTS FOR SPACE: %s (dPC1)\n', m_name);
-    fprintf('======================================================\n');
-    
-    anova_data   = nan(num_subjs, num_pairs * num_windows); 
-    varNames     = cell(1, num_pairs * num_windows);
-    pair_factors = cell(num_pairs * num_windows, 1);
-    win_factors  = cell(num_pairs * num_windows, 1);
-    
-    % --- THE FIX: Use the exact Global dPCA Encoder & Decoder ---
-    master_V  = dpca_models.(m_name).V(:, num_comps_sim); % Encoder (Spatial Topo)
-    master_W  = dpca_models.(m_name).W(:, num_comps_sim); % Decoder (Temporal Trace)
-    mu_global = dpca_models.(m_name).mu;
-    
-    col_idx = 1;
-    
-    for p = 1:num_pairs
-        cond_A = pairs{p, 1}; cond_B = pairs{p, 2};
+    % --- NEW: Loop through the Principal Components ---
+    for pc = 1:num_comps_sim
+        fprintf('\n======================================================\n');
+        fprintf('  ANOVA RESULTS FOR SPACE: %s (dPC%d Trajectories)\n', m_name, pc);
+        fprintf('======================================================\n');
+        
+        anova_data = nan(num_subjs, num_pairs * num_windows); 
+        varNames = cell(1, num_pairs * num_windows);
+        pair_factors = cell(num_pairs * num_windows, 1); win_factors = cell(num_pairs * num_windows, 1);
+        
+        col_idx = 1;
+        for p = 1:num_pairs
+            cond_A = pairs{p, 1}; cond_B = pairs{p, 2};
+            for w = 1:num_windows
+                t_start = win_bounds(w, 1); t_end = win_bounds(w, 2);
+                idx_win = find(time_ms_eeg >= t_start & time_ms_eeg <= t_end);
+                
+                for s = 1:num_subjs
+                    % --- NEW: Extract clean 1D trajectory for the CURRENT component (pc) ---
+                    master_W = dpca_models.(m_name).loso(s).W(:, pc);
+                    mu_s     = dpca_models.(m_name).loso(s).mu;
+                    
+                    data_A = mean(data_all_conds.(cond_A){s}, 3, 'omitnan');
+                    data_B = mean(data_all_conds.(cond_B){s}, 3, 'omitnan');
+                    
+                    % Check for early condition termination
+                    if all(isnan(data_A(1, idx_win))) || all(isnan(data_B(1, idx_win))), continue; end
+                    
+                    % Project raw data through LOSO manifold
+                    proj_A = master_W' * (data_A - mu_s);
+                    proj_B = master_W' * (data_B - mu_s);
+                    
+                    % Extract targeted window vector
+                    x = proj_A(idx_win);
+                    y = proj_B(idx_win);
+                    
+                    valid = ~isnan(x) & ~isnan(y);
+                    if sum(valid) > 1
+                        x_v = x(valid); y_v = y(valid);
+                        % Real 1D Vector Cosine Similarity
+                        anova_data(s, col_idx) = dot(x_v, y_v) / (norm(x_v) * norm(y_v));
+                    end
+                end
+                varNames{col_idx} = clean_var_name(sprintf('P%d_W%d', p, w));
+                pair_factors{col_idx} = sprintf('%s vs %s', get_clean_name(cond_A), get_clean_name(cond_B));
+                win_factors{col_idx} = win_labels{w};
+                col_idx = col_idx + 1;
+            end
+        end
+        
+        % Dynamic Missing Data Filter for RM ANOVA
+        valid_cols = ~any(isnan(anova_data), 1);
+        anova_data_bal = anova_data(:, valid_cols);
+        
+        if isempty(anova_data_bal) || size(anova_data_bal, 2) < 2
+            disp('Insufficient valid data to run ANOVA for this group.'); continue;
+        end
+        
+        % --- Build Table and Run ANOVA ---
+        tbl = array2table(anova_data_bal, 'VariableNames', varNames(valid_cols));
+        Pair = categorical(pair_factors(valid_cols)); Window = categorical(win_factors(valid_cols));
+        withinTbl = table(Pair, Window);
+        model_spec = sprintf('%s-%s ~ 1', varNames{find(valid_cols, 1, 'first')}, varNames{find(valid_cols, 1, 'last')});
+        
+        try
+            rm = fitrm(tbl, model_spec, 'WithinDesign', withinTbl);
+            ranovatbl = ranova(rm, 'WithinModel', 'Pair*Window'); 
+            disp(ranovatbl);
+            
+            % Extract p-values by Exact Row Name
+            rn = ranovatbl.Properties.RowNames;
+            
+            pair_idx = strcmp(rn, '(Intercept):Pair');
+            pval_pair = ranovatbl.pValue(pair_idx);
+            
+            win_idx = strcmp(rn, '(Intercept):Window');
+            pval_win = ranovatbl.pValue(win_idx);
+            
+            int_idx = strcmp(rn, '(Intercept):Pair:Window');
+            pval_int = ranovatbl.pValue(int_idx);
+            
+        catch ME
+            fprintf('Error running ANOVA for %s Space.\n', m_name); disp(ME.message);
+            pval_pair = NaN; pval_win = NaN; pval_int = NaN;
+        end
+        
+        % --- CREATE BAR CHART FIGURE ---
+        % Notice figure position is offset by 'pc' so windows don't perfectly overlap
+        figure('Position', [100 + (g*30), 100 + (pc*30), max(900, num_windows*250), 600], ...
+               'Name', sprintf('ANOVA: %s Trajectory Similarity - dPC%d', m_name, pc));
+               
+        plot_means = zeros(num_windows, num_pairs); 
+        plot_sems  = zeros(num_windows, num_pairs); 
+        legend_names = cell(1, num_pairs);
+        
+        for p = 1:num_pairs
+            for w = 1:num_windows
+                col = (p-1)*num_windows + w;
+                plot_means(w, p) = mean(anova_data(:, col), 'omitnan');
+                plot_sems(w, p)  = std(anova_data(:, col), 'omitnan') / sqrt(num_subjs);
+            end
+            legend_names{p} = sprintf('%s vs %s', get_clean_name(pairs{p,1}), get_clean_name(pairs{p,2}));
+        end
+        
+        b = bar(plot_means, 'grouped'); hold on;
+        for p = 1:num_pairs
+            t_cond = pairs{p, 1}; if strcmp(t_cond, 'P1'), t_cond = pairs{p, 2}; end 
+            if isfield(color_map, t_cond), b(p).FaceColor = color_map.(t_cond); end
+            errorbar(b(p).XEndPoints, plot_means(:, p), plot_sems(:, p), 'k', 'linestyle', 'none', 'LineWidth', 1.5, 'CapSize', 8);
+        end
+        
+        % =====================================================================
+        % --- POST-HOC TESTS & SIGNIFICANCE BRACKETS ---
+        % =====================================================================
+        max_y_val = max(plot_means + plot_sems, [], 'all'); % Find tallest bar
         
         for w = 1:num_windows
-            t_start = win_bounds(w, 1); t_end = win_bounds(w, 2);
-            idx_win = time_ms_eeg >= t_start & time_ms_eeg <= t_end;
-            
-            for s = 1:num_subjs
-                data_A = mean(data_all_conds.(cond_A){s}(:, idx_win, :), 3, 'omitnan');
-                data_B = mean(data_all_conds.(cond_B){s}(:, idx_win, :), 3, 'omitnan');
+            for p = 2:num_pairs 
+                col_1 = (1-1)*num_windows + w; 
+                col_p = (p-1)*num_windows + w;
                 
-                if isempty(data_A) || isempty(data_B) || size(data_A,2) < 2
-                    continue; 
+                % --- CONTEXT-AWARE ONE-TAILED TESTS ---
+                
+                % If we are in the Stimulus Uncertainty Space (Testing the 'Missing' Condition)
+                if strcmp(m_name, 'Stim')
+                    % In the Stim space, the 'missing' condition (Pair 2) should always 
+                    % have LOWER similarity than the true stimulus condition (Pair 1). 
+                    % Therefore, Pair 1 > Pair 2 (Right Tail).
+                    [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_p), 'Tail', 'right');
+                
+                % For MS and Temp Spaces
+                else
+                    % 1. Auditory Windows (and Tac1 which acts like a baseline here)
+                    if contains(win_labels{w}, 'Aud') || contains(win_labels{w}, 'Tac1') 
+                        [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_p), 'Tail', 'right');
+                        
+                    % 2. Tactile Windows (Catches 'Tac. Sensory', 'Tac2 Sens.', 'Tactile')
+                    elseif contains(win_labels{w}, 'Tac') && ~contains(win_labels{w}, 'Tac1')
+                        [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_p), 'Tail', 'left');
+                    
+                    % 3. Cognitive / Wait Windows
+                    else
+                        [~, p_posthoc] = ttest(anova_data(:, col_1), anova_data(:, col_p), 'Tail', 'both');
+                    end
                 end
                 
-                % Mean center the local window
-                data_A = data_A - mean(data_A, 2);
-                data_B = data_B - mean(data_B, 2);
-                
-                % 1. Extract subject's local principal component for this window
-                [U_A, ~, ~] = svd(data_A * data_A'); wA_s = U_A(:, 1);
-                [U_B, ~, ~] = svd(data_B * data_B'); wB_s = U_B(:, 1);
-                
-                % 2. Align local component sign with Global dPC1 to prevent arbitrary flips
-                if dot(wA_s, master_V) < 0, wA_s = -wA_s; end
-                if dot(wB_s, master_V) < 0, wB_s = -wB_s; end
-                
-                % 3. Project the topographies through the Global Decoder
-                % This forces the similarity metric to weight channels EXACTLY as the line plots did
-                proj_A = master_W' * wA_s;
-                proj_B = master_W' * wB_s;
-                
-                % 4. Cosine similarity of the projected states
-                sim_val = abs(dot(proj_A, proj_B) / (norm(proj_A) * norm(proj_B)));
-                
-                % Safety catch for flatlines causing NaN
-                if ~isnan(sim_val)
-                     anova_data(s, col_idx) = sim_val;
+                % --- DRAW BRACKETS IF SIGNIFICANT ---
+                if p_posthoc < 0.05
+                    x1 = b(1).XEndPoints(w);
+                    xp = b(p).XEndPoints(w);
+                    
+                    % Dynamically stack heights if multiple pairs are significant
+                    y_h = max_y_val + (0.1 * p); 
+                    
+                    plot([x1, x1, xp, xp], [y_h-0.03, y_h, y_h, y_h-0.03], '-k', 'LineWidth', 1.5);
+                    
+                    star_str = get_sig_star(p_posthoc);
+                    text(mean([x1, xp]), y_h + 0.02, star_str, 'HorizontalAlignment', 'center', ...
+                         'FontSize', 18, 'FontWeight', 'bold');
                 end
             end
-            
-            varNames{col_idx}     = clean_var_name(sprintf('P%d_W%d', p, w));
-            pair_factors{col_idx} = sprintf('%s vs %s', get_clean_name(cond_A), get_clean_name(cond_B));
-            win_factors{col_idx}  = win_labels{w};
-            
-            col_idx = col_idx + 1;
         end
-    end
-    
-    % Dynamic Missing Data Filter for RM ANOVA
-    valid_cols = ~any(isnan(anova_data), 1);
-    anova_data_bal = anova_data(:, valid_cols);
-    
-    if isempty(anova_data_bal) || size(anova_data_bal, 2) < 2
-        disp('Insufficient valid data to run ANOVA for this group.');
-        continue;
-    end
-    
-    tbl = array2table(anova_data_bal, 'VariableNames', varNames(valid_cols));
-    Pair = categorical(pair_factors(valid_cols));
-    Window = categorical(win_factors(valid_cols));
-    withinTbl = table(Pair, Window);
-    
-    model_spec = sprintf('%s-%s ~ 1', varNames{find(valid_cols, 1, 'first')}, varNames{find(valid_cols, 1, 'last')});
-    
-    try
-        rm = fitrm(tbl, model_spec, 'WithinDesign', withinTbl);
-        ranovatbl = ranova(rm, 'WithinModel', 'Pair*Window');
-        disp(ranovatbl);
+        hold off;
+        % =====================================================================
+
+        set(gca, 'XTick', 1:num_windows, 'XTickLabel', win_labels, 'FontSize', 14);
+        if num_windows > 3, xtickangle(15); end 
         
-        rn = ranovatbl.Properties.RowNames;
-        pval_pair = ranovatbl.pValue(strcmp(rn, 'Pair'));
-        pval_win  = ranovatbl.pValue(strcmp(rn, 'Window'));
-        pval_int  = ranovatbl.pValue(strcmp(rn, 'Pair:Window'));
-    catch ME
-        fprintf('Error running ANOVA for %s Space.\n', m_name);
-        disp(ME.message);
-        pval_pair = NaN; pval_win = NaN; pval_int = NaN;
-    end
-    
-    % --- CREATE BAR CHART FIGURE ---
-    figure('Position', [100 + (g*30), 100 + (g*30), max(900, num_windows*250), 600], ...
-           'Name', sprintf('ANOVA: %s Global dPC1 Alignment', m_name));
-           
-    plot_means = zeros(num_windows, num_pairs);
-    plot_sems  = zeros(num_windows, num_pairs);
-    legend_names = cell(1, num_pairs);
-    
-    for p = 1:num_pairs
-        for w = 1:num_windows
-            col = (p-1)*num_windows + w;
-            plot_means(w, p) = mean(anova_data(:, col), 'omitnan');
-            plot_sems(w, p)  = std(anova_data(:, col), 'omitnan') / sqrt(num_subjs);
-        end
-        legend_names{p} = sprintf('%s vs %s', get_clean_name(pairs{p,1}), get_clean_name(pairs{p,2}));
-    end
-    
-    b = bar(plot_means, 'grouped');
-    hold on;
-    
-    for p = 1:num_pairs
-        cond_A = pairs{p, 1}; cond_B = pairs{p, 2};
-        t_cond = cond_A;
-        if strcmp(t_cond, 'P1'), t_cond = cond_B; end 
+        ylim([-0.2, max_y_val + 0.4]); 
+        ylabel('Trajectory Cosine Similarity (\pm SEM)', 'FontSize', 16, 'FontWeight', 'bold');
         
-        if isfield(color_map, t_cond)
-            b(p).FaceColor = color_map.(t_cond);
-        end
-        
-        x_pos = b(p).XEndPoints; 
-        errorbar(x_pos, plot_means(:, p), plot_sems(:, p), 'k', ...
-                 'linestyle', 'none', 'LineWidth', 1.5, 'CapSize', 8);
+        title({sprintf('%s Space: dPC%d Trajectory Alignment', m_name, pc), ...
+               sprintf('(ANOVA Interaction: p = %.4f %s)', pval_int, get_sig_star(pval_int))}, ...
+               'FontSize', 18, 'FontWeight', 'bold'); 
+               
+        grid on;
+        legend(b, legend_names, 'Location', 'southwest', 'FontSize', 12);
     end
-    hold off;
-    
-    % Formatting Axes
-    set(gca, 'XTick', 1:num_windows, 'XTickLabel', win_labels, 'FontSize', 12);
-    if num_windows > 3, xtickangle(15); end 
-    
-    ylim([0 1.1]);
-    ylabel('Global dPC1 Alignment (Mean \pm SEM)', 'FontSize', 16, 'FontWeight', 'bold');
-    title(sprintf('%s Space: dPC1 Network Alignment', m_name), 'FontSize', 20, 'FontWeight', 'bold');
-    grid on;
-    legend(b, legend_names, 'Location', 'southeast', 'FontSize', 12);
-    
-    % Statistical Annotation Box
-    stat_str = {
-        'Repeated Measures ANOVA',
-        '(Calculated on Shared Time Windows)',
-        '---------------------------------------',
-        sprintf('Pair Effect:       p = %.4f %s', pval_pair, get_sig_star(pval_pair)),
-        sprintf('Window Effect:     p = %.4f %s', pval_win, get_sig_star(pval_win)),
-        sprintf('Interaction (PxW): p = %.4f %s', pval_int, get_sig_star(pval_int))
-    };
-    
-    annotation('textbox', [0.13 0.23 0.3 0.15], 'String', stat_str, ...
-        'FitBoxToText', 'on', 'BackgroundColor', 'w', 'EdgeColor', 'k', ...
-        'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'none');
 end
 
-warning('on', 'all');
 disp('Statistical quantification & Bar Charts complete.');
 
-% Helper function
+% --- HELPER FUNCTION (Place at very end of script if not already there) ---
 function star = get_sig_star(p)
-    if isnan(p), star = '';
-    elseif p < 0.001, star = '***';
-    elseif p < 0.01, star = '**';
-    elseif p < 0.05, star = '*';
-    else, star = '(n.s.)';
+    if isnan(p), star = ''; 
+    elseif p < 0.001, star = '***'; 
+    elseif p < 0.01, star = '**'; 
+    elseif p < 0.05, star = '*'; 
+    else, star = '(n.s.)'; 
     end
 end
-%%
-%% 6.0 False Positive Validation: Permutation Test (Trial Shuffling)
-disp('Running False Positive Permutation Test (Trial Label Shuffling)...');
+%% 6.0 False Positive Validation: Permutation Test (Latent Trajectories)
+
+disp('Running False Positive Permutation Test (Latent Trajectory Shuffling)...');
 warning('off', 'all');
 
+% --- HELPER: Clean Names for Plotting ---
+get_clean_name = @(x) strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(x, ...
+    'P2_500', 'Unpred. 500'), 'P2_2000', 'Unpred. 2000'), 'P3_500', 'Rand. Cued 500'), ...
+    'P3_missing', 'Rand. Missing'), 'BLA', 'Auditory'), 'BLT', 'Tactile'), ...
+    'P1', 'Cued'), 'P2', 'Unpred.'), 'P3', 'Rand. Cued');
+
 % --- Test Parameters ---
-cond_A = 'P1';
-cond_B = 'BLA';
+cond_A = 'BLA';
+cond_B = 'P1';
 m_name = 'MS';               % Which dPCA space to use (MS, Temp, Stim)
 test_window = [1.00, 1.35];  % The exact time window to test
-n_perms = 500;               % Number of shuffles (500-1000 is standard)
+n_perms = 5000;              % Increased to 5000 for smooth, reliable p-values
 num_comps_sim = 1;           % Test dPC1
 
 num_subjs = length(data_all_conds.(cond_A));
-idx_win = time_ms_eeg >= test_window(1) & time_ms_eeg <= test_window(2);
+idx_win = find(time_ms_eeg >= test_window(1) & time_ms_eeg <= test_window(2));
 
-% Extract Global Decoder properties
-master_V  = dpca_models.(m_name).V(:, num_comps_sim);
-master_W  = dpca_models.(m_name).W(:, num_comps_sim);
-mu_global = dpca_models.(m_name).mu;
-
-% Array to hold results
+% Arrays to hold results
 null_distribution_means = zeros(n_perms, 1);
 true_sim_subj = zeros(num_subjs, 1);
 
-fprintf('Testing %s vs %s in window [%.2f - %.2fs]\n', cond_A, cond_B, test_window(1), test_window(2));
-fprintf('Running %d permutations. This may take a minute...\n', n_perms);
+% Apply clean names to console output
+clean_A = get_clean_name(cond_A);
+clean_B = get_clean_name(cond_B);
 
-%% 1. Calculate the TRUE Similarity (The Baseline)
+fprintf('Testing %s vs %s in window [%.2f - %.2fs]\n', clean_A, clean_B, test_window(1), test_window(2));
+fprintf('Running %d permutations. This will take a moment...\n', n_perms);
+
+%% 1. Calculate the TRUE Trajectory Similarity (The Baseline)
 for s = 1:num_subjs
-    data_A = mean(data_all_conds.(cond_A){s}(:, idx_win, :), 3, 'omitnan');
-    data_B = mean(data_all_conds.(cond_B){s}(:, idx_win, :), 3, 'omitnan');
+    % Extract LOSO decoder and mean for this specific subject
+    master_W = dpca_models.(m_name).loso(s).W(:, num_comps_sim);
+    mu_s     = dpca_models.(m_name).loso(s).mu;
     
-    if isempty(data_A) || isempty(data_B) || size(data_A,2) < 2, continue; end
+    % Average true trials
+    data_A = mean(data_all_conds.(cond_A){s}, 3, 'omitnan');
+    data_B = mean(data_all_conds.(cond_B){s}, 3, 'omitnan');
     
-    data_A = data_A - mean(data_A, 2); data_B = data_B - mean(data_B, 2);
+    if isempty(data_A) || isempty(data_B), continue; end
     
-    [U_A, ~, ~] = svd(data_A * data_A'); wA_s = U_A(:, 1);
-    [U_B, ~, ~] = svd(data_B * data_B'); wB_s = U_B(:, 1);
+    % Project into shared LOSO space
+    proj_A = master_W' * (data_A - mu_s);
+    proj_B = master_W' * (data_B - mu_s);
     
-    if dot(wA_s, master_V) < 0, wA_s = -wA_s; end
-    if dot(wB_s, master_V) < 0, wB_s = -wB_s; end
+    % Extract window trajectories
+    traj_A = proj_A(idx_win);
+    traj_B = proj_B(idx_win);
     
-    proj_A = master_W' * wA_s; proj_B = master_W' * wB_s;
-    true_sim_subj(s) = abs(dot(proj_A, proj_B) / (norm(proj_A) * norm(proj_B)));
+    % Remove NaNs (in case a condition drops out early)
+    valid = ~isnan(traj_A) & ~isnan(traj_B);
+    traj_A = traj_A(valid);
+    traj_B = traj_B(valid);
+    
+    % TRUE Cosine Similarity of 1D Trajectories
+    if length(traj_A) > 1
+        true_sim_subj(s) = dot(traj_A, traj_B) / (norm(traj_A) * norm(traj_B));
+    else
+        true_sim_subj(s) = NaN;
+    end
 end
 true_mean_sim = mean(true_sim_subj, 'omitnan');
 
@@ -1440,296 +1620,171 @@ for p = 1:n_perms
     null_sim_subj = zeros(num_subjs, 1);
     
     for s = 1:num_subjs
-        % Extract single trials for this subject within the window
-        trials_A = data_all_conds.(cond_A){s}(:, idx_win, :);
-        trials_B = data_all_conds.(cond_B){s}(:, idx_win, :);
+        master_W = dpca_models.(m_name).loso(s).W(:, num_comps_sim);
+        mu_s     = dpca_models.(m_name).loso(s).mu;
+        
+        % Extract single trials
+        trials_A = data_all_conds.(cond_A){s};
+        trials_B = data_all_conds.(cond_B){s};
         
         nA = size(trials_A, 3);
         nB = size(trials_B, 3);
         
-        % Pool all trials together
+        % Pool all trials together and Shuffle
         all_trials = cat(3, trials_A, trials_B);
         total_trials = nA + nB;
-        
-        % SHUFFLE: Randomly mix the trials
         shuffled_idx = randperm(total_trials);
-        pseudo_A_trials = all_trials(:, :, shuffled_idx(1:nA));
-        pseudo_B_trials = all_trials(:, :, shuffled_idx(nA+1:end));
         
-        % Calculate new "Pseudo-Averages"
-        data_pseudo_A = mean(pseudo_A_trials, 3, 'omitnan');
-        data_pseudo_B = mean(pseudo_B_trials, 3, 'omitnan');
+        % Calculate "Pseudo-Averages"
+        pseudo_A = mean(all_trials(:, :, shuffled_idx(1:nA)), 3, 'omitnan');
+        pseudo_B = mean(all_trials(:, :, shuffled_idx(nA+1:end)), 3, 'omitnan');
         
-        % Run the exact same SVD & Projection logic
-        data_pseudo_A = data_pseudo_A - mean(data_pseudo_A, 2);
-        data_pseudo_B = data_pseudo_B - mean(data_pseudo_B, 2);
+        % Project into the EXACT same fixed dPCA space
+        proj_pA = master_W' * (pseudo_A - mu_s);
+        proj_pB = master_W' * (pseudo_B - mu_s);
         
-        [U_pA, ~, ~] = svd(data_pseudo_A * data_pseudo_A'); wpA_s = U_pA(:, 1);
-        [U_pB, ~, ~] = svd(data_pseudo_B * data_pseudo_B'); wpB_s = U_pB(:, 1);
+        traj_pA = proj_pA(idx_win);
+        traj_pB = proj_pB(idx_win);
         
-        if dot(wpA_s, master_V) < 0, wpA_s = -wpA_s; end
-        if dot(wpB_s, master_V) < 0, wpB_s = -wpB_s; end
+        valid = ~isnan(traj_pA) & ~isnan(traj_pB);
+        traj_pA = traj_pA(valid);
+        traj_pB = traj_pB(valid);
         
-        proj_pA = master_W' * wpA_s; proj_pB = master_W' * wpB_s;
-        null_sim_subj(s) = abs(dot(proj_pA, proj_pB) / (norm(proj_pA) * norm(proj_pB)));
+        % NULL Cosine Similarity
+        if length(traj_pA) > 1
+            null_sim_subj(s) = dot(traj_pA, traj_pB) / (norm(traj_pA) * norm(traj_pB));
+        else
+            null_sim_subj(s) = NaN;
+        end
     end
-    
     % Store the mean pseudo-similarity for this permutation
     null_distribution_means(p) = mean(null_sim_subj, 'omitnan');
 end
 
-%% 3. Calculate P-Value and Plot Histogram
-% P-value: What proportion of the null distribution is LESS than or equal to our true similarity?
-% Because we are testing if the networks are significantly DIFFERENT (lower similarity),
-% we look at the lower tail.
 %% 3. Calculate Two-Tailed P-Value and Plot Histogram
-% Calculate the center of the null distribution
+% Center of the null distribution
 null_mean = mean(null_distribution_means, 'omitnan');
 
-% Calculate the absolute distance of the True Value from the Null Mean
+% Absolute distances from the center
 true_distance = abs(true_mean_sim - null_mean);
-
-% Calculate the absolute distance of every Null Value from the Null Mean
 null_distances = abs(null_distribution_means - null_mean);
 
-% Two-Tailed P-value: What proportion of the null distribution is FURTHER from the center than our true similarity?
+% TWO-TAILED P-VALUE: How many shuffled sims were further from the center?
 p_value = sum(null_distances >= true_distance) / n_perms;
 
-% Safety catch for exact 0
 if p_value == 0
     p_str = sprintf('p < %.4f', 1/n_perms);
 else
     p_str = sprintf('p = %.4f', p_value);
 end
 
+% --- PLOTTING ---
 figure('Position', [200, 200, 800, 500], 'Name', 'Permutation Test');
 hold on;
 
 % Plot the Null Distribution
-h = histogram(null_distribution_means, 30, 'Normalization', 'pdf', ...
-    'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'w', 'FaceAlpha', 0.8);
+histogram(null_distribution_means, 50, 'Normalization', 'pdf', ...
+    'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none', 'FaceAlpha', 0.8);
 
-% Plot the True Value
 y_lims = ylim;
+% Plot the True Value
 line([true_mean_sim, true_mean_sim], y_lims, 'Color', 'r', 'LineWidth', 3, 'LineStyle', '--');
 
-% Calculate the 95% Confidence Bounds (Noise Ceiling)
-ci_lower = prctile(null_distribution_means, 5);
-ci_upper = prctile(null_distribution_means, 95);
+% Calculate the 95% Confidence Bounds (Using 2.5 and 97.5)
+ci_lower = prctile(null_distribution_means, 2.5);
+ci_upper = prctile(null_distribution_means, 97.5);
 patch([ci_lower, ci_upper, ci_upper, ci_lower], [y_lims(1) y_lims(1) y_lims(2) y_lims(2)], ...
-    'g', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'DisplayName', '95% Noise Ceiling');
+    'g', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'DisplayName', '95% CI (Noise Ceiling)');
 
 hold off;
-title(sprintf('Permutation Test: %s vs %s (%.2f - %.2fs)', cond_A, cond_B, test_window(1), test_window(2)), ...
+
+% Apply clean names to the plot title
+title(sprintf('Permutation Test: %s vs %s (%.2f - %.2fs)', clean_A, clean_B, test_window(1), test_window(2)), ...
     'FontSize', 18, 'FontWeight', 'bold');
-xlabel('Spatial Cosine Similarity', 'FontSize', 14, 'FontWeight', 'bold');
+xlabel('Trajectory Cosine Similarity', 'FontSize', 14, 'FontWeight', 'bold');
 ylabel('Density', 'FontSize', 14, 'FontWeight', 'bold');
 grid on; set(gca, 'FontSize', 12);
 
 legend({'Null Distribution (Shuffled Trials)', sprintf('True Similarity = %.3f', true_mean_sim), ...
-    '95% Identical Boundary'}, 'Location', 'northwest');
+    '95% Confidence Interval'}, 'Location', 'northwest');
+
 % Annotation Box
 stat_str = {
-    'Permutation Test Results',
+    'Permutation Test Results (Two-Tailed)',
     '---------------------------------',
     sprintf('Permutations (N): %d', n_perms),
-    sprintf('Null Mean (Noise Ceiling): %.3f', mean(null_distribution_means)),
-    sprintf('Empirical p-value: %s', p_str) % <-- Updated line
+    sprintf('Null Mean: %.3f', null_mean),
+    sprintf('Empirical p-value: %s', p_str)
 };
-annotation('textbox', [0.65 0.65 0.25 0.15], 'String', stat_str, ...
+annotation('textbox', [0.60 0.65 0.28 0.15], 'String', stat_str, ...
     'FitBoxToText', 'on', 'BackgroundColor', 'w', 'EdgeColor', 'k', ...
     'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'none');
 
 disp('Permutation test complete.');
 %% 6.1: Temporal Uncertainty
 
-disp('Running False Positive Permutation Test (Trial Label Shuffling)...');
+disp('Running False Positive Permutation Test (Latent Trajectory Shuffling)...');
 warning('off', 'all');
 
+% --- HELPER: Clean Names for Plotting ---
+get_clean_name = @(x) strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(x, ...
+    'P2_500', 'Unpred. 500'), 'P2_2000', 'Unpred. 2000'), 'P3_500', 'Rand. Cued 500'), ...
+    'P3_missing', 'Rand. Missing'), 'BLA', 'Auditory'), 'BLT', 'Tactile'), ...
+    'P1', 'Cued'), 'P2', 'Unpred.'), 'P3', 'Rand. Cued');
+
 % --- Test Parameters ---
-cond_A = 'P1';
+cond_A = 'P2_500';
 cond_B = 'P2_2000';
-m_name = 'Temp';               % Which dPCA space to use (MS, Temp, Stim)
-test_window = [1.00, 2.85];  % The exact time window to test
-n_perms = 500;               % Number of shuffles (500-1000 is standard)
-num_comps_sim = 4;           % Test dPC1
-
-num_subjs = length(data_all_conds.(cond_A));
-idx_win = time_ms_eeg >= test_window(1) & time_ms_eeg <= test_window(2);
-
-% Extract Global Decoder properties
-master_V  = dpca_models.(m_name).V(:, num_comps_sim);
-master_W  = dpca_models.(m_name).W(:, num_comps_sim);
-mu_global = dpca_models.(m_name).mu;
-
-% Array to hold results
-null_distribution_means = zeros(n_perms, 1);
-true_sim_subj = zeros(num_subjs, 1);
-
-fprintf('Testing %s vs %s in window [%.2f - %.2fs]\n', cond_A, cond_B, test_window(1), test_window(2));
-fprintf('Running %d permutations. This may take a minute...\n', n_perms);
-
-%% 1. Calculate the TRUE Similarity (The Baseline)
-for s = 1:num_subjs
-    data_A = mean(data_all_conds.(cond_A){s}(:, idx_win, :), 3, 'omitnan');
-    data_B = mean(data_all_conds.(cond_B){s}(:, idx_win, :), 3, 'omitnan');
-    
-    if isempty(data_A) || isempty(data_B) || size(data_A,2) < 2, continue; end
-    
-    data_A = data_A - mean(data_A, 2); data_B = data_B - mean(data_B, 2);
-    
-    [U_A, ~, ~] = svd(data_A * data_A'); wA_s = U_A(:, 1);
-    [U_B, ~, ~] = svd(data_B * data_B'); wB_s = U_B(:, 1);
-    
-    if dot(wA_s, master_V) < 0, wA_s = -wA_s; end
-    if dot(wB_s, master_V) < 0, wB_s = -wB_s; end
-    
-    proj_A = master_W' * wA_s; proj_B = master_W' * wB_s;
-    true_sim_subj(s) = abs(dot(proj_A, proj_B) / (norm(proj_A) * norm(proj_B)));
-end
-true_mean_sim = mean(true_sim_subj, 'omitnan');
-
-%% 2. Calculate the NULL Distribution (Trial Shuffling)
-for p = 1:n_perms
-    null_sim_subj = zeros(num_subjs, 1);
-    
-    for s = 1:num_subjs
-        % Extract single trials for this subject within the window
-        trials_A = data_all_conds.(cond_A){s}(:, idx_win, :);
-        trials_B = data_all_conds.(cond_B){s}(:, idx_win, :);
-        
-        nA = size(trials_A, 3);
-        nB = size(trials_B, 3);
-        
-        % Pool all trials together
-        all_trials = cat(3, trials_A, trials_B);
-        total_trials = nA + nB;
-        
-        % SHUFFLE: Randomly mix the trials
-        shuffled_idx = randperm(total_trials);
-        pseudo_A_trials = all_trials(:, :, shuffled_idx(1:nA));
-        pseudo_B_trials = all_trials(:, :, shuffled_idx(nA+1:end));
-        
-        % Calculate new "Pseudo-Averages"
-        data_pseudo_A = mean(pseudo_A_trials, 3, 'omitnan');
-        data_pseudo_B = mean(pseudo_B_trials, 3, 'omitnan');
-        
-        % Run the exact same SVD & Projection logic
-        data_pseudo_A = data_pseudo_A - mean(data_pseudo_A, 2);
-        data_pseudo_B = data_pseudo_B - mean(data_pseudo_B, 2);
-        
-        [U_pA, ~, ~] = svd(data_pseudo_A * data_pseudo_A'); wpA_s = U_pA(:, 1);
-        [U_pB, ~, ~] = svd(data_pseudo_B * data_pseudo_B'); wpB_s = U_pB(:, 1);
-        
-        if dot(wpA_s, master_V) < 0, wpA_s = -wpA_s; end
-        if dot(wpB_s, master_V) < 0, wpB_s = -wpB_s; end
-        
-        proj_pA = master_W' * wpA_s; proj_pB = master_W' * wpB_s;
-        null_sim_subj(s) = abs(dot(proj_pA, proj_pB) / (norm(proj_pA) * norm(proj_pB)));
-    end
-    
-    % Store the mean pseudo-similarity for this permutation
-    null_distribution_means(p) = mean(null_sim_subj, 'omitnan');
-end
-
-%% 3. Calculate P-Value and Plot Histogram
-% P-value: What proportion of the null distribution is LESS than or equal to our true similarity?
-% Because we are testing if the networks are significantly DIFFERENT (lower similarity),
-% we look at the lower tail.
-p_value = sum(null_distribution_means <= true_mean_sim) / n_perms;
-
-% If the p-value is exactly 0, it means it beat every single permutation.
-% In standard reporting, we write this as p < (1/n_perms) instead of p = 0.
-if p_value == 0
-    p_str = sprintf('p < %.4f', 1/n_perms);
-else
-    p_str = sprintf('p = %.4f', p_value);
-end
-
-figure('Position', [200, 200, 800, 500], 'Name', 'Permutation Test');
-hold on;
-
-% Plot the Null Distribution
-h = histogram(null_distribution_means, 30, 'Normalization', 'pdf', ...
-    'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'w', 'FaceAlpha', 0.8);
-
-% Plot the True Value
-y_lims = ylim;
-line([true_mean_sim, true_mean_sim], y_lims, 'Color', 'r', 'LineWidth', 3, 'LineStyle', '--');
-
-% Calculate the 95% Confidence Bounds (Noise Ceiling)
-ci_lower = prctile(null_distribution_means, 5);
-ci_upper = prctile(null_distribution_means, 95);
-patch([ci_lower, ci_upper, ci_upper, ci_lower], [y_lims(1) y_lims(1) y_lims(2) y_lims(2)], ...
-    'g', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'DisplayName', '95% Noise Ceiling');
-
-hold off;
-title(sprintf('Permutation Test: %s vs %s (%.2f - %.2fs)', cond_A, cond_B, test_window(1), test_window(2)), ...
-    'FontSize', 18, 'FontWeight', 'bold');
-xlabel('Spatial Cosine Similarity', 'FontSize', 14, 'FontWeight', 'bold');
-ylabel('Density', 'FontSize', 14, 'FontWeight', 'bold');
-grid on; set(gca, 'FontSize', 12);
-
-legend({'Null Distribution (Shuffled Trials)', sprintf('True Similarity = %.3f', true_mean_sim), ...
-    '95% Identical Boundary'}, 'Location', 'northwest');
-
-% Annotation Box
-% Annotation Box
-stat_str = {
-    'Permutation Test Results',
-    '---------------------------------',
-    sprintf('Permutations (N): %d', n_perms),
-    sprintf('Null Mean (Noise Ceiling): %.3f', mean(null_distribution_means)),
-    sprintf('Empirical p-value: %s', p_str) % <-- Updated line
-};
-annotation('textbox', [0.65 0.65 0.25 0.15], 'String', stat_str, ...
-    'FitBoxToText', 'on', 'BackgroundColor', 'w', 'EdgeColor', 'k', ...
-    'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'none');
-%% 6.2: Stimulus Uncertainty
-
-disp('Running False Positive Permutation Test (Trial Label Shuffling)...');
-warning('off', 'all');
-
-% --- Test Parameters ---
-cond_A = 'P1';
-cond_B = 'P3_missing';
-m_name = 'Stim';               % Which dPCA space to use (MS, Temp, Stim)
+m_name = 'Temp';             % Which dPCA space to use (MS, Temp, Stim)
 test_window = [1.00, 1.35];  % The exact time window to test
-n_perms = 500;               % Number of shuffles (500-1000 is standard)
+n_perms = 5000;              % Increased to 5000 for smooth, reliable p-values
 num_comps_sim = 1;           % Test dPC1
 
 num_subjs = length(data_all_conds.(cond_A));
-idx_win = time_ms_eeg >= test_window(1) & time_ms_eeg <= test_window(2);
+idx_win = find(time_ms_eeg >= test_window(1) & time_ms_eeg <= test_window(2));
 
-% Extract Global Decoder properties
-master_V  = dpca_models.(m_name).V(:, num_comps_sim);
-master_W  = dpca_models.(m_name).W(:, num_comps_sim);
-mu_global = dpca_models.(m_name).mu;
+% Apply clean names to console output
+clean_A = get_clean_name(cond_A);
+clean_B = get_clean_name(cond_B);
 
-% Array to hold results
+% Arrays to hold results
 null_distribution_means = zeros(n_perms, 1);
 true_sim_subj = zeros(num_subjs, 1);
 
-fprintf('Testing %s vs %s in window [%.2f - %.2fs]\n', cond_A, cond_B, test_window(1), test_window(2));
-fprintf('Running %d permutations. This may take a minute...\n', n_perms);
+fprintf('Testing %s vs %s in window [%.2f - %.2fs]\n', clean_A, clean_B, test_window(1), test_window(2));
+fprintf('Running %d permutations. This will take a moment...\n', n_perms);
 
-%% 1. Calculate the TRUE Similarity (The Baseline)
+%% 1. Calculate the TRUE Trajectory Similarity (The Baseline)
 for s = 1:num_subjs
-    data_A = mean(data_all_conds.(cond_A){s}(:, idx_win, :), 3, 'omitnan');
-    data_B = mean(data_all_conds.(cond_B){s}(:, idx_win, :), 3, 'omitnan');
+    % Extract LOSO decoder and mean for this specific subject
+    master_W = dpca_models.(m_name).loso(s).W(:, num_comps_sim);
+    mu_s     = dpca_models.(m_name).loso(s).mu;
     
-    if isempty(data_A) || isempty(data_B) || size(data_A,2) < 2, continue; end
+    % Average true trials
+    data_A = mean(data_all_conds.(cond_A){s}, 3, 'omitnan');
+    data_B = mean(data_all_conds.(cond_B){s}, 3, 'omitnan');
     
-    data_A = data_A - mean(data_A, 2); data_B = data_B - mean(data_B, 2);
+    if isempty(data_A) || isempty(data_B), continue; end
     
-    [U_A, ~, ~] = svd(data_A * data_A'); wA_s = U_A(:, 1);
-    [U_B, ~, ~] = svd(data_B * data_B'); wB_s = U_B(:, 1);
+    % Project into shared LOSO space
+    proj_A = master_W' * (data_A - mu_s);
+    proj_B = master_W' * (data_B - mu_s);
     
-    if dot(wA_s, master_V) < 0, wA_s = -wA_s; end
-    if dot(wB_s, master_V) < 0, wB_s = -wB_s; end
+    % Extract window trajectories
+    traj_A = proj_A(idx_win);
+    traj_B = proj_B(idx_win);
     
-    proj_A = master_W' * wA_s; proj_B = master_W' * wB_s;
-    true_sim_subj(s) = abs(dot(proj_A, proj_B) / (norm(proj_A) * norm(proj_B)));
+    % Remove NaNs (in case a condition drops out early)
+    valid = ~isnan(traj_A) & ~isnan(traj_B);
+    traj_A = traj_A(valid);
+    traj_B = traj_B(valid);
+    
+    % TRUE Cosine Similarity of 1D Trajectories
+    if length(traj_A) > 1
+        true_sim_subj(s) = dot(traj_A, traj_B) / (norm(traj_A) * norm(traj_B));
+    else
+        true_sim_subj(s) = NaN;
+    end
 end
 true_mean_sim = mean(true_sim_subj, 'omitnan');
 
@@ -1738,94 +1793,277 @@ for p = 1:n_perms
     null_sim_subj = zeros(num_subjs, 1);
     
     for s = 1:num_subjs
-        % Extract single trials for this subject within the window
-        trials_A = data_all_conds.(cond_A){s}(:, idx_win, :);
-        trials_B = data_all_conds.(cond_B){s}(:, idx_win, :);
+        master_W = dpca_models.(m_name).loso(s).W(:, num_comps_sim);
+        mu_s     = dpca_models.(m_name).loso(s).mu;
+        
+        % Extract single trials
+        trials_A = data_all_conds.(cond_A){s};
+        trials_B = data_all_conds.(cond_B){s};
         
         nA = size(trials_A, 3);
         nB = size(trials_B, 3);
         
-        % Pool all trials together
+        % Pool all trials together and Shuffle
         all_trials = cat(3, trials_A, trials_B);
         total_trials = nA + nB;
-        
-        % SHUFFLE: Randomly mix the trials
         shuffled_idx = randperm(total_trials);
-        pseudo_A_trials = all_trials(:, :, shuffled_idx(1:nA));
-        pseudo_B_trials = all_trials(:, :, shuffled_idx(nA+1:end));
         
-        % Calculate new "Pseudo-Averages"
-        data_pseudo_A = mean(pseudo_A_trials, 3, 'omitnan');
-        data_pseudo_B = mean(pseudo_B_trials, 3, 'omitnan');
+        % Calculate "Pseudo-Averages"
+        pseudo_A = mean(all_trials(:, :, shuffled_idx(1:nA)), 3, 'omitnan');
+        pseudo_B = mean(all_trials(:, :, shuffled_idx(nA+1:end)), 3, 'omitnan');
         
-        % Run the exact same SVD & Projection logic
-        data_pseudo_A = data_pseudo_A - mean(data_pseudo_A, 2);
-        data_pseudo_B = data_pseudo_B - mean(data_pseudo_B, 2);
+        % Project into the EXACT same fixed dPCA space
+        proj_pA = master_W' * (pseudo_A - mu_s);
+        proj_pB = master_W' * (pseudo_B - mu_s);
         
-        [U_pA, ~, ~] = svd(data_pseudo_A * data_pseudo_A'); wpA_s = U_pA(:, 1);
-        [U_pB, ~, ~] = svd(data_pseudo_B * data_pseudo_B'); wpB_s = U_pB(:, 1);
+        traj_pA = proj_pA(idx_win);
+        traj_pB = proj_pB(idx_win);
         
-        if dot(wpA_s, master_V) < 0, wpA_s = -wpA_s; end
-        if dot(wpB_s, master_V) < 0, wpB_s = -wpB_s; end
+        valid = ~isnan(traj_pA) & ~isnan(traj_pB);
+        traj_pA = traj_pA(valid);
+        traj_pB = traj_pB(valid);
         
-        proj_pA = master_W' * wpA_s; proj_pB = master_W' * wpB_s;
-        null_sim_subj(s) = abs(dot(proj_pA, proj_pB) / (norm(proj_pA) * norm(proj_pB)));
+        % NULL Cosine Similarity
+        if length(traj_pA) > 1
+            null_sim_subj(s) = dot(traj_pA, traj_pB) / (norm(traj_pA) * norm(traj_pB));
+        else
+            null_sim_subj(s) = NaN;
+        end
     end
-    
     % Store the mean pseudo-similarity for this permutation
     null_distribution_means(p) = mean(null_sim_subj, 'omitnan');
 end
 
-%% 3. Calculate P-Value and Plot Histogram
-% P-value: What proportion of the null distribution is LESS than or equal to our true similarity?
-% Because we are testing if the networks are significantly DIFFERENT (lower similarity),
-% we look at the lower tail.
-p_value = sum(null_distribution_means <= true_mean_sim) / n_perms;
+%% 3. Calculate Two-Tailed P-Value and Plot Histogram
+% Center of the null distribution
+null_mean = mean(null_distribution_means, 'omitnan');
 
-% If the p-value is exactly 0, it means it beat every single permutation.
-% In standard reporting, we write this as p < (1/n_perms) instead of p = 0.
+% Absolute distances from the center
+true_distance = abs(true_mean_sim - null_mean);
+null_distances = abs(null_distribution_means - null_mean);
+
+% TWO-TAILED P-VALUE: How many shuffled sims were further from the center?
+p_value = sum(null_distances >= true_distance) / n_perms;
+
 if p_value == 0
     p_str = sprintf('p < %.4f', 1/n_perms);
 else
     p_str = sprintf('p = %.4f', p_value);
 end
 
+% --- PLOTTING ---
 figure('Position', [200, 200, 800, 500], 'Name', 'Permutation Test');
 hold on;
 
 % Plot the Null Distribution
-h = histogram(null_distribution_means, 30, 'Normalization', 'pdf', ...
-    'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'w', 'FaceAlpha', 0.8);
+histogram(null_distribution_means, 50, 'Normalization', 'pdf', ...
+    'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none', 'FaceAlpha', 0.8);
 
-% Plot the True Value
 y_lims = ylim;
+% Plot the True Value
 line([true_mean_sim, true_mean_sim], y_lims, 'Color', 'r', 'LineWidth', 3, 'LineStyle', '--');
 
-% Calculate the 95% Confidence Bounds (Noise Ceiling)
-ci_lower = prctile(null_distribution_means, 5);
-ci_upper = prctile(null_distribution_means, 95);
+% Calculate the 95% Confidence Bounds (Using 2.5 and 97.5)
+ci_lower = prctile(null_distribution_means, 2.5);
+ci_upper = prctile(null_distribution_means, 97.5);
 patch([ci_lower, ci_upper, ci_upper, ci_lower], [y_lims(1) y_lims(1) y_lims(2) y_lims(2)], ...
-    'g', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'DisplayName', '95% Noise Ceiling');
+    'g', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'DisplayName', '95% CI (Noise Ceiling)');
 
 hold off;
-title(sprintf('Permutation Test: %s vs %s (%.2f - %.2fs)', cond_A, cond_B, test_window(1), test_window(2)), ...
+
+% Apply clean names to the plot title
+title(sprintf('Permutation Test: %s vs %s (%.2f - %.2fs)', clean_A, clean_B, test_window(1), test_window(2)), ...
     'FontSize', 18, 'FontWeight', 'bold');
-xlabel('Spatial Cosine Similarity', 'FontSize', 14, 'FontWeight', 'bold');
+xlabel('Trajectory Cosine Similarity', 'FontSize', 14, 'FontWeight', 'bold');
 ylabel('Density', 'FontSize', 14, 'FontWeight', 'bold');
 grid on; set(gca, 'FontSize', 12);
 
 legend({'Null Distribution (Shuffled Trials)', sprintf('True Similarity = %.3f', true_mean_sim), ...
-    '95% Identical Boundary'}, 'Location', 'northwest');
+    '95% Confidence Interval'}, 'Location', 'northwest');
 
 % Annotation Box
-% Annotation Box
 stat_str = {
-    'Permutation Test Results',
+    'Permutation Test Results (Two-Tailed)',
     '---------------------------------',
     sprintf('Permutations (N): %d', n_perms),
-    sprintf('Null Mean (Noise Ceiling): %.3f', mean(null_distribution_means)),
-    sprintf('Empirical p-value: %s', p_str) % <-- Updated line
+    sprintf('Null Mean: %.3f', null_mean),
+    sprintf('Empirical p-value: %s', p_str)
 };
-annotation('textbox', [0.65 0.65 0.25 0.15], 'String', stat_str, ...
+annotation('textbox', [0.60 0.65 0.28 0.15], 'String', stat_str, ...
     'FitBoxToText', 'on', 'BackgroundColor', 'w', 'EdgeColor', 'k', ...
     'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'none');
+
+disp('Permutation test complete.');
+%% 6.2: Stimulus Uncertainty
+
+disp('Running False Positive Permutation Test (Latent Trajectory Shuffling)...');
+warning('off', 'all');
+
+% --- HELPER: Clean Names for Plotting ---
+get_clean_name = @(x) strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(x, ...
+    'P2_500', 'Unpred. 500'), 'P2_2000', 'Unpred. 2000'), 'P3_500', 'Rand. Cued 500'), ...
+    'P3_missing', 'Rand. Missing'), 'BLA', 'Auditory'), 'BLT', 'Tactile'), ...
+    'P1', 'Cued'), 'P2', 'Unpred.'), 'P3', 'Rand. Cued');
+
+% --- Test Parameters ---
+cond_A = 'P3_500';
+cond_B = 'P3_missing';
+m_name = 'Stim';             % Which dPCA space to use (MS, Temp, Stim)
+test_window = [1.00, 1.35];  % The exact time window to test
+n_perms = 5000;              % Increased to 5000 for smooth, reliable p-values
+num_comps_sim = 1;           % Test dPC1
+
+num_subjs = length(data_all_conds.(cond_A));
+idx_win = find(time_ms_eeg >= test_window(1) & time_ms_eeg <= test_window(2));
+
+% Apply clean names to console output and plot
+clean_A = get_clean_name(cond_A);
+clean_B = get_clean_name(cond_B);
+
+% Arrays to hold results
+null_distribution_means = zeros(n_perms, 1);
+true_sim_subj = zeros(num_subjs, 1);
+
+fprintf('Testing %s vs %s in window [%.2f - %.2fs]\n', clean_A, clean_B, test_window(1), test_window(2));
+fprintf('Running %d permutations. This will take a moment...\n', n_perms);
+
+%% 1. Calculate the TRUE Trajectory Similarity (The Baseline)
+for s = 1:num_subjs
+    % Extract LOSO decoder and mean for this specific subject
+    master_W = dpca_models.(m_name).loso(s).W(:, num_comps_sim);
+    mu_s     = dpca_models.(m_name).loso(s).mu;
+    
+    % Average true trials
+    data_A = mean(data_all_conds.(cond_A){s}, 3, 'omitnan');
+    data_B = mean(data_all_conds.(cond_B){s}, 3, 'omitnan');
+    
+    if isempty(data_A) || isempty(data_B), continue; end
+    
+    % Project into shared LOSO space
+    proj_A = master_W' * (data_A - mu_s);
+    proj_B = master_W' * (data_B - mu_s);
+    
+    % Extract window trajectories
+    traj_A = proj_A(idx_win);
+    traj_B = proj_B(idx_win);
+    
+    % Remove NaNs (in case a condition drops out early)
+    valid = ~isnan(traj_A) & ~isnan(traj_B);
+    traj_A = traj_A(valid);
+    traj_B = traj_B(valid);
+    
+    % TRUE Cosine Similarity of 1D Trajectories
+    if length(traj_A) > 1
+        true_sim_subj(s) = dot(traj_A, traj_B) / (norm(traj_A) * norm(traj_B));
+    else
+        true_sim_subj(s) = NaN;
+    end
+end
+true_mean_sim = mean(true_sim_subj, 'omitnan');
+
+%% 2. Calculate the NULL Distribution (Trial Shuffling)
+for p = 1:n_perms
+    null_sim_subj = zeros(num_subjs, 1);
+    
+    for s = 1:num_subjs
+        master_W = dpca_models.(m_name).loso(s).W(:, num_comps_sim);
+        mu_s     = dpca_models.(m_name).loso(s).mu;
+        
+        % Extract single trials
+        trials_A = data_all_conds.(cond_A){s};
+        trials_B = data_all_conds.(cond_B){s};
+        
+        nA = size(trials_A, 3);
+        nB = size(trials_B, 3);
+        
+        % Pool all trials together and Shuffle
+        all_trials = cat(3, trials_A, trials_B);
+        total_trials = nA + nB;
+        shuffled_idx = randperm(total_trials);
+        
+        % Calculate "Pseudo-Averages"
+        pseudo_A = mean(all_trials(:, :, shuffled_idx(1:nA)), 3, 'omitnan');
+        pseudo_B = mean(all_trials(:, :, shuffled_idx(nA+1:end)), 3, 'omitnan');
+        
+        % Project into the EXACT same fixed dPCA space
+        proj_pA = master_W' * (pseudo_A - mu_s);
+        proj_pB = master_W' * (pseudo_B - mu_s);
+        
+        traj_pA = proj_pA(idx_win);
+        traj_pB = proj_pB(idx_win);
+        
+        valid = ~isnan(traj_pA) & ~isnan(traj_pB);
+        traj_pA = traj_pA(valid);
+        traj_pB = traj_pB(valid);
+        
+        % NULL Cosine Similarity
+        if length(traj_pA) > 1
+            null_sim_subj(s) = dot(traj_pA, traj_pB) / (norm(traj_pA) * norm(traj_pB));
+        else
+            null_sim_subj(s) = NaN;
+        end
+    end
+    % Store the mean pseudo-similarity for this permutation
+    null_distribution_means(p) = mean(null_sim_subj, 'omitnan');
+end
+
+%% 3. Calculate Two-Tailed P-Value and Plot Histogram
+% Center of the null distribution
+null_mean = mean(null_distribution_means, 'omitnan');
+
+% Absolute distances from the center
+true_distance = abs(true_mean_sim - null_mean);
+null_distances = abs(null_distribution_means - null_mean);
+
+% TWO-TAILED P-VALUE: How many shuffled sims were further from the center?
+p_value = sum(null_distances >= true_distance) / n_perms;
+
+if p_value == 0
+    p_str = sprintf('p < %.4f', 1/n_perms);
+else
+    p_str = sprintf('p = %.4f', p_value);
+end
+
+% --- PLOTTING ---
+figure('Position', [200, 200, 800, 500], 'Name', 'Permutation Test');
+hold on;
+
+% Plot the Null Distribution
+histogram(null_distribution_means, 50, 'Normalization', 'pdf', ...
+    'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none', 'FaceAlpha', 0.8);
+
+y_lims = ylim;
+% Plot the True Value
+line([true_mean_sim, true_mean_sim], y_lims, 'Color', 'r', 'LineWidth', 3, 'LineStyle', '--');
+
+% Calculate the 95% Confidence Bounds (Using 2.5 and 97.5)
+ci_lower = prctile(null_distribution_means, 2.5);
+ci_upper = prctile(null_distribution_means, 97.5);
+patch([ci_lower, ci_upper, ci_upper, ci_lower], [y_lims(1) y_lims(1) y_lims(2) y_lims(2)], ...
+    'g', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'DisplayName', '95% CI (Noise Ceiling)');
+
+hold off;
+
+% --- Apply clean names to the plot title ---
+title(sprintf('Permutation Test: %s vs %s (%.2f - %.2fs)', clean_A, clean_B, test_window(1), test_window(2)), ...
+    'FontSize', 18, 'FontWeight', 'bold');
+xlabel('Trajectory Cosine Similarity', 'FontSize', 14, 'FontWeight', 'bold');
+ylabel('Density', 'FontSize', 14, 'FontWeight', 'bold');
+grid on; set(gca, 'FontSize', 12);
+
+legend({'Null Distribution (Shuffled Trials)', sprintf('True Similarity = %.3f', true_mean_sim), ...
+    '95% Confidence Interval'}, 'Location', 'northwest');
+
+% Annotation Box
+stat_str = {
+    'Permutation Test Results (Two-Tailed)',
+    '---------------------------------',
+    sprintf('Permutations (N): %d', n_perms),
+    sprintf('Null Mean: %.3f', null_mean),
+    sprintf('Empirical p-value: %s', p_str)
+};
+annotation('textbox', [0.60 0.65 0.28 0.15], 'String', stat_str, ...
+    'FitBoxToText', 'on', 'BackgroundColor', 'w', 'EdgeColor', 'k', ...
+    'FontSize', 12, 'FontWeight', 'bold', 'Interpreter', 'none');
+
+disp('Permutation test complete.');
