@@ -11,7 +11,7 @@ elseif exist('G:\', 'dir')
 else
     error('Unknown system: Cannot determine input and output paths.');
 end
-output_path = fullfile(base_output_path, 'longitudinal_dPCA');
+output_path = fullfile(base_output_path, 'functional_connectivity');
 
 % --- 2. Configuration Parameters ---
 conditions = {'BLA','BLT','P1','P2','P3'};
@@ -56,7 +56,7 @@ if num_subjects == 0
 end
 
 % --- 4. Outer Loop: Subjects (Serial to save RAM) ---
-for target_subj = 1:num_subjects
+for target_subj = 1:2 % num_subjects
     
     % DYNAMIC SUBJECT ID EXTRACTION[cite: 1]
     base_file = names_sorted{target_subj};
@@ -96,6 +96,17 @@ for target_subj = 1:num_subjects
         trialsB_raw = subject_data.(condB);
         
         if isempty(trialsA_raw) || isempty(trialsB_raw), continue; end
+
+        fprintf('   -> Generating 5-Band Power Bar Charts...\n');
+        
+        % --- NEW: Generate Multi-Band Power Bar Charts (5-Row Figure) ---
+        for state_idx = 1:2
+            t_win_power = pairs{p}{2 + state_idx}; 
+            active_state_power = state_names{state_idx};
+            
+            plot_band_power_bars(trialsA_raw, trialsB_raw, t_win_power, time_ms_eeg, fs, ...
+                condA, condB, active_state_power, bands, all_channels_str, subj_dir, subj_id);
+        end
         
         fprintf('   -> Deploying Pair: %s vs %s to Parallel Workers...\n', condA, condB);
         

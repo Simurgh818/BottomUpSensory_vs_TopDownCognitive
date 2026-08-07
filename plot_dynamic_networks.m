@@ -27,7 +27,7 @@ function plot_dynamic_networks(sub_ch_A_all, sub_ch_B_all, sub_pc_A_all, sub_pc_
     cb = colorbar; cb.Layout.Tile = 'east'; cb.Label.String = 'Subtracted Correlation (\Delta r)'; cb.Label.FontWeight = 'bold';
     sgtitle(sprintf('[%s Band] Network Evolution (%s): %s vs %s', upper(current_band), active_state, cleanA, cleanB), 'FontSize', 18, 'FontWeight', 'bold');
     
-    % DYNAMIC SAVE: e.g., BOS10_BLA_vs_P1_Heatmaps_Stimulus_State.png
+    % DYNAMIC SAVE
     saveas(fig1, fullfile(output_dir, sprintf('%s_%s_vs_%s_Heatmaps_%s.png', subj_id, condA, condB, strrep(active_state,' ','_'))));
     close(fig1);
 
@@ -36,11 +36,26 @@ function plot_dynamic_networks(sub_ch_A_all, sub_ch_B_all, sub_pc_A_all, sub_pc_
     fig2 = figure('Position', [100, 100, fig_width, 900], 'Visible', 'off');
     tiledlayout(4, num_windows, 'TileSpacing', 'compact', 'Padding', 'compact');
     
-    % Dynamic limits
+    % --- NEW: Dynamic base limits per EEG band ---
+    switch lower(current_band)
+        case 'delta'    % 1-4 Hz (Largest Amplitude)
+            ch_ylim = [-2.5, 2.5];       pc_ylim = [-5, 5];
+        case 'theta'    % 4-8 Hz
+            ch_ylim = [-2.6, 2.6];       pc_ylim = [-7.5, 7.5];
+        case 'alpha'    % 8-13 Hz
+            ch_ylim = [-1.5, 1.5];   pc_ylim = [-3, 3];
+        case 'beta'     % 13-30 Hz
+            ch_ylim = [-1, 1];   pc_ylim = [-2, 2];
+        case 'gamma'    % 30-50 Hz (Smallest Amplitude)
+            ch_ylim = [-1, 1];       pc_ylim = [-2, 2];
+        otherwise       % Fallback
+            ch_ylim = [-5, 5];       pc_ylim = [-15, 15];
+    end
+    
+    % --- NEW: Double the limits specifically for Auditory vs Cued comparison ---
     if strcmp(condA, 'BLA') && strcmp(condB, 'P1')
-        ch_ylim = [-10, 10]; pc_ylim = [-25, 25];
-    else
-        ch_ylim = [-5, 5]; pc_ylim = [-15, 15];
+        ch_ylim = ch_ylim * 2;
+        pc_ylim = pc_ylim * 2;
     end
     
     idx_start = find(time_ms_eeg >= t_win(1), 1, 'first');
@@ -67,7 +82,7 @@ function plot_dynamic_networks(sub_ch_A_all, sub_ch_B_all, sub_pc_A_all, sub_pc_
             elseif row == 3, mat = sub_pc_A_all(:,:,w); dat = trialsA; col = pc_c; yl = pc_ylim; 
             else, mat = sub_pc_B_all(:,:,w); dat = trialsB; col = pc_c; yl = pc_ylim; end
             
-            % Local projection for plotting dPCs
+            % Local projection for plotting dPCscolorbar
             if row >= 3
                 avgA_raw = mean(trialsA, 3, 'omitnan'); avgB_raw = mean(trialsB, 3, 'omitnan');
                 dat_comb = [avgA_raw, avgB_raw] - mean([avgA_raw, avgB_raw], 2);
@@ -108,7 +123,7 @@ function plot_dynamic_networks(sub_ch_A_all, sub_ch_B_all, sub_pc_A_all, sub_pc_
     
     sgtitle(sprintf('[%s Band] Traces (%s): %s vs %s (>%g Corr)', upper(current_band), active_state, cleanA, cleanB, corr_thresh), 'FontSize', 18, 'FontWeight', 'bold');
     
-    % DYNAMIC SAVE: e.g., BOS10_BLA_vs_P1_Traces_Stimulus_State.png
+    % DYNAMIC SAVE
     saveas(fig2, fullfile(output_dir, sprintf('%s_%s_vs_%s_Traces_%s.png', subj_id, condA, condB, strrep(active_state,' ','_'))));
     close(fig2);
 end
