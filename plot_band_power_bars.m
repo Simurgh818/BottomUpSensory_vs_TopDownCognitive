@@ -50,7 +50,7 @@ function plot_band_power_bars(trialsA_raw, trialsB_raw, t_win, time_ms_eeg, fs, 
         errorbar(x_posA, meanA, semA, 'k', 'linestyle', 'none', 'CapSize', 2, 'LineWidth', 1);
         errorbar(x_posB, meanB, semB, 'k', 'linestyle', 'none', 'CapSize', 2, 'LineWidth', 1);
 
-        ylabel(sprintf('%s\nPower (\\muV^2)', upper(band_names{b})), 'FontWeight', 'bold', 'FontSize', 12);
+        ylabel(sprintf('%s\nPower (\\muV^2)', upper(band_names{b})), 'FontWeight', 'bold', 'FontSize', 16);
         xticks(1:num_ch);
         xlim([0.5, num_ch+0.5]);
         grid on;
@@ -58,7 +58,7 @@ function plot_band_power_bars(trialsA_raw, trialsB_raw, t_win, time_ms_eeg, fs, 
         if b == num_bands
             xticklabels(all_channels_str);
             xtickangle(90);
-            xlabel('Channels', 'FontWeight', 'bold');
+            xlabel('Channels', 'FontWeight', 'bold', 'FontSize', 16);
         else
             xticklabels({});
         end
