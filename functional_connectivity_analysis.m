@@ -103,9 +103,9 @@ for target_subj = 1:num_subjects
     fprintf('\n======================================================\n');
     fprintf('PROCESSING SUBJECT %d / %d (%s)\n', target_subj, num_subjects, subj_id);
     fprintf('======================================================\n');
-    
+
     % LOAD ONLY THE CURRENT SUBJECT INTO MEMORY
-    [subject_data, time_ms_eeg, fs, all_channels_str] = load_subject_eeg(input_path, conditions, num_ch, target_subj);
+    [subject_data, time_ms_eeg, fs, all_channels_str] = load_subject_eeg(input_path, conditions, num_ch, subj_id);
     
     subj_dir = fullfile(output_path, subj_id);
     if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
