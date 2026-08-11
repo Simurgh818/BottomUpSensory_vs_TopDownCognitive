@@ -214,11 +214,15 @@ disp('All parallel subject processing complete!');
 
 % =========================================================================
 % NEW: 8. BETWEEN-SUBJECT GROUP LEVEL STATISTICS
-% This runs after ALL subjects have finished processing.
 % =========================================================================
 disp('Calculating Between-Subject Group Statistics...');
 group_out_dir = fullfile(output_path, 'Group_Level_Results');
 if ~exist(group_out_dir, 'dir'), mkdir(group_out_dir); end
+
+% --- NEW: Extract True 10-20 Channel Locations for the Group Plots ---
+% Load just the header info of the very first subject's file to get chanlocs
+sample_EEG = pop_loadset('filename', set_files(1).name, 'filepath', first_cond_dir, 'loadmode', 'info');
+group_chanlocs = sample_EEG.chanlocs;
 
 % Extract Grand Average and T-Test per Band & State
 for p = 1:length(pairs)
@@ -234,7 +238,6 @@ for p = 1:length(pairs)
             band = band_names{b};
             
             % Collect all subjects into a 4D array: [Subjects x Channels x Channels x Windows]
-            % Exclude empty subjects (e.g., if one subj missed a condition)
             valid_subjs = 0;
             group_tensor = [];
             for s = 1:num_subjects
@@ -247,12 +250,12 @@ for p = 1:length(pairs)
             if valid_subjs > 1
                 % Calculate Grand Average and Mass-Univariate T-Test against 0
                 grand_avg_net = squeeze(mean(group_tensor, 1, 'omitnan'));
-                [~, p_values, ~, stats] = ttest(group_tensor, 0, 'Alpha', 0.05, 'Dim', 1);
+                [~, p_values, ~, stats] = ttest(group_tensor, 0, 'Alpha', 0.10, 'Dim', 1);
                 t_scores = squeeze(stats.tstat);
                 p_values = squeeze(p_values);
                 
-                % Optional: Pass `grand_avg_net` and `p_values` into a group plotting function
-                % plot_group_level_networks(grand_avg_net, p_values, t_axis, cleanA, cleanB, state_name, band, all_channels_str, group_out_dir);
+                % Generate FDR-corrected Group Level Node-Link Plots (Passing group_chanlocs!)
+                plot_group_level_networks(grand_avg_net, p_values, t_axis, cleanA, cleanB, state_name, band, all_channels_str, group_chanlocs, group_out_dir);
             end
         end
     end
