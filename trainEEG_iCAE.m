@@ -2,10 +2,10 @@ function [encNet, decNet, priorNet, info] = trainEEG_iCAE(X_train_1D, C_train_1D
     % X and C must be 4D tensors: [1, WindowLength, Channels, NumTrials]
     
     arguments
-        X_train_1D double 
-        C_train_1D double
-        X_test_1D  double 
-        C_test_1D  double
+        X_train_1D single 
+        C_train_1D single
+        X_test_1D  single 
+        C_test_1D  single
         cfg struct = struct()
     end
     
@@ -83,8 +83,10 @@ function [encNet, decNet, priorNet, info] = trainEEG_iCAE(X_train_1D, C_train_1D
     % ==========================================
     % 4. TRAINING LOOP SETUP
     % ==========================================
-    X_dl = dlarray(X_train_1D, 'SSCB'); 
-    C_dl = dlarray(C_train_1D, 'SSCB');
+    % MEMORY FIX: Do NOT convert the entire dataset to dlarray here!
+    % Keep them as standard MATLAB arrays for efficient shuffling.
+    
+    % We only convert the validation set here since it doesn't get shuffled
     X_test_dl = dlarray(X_test_1D, 'SSCB');
     C_test_dl = dlarray(C_test_1D, 'SSCB');
     
@@ -110,7 +112,6 @@ function [encNet, decNet, priorNet, info] = trainEEG_iCAE(X_train_1D, C_train_1D
     for epoch = 1:cfg.epochs
         epochLoss = 0;
         
-        % KL Annealing (Dynamic Beta)
         if cfg.warmupEpochs > 1
             fraction = min(1, (epoch - 1) / (cfg.warmupEpochs - 1));
             current_beta = cfg.beta * fraction;
@@ -118,27 +119,27 @@ function [encNet, decNet, priorNet, info] = trainEEG_iCAE(X_train_1D, C_train_1D
             current_beta = cfg.beta;
         end
         
-        % Shuffle Data
-        idx = randperm(NumObs);
-        X_shuffled = X_dl(:, :, :, idx);
-        C_shuffled = C_dl(:, :, :, idx);
+        % --- MEMORY FIX: ZERO-COPY SHUFFLING ---
+        % Instead of shuffling the massive matrix, just shuffle a list of numbers!
+        idx_perm = randperm(NumObs);
         
         for batch = 1:numBatches
-            idxBatch = (batch-1)*cfg.batchSize + 1 : batch*cfg.batchSize;
-            XBatch = X_shuffled(:, :, :, idxBatch);
-            CBatch = C_shuffled(:, :, :, idxBatch);
+            % Find the exact random indices for this specific mini-batch
+            batch_indices = idx_perm((batch-1)*cfg.batchSize + 1 : batch*cfg.batchSize);
+            
+            % Extract ONLY the mini-batch directly from the main array
+            XBatch = dlarray(X_train_1D(:, :, :, batch_indices), 'SSCB');
+            CBatch = dlarray(C_train_1D(:, :, :, batch_indices), 'SSCB');
+            % ---------------------------------------
             
             [gradEnc, gradDec, gradPrior, loss] = dlfeval(@modelLoss, encNet, decNet, priorNet, XBatch, CBatch, cfg.method, current_beta);
             
-            % --- DEFENSE #1: GRADIENT CLIPPING ---
-            % This strictly limits gradients to between -1 and 1, preventing the weights from exploding
             gradThreshold = 1.0;
             gradEnc = dlupdate(@(g) min(max(g, -gradThreshold), gradThreshold), gradEnc);
             gradDec = dlupdate(@(g) min(max(g, -gradThreshold), gradThreshold), gradDec);
             if cfg.method == "icae"
                 gradPrior = dlupdate(@(g) min(max(g, -gradThreshold), gradThreshold), gradPrior);
             end
-            % -------------------------------------
             
             [encNet, trailingAvgEnc, trailingAvgSqEnc] = adamupdate(encNet, gradEnc, trailingAvgEnc, trailingAvgSqEnc, epoch, cfg.learnRate);
             [decNet, trailingAvgDec, trailingAvgSqDec] = adamupdate(decNet, gradDec, trailingAvgDec, trailingAvgSqDec, epoch, cfg.learnRate);
@@ -150,19 +151,18 @@ function [encNet, decNet, priorNet, info] = trainEEG_iCAE(X_train_1D, C_train_1D
             epochLoss = epochLoss + extractdata(loss);
         end
         
-        % Record and Validate
         info.lossHistory(epoch) = epochLoss / numBatches;
         valLoss = computeValidationLoss(encNet, decNet, priorNet, X_test_dl, C_test_dl, cfg.method, current_beta);
         info.valLossHistory(epoch) = extractdata(valLoss);
         
-        fprintf("Epoch %d/%d (Beta: %.4f) - Train Loss: %.4f | Val Loss: %.4f\n", ...
-                epoch, cfg.epochs, current_beta, info.lossHistory(epoch), info.valLossHistory(epoch));
+        if ~isfield(cfg, 'verbose') || cfg.verbose
+            fprintf("Epoch %d/%d (Beta: %.4f) - Train Loss: %.4f | Val Loss: %.4f\n", ...
+                    epoch, cfg.epochs, current_beta, info.lossHistory(epoch), info.valLossHistory(epoch));
+        end
                 
-        % Early Stopping Logic
         currentValLoss = info.valLossHistory(epoch);
         
         if isnan(currentValLoss) || isinf(currentValLoss)
-            warning('Validation loss hit NaN/Inf. Gradient clipping actively suppressing explosion.');
             patienceCounter = patienceCounter + 1;
         elseif currentValLoss < bestValLoss
             bestValLoss = currentValLoss;
@@ -175,7 +175,9 @@ function [encNet, decNet, priorNet, info] = trainEEG_iCAE(X_train_1D, C_train_1D
         end
         
         if patienceCounter >= cfg.patience
-            fprintf("Early stopping triggered! Validation loss hasn't improved for %d epochs.\n", cfg.patience);
+            if ~isfield(cfg, 'verbose') || cfg.verbose
+                fprintf("Early stopping triggered! Validation loss hasn't improved for %d epochs.\n", cfg.patience);
+            end
             info.lossHistory = info.lossHistory(1:epoch);
             info.valLossHistory = info.valLossHistory(1:epoch);
             

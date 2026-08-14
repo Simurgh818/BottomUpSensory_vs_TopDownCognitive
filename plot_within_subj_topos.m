@@ -1,4 +1,4 @@
-function plot_within_subj_topos(diff_state_cell, time_axis, band_names, cleanA, cleanB, state_name, chanlocs, output_dir, subj_id)
+function plot_within_subj_topos(sA_cell, sB_cell, time_axis, band_names, cleanA, cleanB, state_name, chanlocs, output_dir, subj_id)
     
     num_bands = length(band_names);
     num_windows = length(time_axis);
@@ -8,16 +8,22 @@ function plot_within_subj_topos(diff_state_cell, time_axis, band_names, cleanA, 
     tiledlayout(num_bands, num_windows, 'TileSpacing', 'compact', 'Padding', 'compact');
 
     for b = 1:num_bands
-        diff_mat_all = diff_state_cell{b}; % The full sliding [32 x 32 x Windows] differential tensor
-
         for w = 1:num_windows
             nexttile;
-            curr_mat = diff_mat_all(:,:,w);
             
-            % Calculate Node Degree Difference: Sum of correlation differences per channel (ignoring self-correlation)
-            node_diff = sum(curr_mat - diag(diag(curr_mat)), 2, 'omitnan');
+            % Extract the Active minus Background matrices for Control (A) and Test (B)
+            matA = sA_cell{b}(:,:,w);
+            matB = sB_cell{b}(:,:,w);
+            
+            % 1. Calculate Nodal Degree (Hub Strength) ignoring the diagonal
+            nodeA = sum(matA - diag(diag(matA)), 2, 'omitnan');
+            nodeB = sum(matB - diag(diag(matB)), 2, 'omitnan');
 
-            topoplot(node_diff, chanlocs, 'numcontour', 0);
+            % 2. Calculate the Stabilized Index: (Control - Test) / Control
+            % Added +0.05 to the absolute denominator to prevent division-by-zero artifacts
+            node_index = (nodeA - nodeB) ./ (abs(nodeA) + 0.05);
+
+            topoplot(node_index, chanlocs, 'numcontour', 0);
             
             % STRICT LIMITS: Locked to exactly -1 to 1
             clim([-1 1]); 
@@ -37,16 +43,16 @@ function plot_within_subj_topos(diff_state_cell, time_axis, band_names, cleanA, 
             
             if b == num_bands && w == num_windows
                 cb = colorbar;
-                cb.Label.String = sprintf('Nodal \\Delta r\n(+ %s  |  - %s)', cleanB, cleanA);
+                cb.Label.String = sprintf('Nodal Index\n(%s - %s) / %s', cleanA, cleanB, cleanA);
                 cb.Label.FontSize = 14;
                 cb.Label.FontWeight = 'bold';
             end
         end
     end
     
-    sgtitle(sprintf('Within-Subject Nodal \\Delta r: %s vs %s (%s)', cleanA, cleanB, state_name), 'FontSize', 22, 'FontWeight', 'bold');
+    sgtitle(sprintf('Within-Subject Nodal Index: %s vs %s (%s)', cleanA, cleanB, state_name), 'FontSize', 22, 'FontWeight', 'bold');
     
-    save_name = fullfile(output_dir, sprintf('%s_%s_vs_%s_DeltaR_Topos_%s.png', subj_id, strrep(cleanA,' ',''), strrep(cleanB,' ',''), strrep(state_name,' ','_')));
+    save_name = fullfile(output_dir, sprintf('%s_%s_vs_%s_DeltaR_Index_Topos_%s.png', subj_id, strrep(cleanA,' ',''), strrep(cleanB,' ',''), strrep(state_name,' ','_')));
     saveas(fig, save_name);
     close(fig);
 end

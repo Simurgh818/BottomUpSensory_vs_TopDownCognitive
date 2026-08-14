@@ -75,14 +75,18 @@ get_clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
 % 3.5 DATA STORAGE & SPATIAL INITIALIZATION
 % =========================================================================
 GROUP_DIFF_CONN = cell(num_subjects, length(pairs), 2); 
-GROUP_TIME_AXIS = cell(length(pairs), 2);
+% Store the time axes per subject to satisfy parfor rules, collapse later
+GROUP_TIME_AXIS = cell(num_subjects, length(pairs), 2); 
 
 % Extract True 10-20 Channel Locations for the Topoplots early
 sample_EEG = pop_loadset('filename', names_sorted{1}, 'filepath', first_cond_dir, 'loadmode', 'info');
 chanlocs = sample_EEG.chanlocs;
 
-% --- 4. Outer Loop: Subjects (Serial to save RAM) ---
-for target_subj = 1:num_subjects
+% --- NEW: Extract channel labels globally so they survive the parfor loop ---
+all_channels_str = {chanlocs.labels};
+
+% --- 4. Outer Loop: Subjects (PARALLELIZED) ---
+parfor target_subj = 1:num_subjects
     
     % DYNAMIC SUBJECT ID EXTRACTION
     base_file = names_sorted{target_subj};
@@ -96,13 +100,18 @@ for target_subj = 1:num_subjects
     end
     
     fprintf('\n======================================================\n');
-    fprintf('PROCESSING SUBJECT %d / %d (%s)\n', target_subj, num_subjects, subj_id);
+    fprintf('Worker Processing SUBJECT %d / %d (%s)\n', target_subj, num_subjects, subj_id);
     fprintf('======================================================\n');
     
     [subject_data, time_ms_eeg, fs, all_channels_str] = load_subject_eeg(input_path, conditions, num_ch, subj_id);
     
     subj_dir = fullfile(output_path, subj_id);
     if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
+    
+    % --- PARFOR SLICING FIX ---
+    % Temporary storage for THIS subject to satisfy MATLAB's strict slicing rules
+    temp_subj_diff = cell(length(pairs), 2);
+    temp_subj_time = cell(length(pairs), 2);
     
     % --- 5. Middle Loop: Condition Pairs ---
     for p = 1:length(pairs)
@@ -120,22 +129,26 @@ for target_subj = 1:num_subjects
         
         if isempty(trialsA_raw) || isempty(trialsB_raw), continue; end
         
-        fprintf('   -> Generating Band Power Index Topoplots...\n');
+        fprintf('   [%s] -> Generating Band Power Index Topoplots...\n', subj_id);
         for state_idx = 1:2
             t_win_power = pairs{p}{2 + state_idx}; 
             plot_band_power_topos(trialsA_raw, trialsB_raw, t_win_power, time_ms_eeg, fs, window_size_ms, step_size_ms, ...
                 condA, condB, state_names{state_idx}, bands, chanlocs, subj_dir, subj_id);
         end
         
-        fprintf('   -> Deploying Pair: %s vs %s to Parallel Workers...\n', condA, condB);
+        fprintf('   [%s] -> Processing Pair: %s vs %s across EEG Bands...\n', subj_id, condA, condB);
         
-        diff_state1_cell = cell(1, length(band_names));
-        diff_state2_cell = cell(1, length(band_names));
+        diff_state1_cell  = cell(1, length(band_names));
+        diff_state2_cell  = cell(1, length(band_names));
+        sA1_cell          = cell(1, length(band_names));
+        sB1_cell          = cell(1, length(band_names));
+        sA2_cell          = cell(1, length(band_names));
+        sB2_cell          = cell(1, length(band_names));
         win_centers1_cell = cell(1, length(band_names));
         win_centers2_cell = cell(1, length(band_names));
         
-        % --- 6. Inner PARALLEL Loop: EEG Frequency Bands ---
-        parfor b = 1:length(band_names)
+        % --- 6. Inner Loop: EEG Frequency Bands (SERIAL) ---
+        for b = 1:length(band_names)
             current_band = band_names{b};
             f_range = bands.(current_band);
             
@@ -148,32 +161,42 @@ for target_subj = 1:num_subjects
             % --- State 1 (Stimulus) ---
             t_win1 = pairs{p}{3}; 
             [sA1, sB1, spcA1, spcB1, wc1, k1, pcl1] = compute_dynamic_connectivity(trialsA_filt, trialsB_filt, t_win1, time_ms_eeg, fs, window_size_ms, step_size_ms, bg_windows);
+            
+            % Save visible='off' filmstrips (Safe inside parfor)
             plot_dynamic_networks(sA1, sB1, spcA1, spcB1, wc1, trialsA_filt, trialsB_filt, time_ms_eeg, t_win1, fs, window_size_ms, step_size_ms, condA, condB, state_names{1}, current_band, k1, pcl1, all_channels_str, band_dir, subj_id);
             
-            diff_state1_cell{b} = sB1 - sA1; 
+            % Save matrices (Control - Test)
+            diff_state1_cell{b}  = sA1 - sB1; 
             win_centers1_cell{b} = wc1;
+            sA1_cell{b}          = sA1;
+            sB1_cell{b}          = sB1;
             
             % --- State 2 (Cognitive) ---
             t_win2 = pairs{p}{4}; 
             [sA2, sB2, spcA2, spcB2, wc2, k2, pcl2] = compute_dynamic_connectivity(trialsA_filt, trialsB_filt, t_win2, time_ms_eeg, fs, window_size_ms, step_size_ms, bg_windows);
+            
             plot_dynamic_networks(sA2, sB2, spcA2, spcB2, wc2, trialsA_filt, trialsB_filt, time_ms_eeg, t_win2, fs, window_size_ms, step_size_ms, condA, condB, state_names{2}, current_band, k2, pcl2, all_channels_str, band_dir, subj_id);
             
-            diff_state2_cell{b} = sB2 - sA2;
+            diff_state2_cell{b}  = sA2 - sB2;
             win_centers2_cell{b} = wc2;
+            sA2_cell{b}          = sA2;
+            sB2_cell{b}          = sB2;
         end
         
-        % Store for Group Level
-        GROUP_DIFF_CONN{target_subj, p, 1} = diff_state1_cell;
-        GROUP_DIFF_CONN{target_subj, p, 2} = diff_state2_cell;
-        GROUP_TIME_AXIS{p, 1} = win_centers1_cell{1};
-        GROUP_TIME_AXIS{p, 2} = win_centers2_cell{1};
+        % Assign to temporary subject containers
+        temp_subj_diff{p, 1} = diff_state1_cell;
+        temp_subj_diff{p, 2} = diff_state2_cell;
+        temp_subj_time{p, 1} = win_centers1_cell{1};
+        temp_subj_time{p, 2} = win_centers2_cell{1};
         
-        % Generate the Within-Subject Connectivity Topoplots (Delta r)
-        plot_within_subj_topos(diff_state1_cell, win_centers1_cell{1}, band_names, cleanA, cleanB, state_names{1}, chanlocs, subj_dir, subj_id);
-        plot_within_subj_topos(diff_state2_cell, win_centers2_cell{1}, band_names, cleanA, cleanB, state_names{2}, chanlocs, subj_dir, subj_id);
+        % Generate the Within-Subject Connectivity Topoplots (Delta r Index)
+        plot_within_subj_topos(sA1_cell, sB1_cell, win_centers1_cell{1}, band_names, cleanA, cleanB, state_names{1}, chanlocs, subj_dir, subj_id);
+        plot_within_subj_topos(sA2_cell, sB2_cell, win_centers2_cell{1}, band_names, cleanA, cleanB, state_names{2}, chanlocs, subj_dir, subj_id);
     end
     
-    clear subject_data trialsA_raw trialsB_raw;
+    % Drop the fully assembled subject into the sliced group matrices
+    GROUP_DIFF_CONN(target_subj, :, :) = temp_subj_diff;
+    GROUP_TIME_AXIS(target_subj, :, :) = temp_subj_time;
 end
 disp('All parallel subject processing complete!');
 
@@ -188,7 +211,9 @@ for p = 1:length(pairs)
     
     for state_idx = 1:2
         state_name = state_names{state_idx};
-        t_axis = GROUP_TIME_AXIS{p, state_idx};
+        
+        % Extract Time Axis safely from the first subject's entry
+        t_axis = GROUP_TIME_AXIS{1, p, state_idx};
         if isempty(t_axis), continue; end
         
         for b = 1:length(band_names)
