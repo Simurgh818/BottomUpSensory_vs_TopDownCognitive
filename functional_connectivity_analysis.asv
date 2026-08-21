@@ -68,7 +68,7 @@ for i = 1:length(names_cell)
 end
 [~, sort_idx] = sort(subj_numbers);
 names_sorted = names_cell(sort_idx);
-num_subjects = 1; % length(names_sorted);
+num_subjects = 1 length(names_sorted);
 
 get_clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
     'BLA', 'Auditory'), 'BLT', 'Tactile'), 'P1', 'Cued'), ...
