@@ -1096,7 +1096,7 @@ for g = 1:length(plot_groups)
 end
 warning('on', 'all');
 disp('Segmented Dynamic dPCA visualization complete.');
-%% 4.0 Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
+%% 4.0 AUC Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
 
 %% 4.0 Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
 disp('Running RM ANOVA and Generating Statistical Bar Charts (Normalized AUC)...');
@@ -1326,7 +1326,7 @@ for m = 1:length(model_names)
         end
     end
 end
-%% 5.0 Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
+%% 5.0 Cosine Similarity Statistical Quantification: RM ANOVA & Bar Charts on dPC Amplitudes
 
 %% 5.0 Statistical Quantification: RM ANOVA & Bar Charts on Latent Trajectory Similarity
 disp('Running RM ANOVA on Latent Trajectory Cosine Similarity (LOSO)...');
@@ -1560,7 +1560,7 @@ get_clean_name = @(x) strrep(strrep(strrep(strrep(strrep(strrep(strrep(strrep(st
     'P1', 'Cued'), 'P2', 'Unpred.'), 'P3', 'Rand. Cued');
 
 % --- Test Parameters ---
-cond_A = 'BLA';
+cond_A = 'BLT';
 cond_B = 'P1';
 m_name = 'MS';               % Which dPCA space to use (MS, Temp, Stim)
 test_window = [1.00, 1.35];  % The exact time window to test
