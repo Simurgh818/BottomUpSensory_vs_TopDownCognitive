@@ -20,7 +20,6 @@ function plot_within_subj_topos(sA_cell, sB_cell, time_axis, band_names, cleanA,
             nodeB = sum(matB - diag(diag(matB)), 2, 'omitnan');
             
             % 2. Calculate the Stabilized Index: (Control - Test) / Control
-            % Added +0.05 to the absolute denominator to prevent division-by-zero artifacts
             node_index = (nodeA - nodeB) ./ (abs(nodeA) + 0.05);
             topoplot(node_index, chanlocs, 'numcontour', 0);
             
@@ -30,14 +29,13 @@ function plot_within_subj_topos(sA_cell, sB_cell, time_axis, band_names, cleanA,
             
             % Format annotations
             if w == 1
-                % --- UPDATED: Moved band name to the LEFT side of the first column ---
                 text(-0.75, 0, upper(band_names{b}), ...
                      'HorizontalAlignment', 'center', 'Rotation', 90, ...
                      'FontSize', 16, 'FontWeight', 'bold');
             end
             
             if b == num_bands
-                % Add the time strictly to the bottom of the last row
+                % Add the time center cleanly to the bottom
                 text(0, -0.65, sprintf('%.2fs', time_axis(w)), 'HorizontalAlignment', 'center', 'FontSize', 16, 'FontWeight', 'bold');
             end
             

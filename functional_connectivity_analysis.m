@@ -16,27 +16,30 @@ output_path = fullfile(base_output_path, 'functional_connectivity');
 % --- 2. Configuration Parameters ---
 conditions = {'BLA','BLT','P1','P2','P3'};
 num_ch = 32;
-window_size_ms = 100; % Used for network connectivity
-step_size_ms = 50;
-bg_windows = [0, 0.5; 3.0, 3.5]; % Universal Resting State Baseline Windows
 
-% Band-Specific Window Sizes for FFT Topoplots
-win_sizes_ms = struct('delta', 1000, 'theta', 500, 'alpha', 250, 'beta', 125, 'gamma', 75);
+% UPDATED: 100ms window size and 100ms steps to create continuous non-overlapping frames
+window_size_ms = 100; 
+step_size_ms = 100;
+bg_windows = [0, 0.5]; % Universal Resting State Baseline Windows (0 to 0.5s)
 
-% --- NEW: 3 Distinct Evaluation Windows (Pre, Stim, Post) ---
-% Format: {CondA, CondB, [Pre-Win], [Stim-Win], [Post-Win], Pre-Name, Stim-Name, Post-Name}
-pairs = {
-    {'BLT', 'P1', [0.85, 1.0], [1.0, 1.35], [1.35, 1.5], 'Tactile -150ms', 'Tactile 0-350ms', 'Tactile +150ms'},
-    {'BLA', 'P1', [0.35, 0.5], [0.5, 0.85], [0.85, 1.0], 'Auditory -150ms', 'Auditory 0-350ms', 'Auditory +150ms'},
-    {'P1', 'P2_500', [0.85, 1.0], [1.0, 1.35], [1.35, 1.5], 'Tactile -150ms', 'Tactile 0-350ms', 'Tactile +150ms'},    
-    {'P1', 'P2_2000', [2.35, 2.5], [2.5, 2.85], [2.85, 3.0], 'Tactile -150ms', 'Tactile 0-350ms', 'Tactile +150ms'}, 
-    {'P1', 'P3_500', [0.85, 1.0], [1.0, 1.35], [1.35, 1.5], 'Tactile -150ms', 'Tactile 0-350ms', 'Tactile +150ms'},
-    {'P1', 'P3_missing', [0.85, 1.0], [1.0, 1.35], [1.35, 1.5], 'Tactile -150ms', 'Tactile 0-350ms', 'Tactile +150ms'}
-};
-
-% Define Canonical EEG Bands
-bands = struct('delta',[1 4], 'theta',[4 8], 'alpha',[8 13], 'beta',[13 30], 'gamma',[30 50]);
+% Limit to just Alpha and Beta
+bands = struct('alpha', [8 13], 'beta', [13 30]);
 band_names = fieldnames(bands);
+
+% Set FFT window sizes to 100ms to match the topological windowing
+win_sizes_ms = struct('alpha', 100, 'beta', 100);
+
+% --- NEW: Single Continuous Evaluation Window (-100ms to +500ms) ---
+% Format: {CondA, CondB, [Eval-Win], Display-Name}
+% Note: Tactile/Cued stimuli hit at 1.0s, Auditory hits at 0.5s, P2_2000 hits at 2.5s.
+pairs = {
+    {'BLT', 'P1', [0.9, 1.5], 'Tactile vs Cued (-100 to 500ms)'},
+    {'BLA', 'P1', [0.4, 1.0], 'Auditory vs Cued (-100 to 500ms)'},
+    {'P1', 'P2_500', [0.9, 1.5], 'Cued vs Unpred 500 (-100 to 500ms)'},    
+    {'P1', 'P2_2000', [2.4, 3.0], 'Cued vs Unpred 2000 (-100 to 500ms)'}, 
+    {'P1', 'P3_500', [0.9, 1.5], 'Cued vs Rand 500 (-100 to 500ms)'},
+    {'P1', 'P3_missing', [0.9, 1.5], 'Cued vs Rand Missing (-100 to 500ms)'}
+};
 
 % Start Parallel Pool
 target_workers = 5; 
@@ -68,7 +71,9 @@ for i = 1:length(names_cell)
 end
 [~, sort_idx] = sort(subj_numbers);
 names_sorted = names_cell(sort_idx);
-num_subjects = 1; % length(names_sorted);
+
+num_subjects = length(names_sorted);
+% num_subjects = 1; % <--- Uncomment to test just 1 subject
 
 get_clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
     'BLA', 'Auditory'), 'BLT', 'Tactile'), 'P1', 'Cued'), ...
@@ -77,9 +82,9 @@ get_clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
 % =========================================================================
 % 3.5 DATA STORAGE & SPATIAL INITIALIZATION
 % =========================================================================
-% Expanded to store 3 distinct evaluation states per condition pair
-GROUP_DIFF_CONN = cell(num_subjects, length(pairs), 3); 
-GROUP_TIME_AXIS = cell(num_subjects, length(pairs), 3); 
+% Structure simplified since we only have 1 continuous window sequence per pair
+GROUP_DIFF_CONN = cell(num_subjects, length(pairs)); 
+GROUP_TIME_AXIS = cell(num_subjects, length(pairs)); 
 
 % Extract True 10-20 Channel Locations for the Topoplots early
 sample_EEG = pop_loadset('filename', names_sorted{1}, 'filepath', first_cond_dir, 'loadmode', 'info');
@@ -87,7 +92,7 @@ chanlocs = sample_EEG.chanlocs;
 all_channels_str = {chanlocs.labels};
 
 % --- 4. Outer Loop: Subjects (PARALLELIZED) ---
-parfor target_subj = 1:num_subjects
+parfor target_subj = 1:1 %num_subjects
     
     % DYNAMIC SUBJECT ID EXTRACTION
     base_file = names_sorted{target_subj};
@@ -109,14 +114,16 @@ parfor target_subj = 1:num_subjects
     subj_dir = fullfile(output_path, subj_id);
     if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
     
-    % Temporary storage for THIS subject to satisfy MATLAB's strict slicing rules
-    temp_subj_diff = cell(length(pairs), 3);
-    temp_subj_time = cell(length(pairs), 3);
+    temp_subj_diff = cell(length(pairs), 1);
+    temp_subj_time = cell(length(pairs), 1);
     
     % --- 5. Middle Loop: Condition Pairs ---
     for p = 1:length(pairs)
         condA = pairs{p}{1};
         condB = pairs{p}{2};
+        t_win = pairs{p}{3};      % Eval Window
+        state_name = pairs{p}{4}; % Display Name
+        
         cleanA = get_clean_name(condA);
         cleanB = get_clean_name(condB);
         
@@ -126,27 +133,19 @@ parfor target_subj = 1:num_subjects
         
         trialsA_raw = subject_data.(condA);
         trialsB_raw = subject_data.(condB);
-        
         if isempty(trialsA_raw) || isempty(trialsB_raw), continue; end
         
-        fprintf('   [%s] -> Generating Band Power Index Topoplots...\n', subj_id);
+        fprintf('   [%s] -> Generating Continuous Band Power Topoplots...\n', subj_id);
         
-        % --- Evaluate the 3 Dynamic State Windows (Pre, Stim, Post) ---
-        for state_idx = 1:3
-            t_win_power = pairs{p}{2 + state_idx}; % Index 3, 4, 5
-            state_name  = pairs{p}{5 + state_idx}; % Index 6, 7, 8
-            
-            plot_band_power_topos(trialsA_raw, trialsB_raw, t_win_power, time_ms_eeg, fs, ...
-                win_sizes_ms, step_size_ms, condA, condB, state_name, bands, chanlocs, subj_dir, subj_id);
-        end
+        plot_band_power_topos(trialsA_raw, trialsB_raw, t_win, time_ms_eeg, fs, ...
+            win_sizes_ms, step_size_ms, condA, condB, state_name, bands, chanlocs, subj_dir, subj_id);
         
-        fprintf('   [%s] -> Processing Pair: %s vs %s across EEG Bands...\n', subj_id, condA, condB);
+        fprintf('   [%s] -> Processing Pair: %s vs %s across Alpha & Beta...\n', subj_id, condA, condB);
         
-        % Pre-allocate storage for the 3 states
-        diff_state_cell  = cell(3, length(band_names));
-        win_centers_cell = cell(3, length(band_names));
-        sA_cell          = cell(3, length(band_names));
-        sB_cell          = cell(3, length(band_names));
+        diff_state_cell  = cell(1, length(band_names));
+        sA_cell          = cell(1, length(band_names));
+        sB_cell          = cell(1, length(band_names));
+        win_centers_arr  = [];
         
         % --- 6. Inner Loop: EEG Frequency Bands (SERIAL) ---
         for b = 1:length(band_names)
@@ -159,36 +158,26 @@ parfor target_subj = 1:num_subjects
             trialsA_filt = filter_trials_band(trialsA_raw, f_range, fs);
             trialsB_filt = filter_trials_band(trialsB_raw, f_range, fs);
             
-            % --- Extract connectivity for all 3 States (Pre, Stim, Post) ---
-            for state_idx = 1:3
-                t_win = pairs{p}{2 + state_idx}; 
-                state_name = pairs{p}{5 + state_idx};
-                
-                [sA, sB, spcA, spcB, wc, k, pcl] = compute_dynamic_connectivity(trialsA_filt, trialsB_filt, t_win, time_ms_eeg, fs, window_size_ms, step_size_ms, bg_windows);
-                
-                plot_dynamic_networks(sA, sB, spcA, spcB, wc, trialsA_filt, trialsB_filt, time_ms_eeg, t_win, fs, window_size_ms, step_size_ms, condA, condB, state_name, current_band, k, pcl, all_channels_str, band_dir, subj_id);
-                
-                % Save matrices to temporary grid
-                diff_state_cell{state_idx, b}  = sA - sB; 
-                win_centers_cell{state_idx, b} = wc;
-                sA_cell{state_idx, b}          = sA;
-                sB_cell{state_idx, b}          = sB;
-            end
+            [sA, sB, spcA, spcB, wc, k, pcl] = compute_dynamic_connectivity(trialsA_filt, trialsB_filt, t_win, time_ms_eeg, fs, window_size_ms, step_size_ms, bg_windows);
+            
+            plot_dynamic_networks(sA, sB, spcA, spcB, wc, trialsA_filt, trialsB_filt, time_ms_eeg, t_win, fs, window_size_ms, step_size_ms, condA, condB, state_name, current_band, k, pcl, all_channels_str, band_dir, subj_id);
+            
+            diff_state_cell{b} = sA - sB; 
+            sA_cell{b} = sA;
+            sB_cell{b} = sB;
+            if b == 1, win_centers_arr = wc; end
         end
         
-        % Drop the fully calculated bands into the subject's cell and generate Topos
-        for state_idx = 1:3
-            temp_subj_diff{p, state_idx} = diff_state_cell(state_idx, :);
-            temp_subj_time{p, state_idx} = win_centers_cell{state_idx, 1};
-            
-            % Generate the Within-Subject Connectivity Topoplots (Delta r Index)
-            plot_within_subj_topos(sA_cell(state_idx, :), sB_cell(state_idx, :), win_centers_cell{state_idx, 1}, band_names, cleanA, cleanB, pairs{p}{5 + state_idx}, chanlocs, subj_dir, subj_id);
-        end
+        temp_subj_diff{p} = diff_state_cell;
+        temp_subj_time{p} = win_centers_arr;
+       
+        % Generate the Within-Subject Connectivity Topoplots (Delta r Index)
+        % --- UPDATED: Added window_size_ms to the function call ---
+        plot_within_subj_topos(sA_cell, sB_cell, win_centers_arr, window_size_ms, band_names, cleanA, cleanB, state_name, chanlocs, subj_dir, subj_id);
     end
     
-    % Drop the fully assembled subject into the sliced group matrices
-    GROUP_DIFF_CONN(target_subj, :, :) = temp_subj_diff;
-    GROUP_TIME_AXIS(target_subj, :, :) = temp_subj_time;
+    GROUP_DIFF_CONN(target_subj, :) = temp_subj_diff;
+    GROUP_TIME_AXIS(target_subj, :) = temp_subj_time;
 end
 disp('All parallel subject processing complete!');
 
@@ -196,36 +185,32 @@ disp('All parallel subject processing complete!');
 disp('Calculating Between-Subject Group Statistics...');
 group_out_dir = fullfile(output_path, 'Group_Level_Results');
 if ~exist(group_out_dir, 'dir'), mkdir(group_out_dir); end
+
 for p = 1:length(pairs)
     condA = pairs{p}{1}; condB = pairs{p}{2};
     cleanA = get_clean_name(condA); cleanB = get_clean_name(condB);
+    state_name = pairs{p}{4};
     
-    % Loop through the 3 evaluated states
-    for state_idx = 1:3
-        state_name = pairs{p}{5 + state_idx}; % 6, 7, 8 in pairs definition
+    t_axis = GROUP_TIME_AXIS{1, p};
+    if isempty(t_axis), continue; end
+    
+    for b = 1:length(band_names)
+        band = band_names{b};
+        valid_subjs = 0;
+        group_tensor = [];
         
-        % Extract Time Axis safely from the first subject's entry
-        t_axis = GROUP_TIME_AXIS{1, p, state_idx};
-        if isempty(t_axis), continue; end
+        for s = 1:num_subjects
+            if ~isempty(GROUP_DIFF_CONN{s, p})
+                valid_subjs = valid_subjs + 1;
+                group_tensor(valid_subjs, :, :, :) = GROUP_DIFF_CONN{s, p}{b};
+            end
+        end
         
-        for b = 1:length(band_names)
-            band = band_names{b};
-            valid_subjs = 0;
-            group_tensor = [];
+        if valid_subjs > 1
+            grand_avg_net = squeeze(mean(group_tensor, 1, 'omitnan'));
+            [~, p_values, ~, ~] = ttest(group_tensor, 0, 'Alpha', 0.10, 'Dim', 1);
             
-            for s = 1:num_subjects
-                if ~isempty(GROUP_DIFF_CONN{s, p, state_idx})
-                    valid_subjs = valid_subjs + 1;
-                    group_tensor(valid_subjs, :, :, :) = GROUP_DIFF_CONN{s, p, state_idx}{b};
-                end
-            end
-            
-            if valid_subjs > 1
-                grand_avg_net = squeeze(mean(group_tensor, 1, 'omitnan'));
-                [~, p_values, ~, ~] = ttest(group_tensor, 0, 'Alpha', 0.10, 'Dim', 1);
-                
-                plot_group_level_networks(grand_avg_net, squeeze(p_values), t_axis, cleanA, cleanB, state_name, band, all_channels_str, chanlocs, group_out_dir);
-            end
+            plot_group_level_networks(grand_avg_net, squeeze(p_values), t_axis, cleanA, cleanB, state_name, band, all_channels_str, chanlocs, group_out_dir);
         end
     end
 end
