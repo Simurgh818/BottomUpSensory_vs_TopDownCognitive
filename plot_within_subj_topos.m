@@ -1,11 +1,15 @@
-function plot_within_subj_topos(sA_cell, sB_cell, time_axis, band_names, cleanA, cleanB, state_name, chanlocs, output_dir, subj_id)
+% --- UPDATED: Added window_size_ms as an input argument ---
+function plot_within_subj_topos(sA_cell, sB_cell, time_axis, window_size_ms, band_names, cleanA, cleanB, state_name, chanlocs, output_dir, subj_id)
     
     num_bands = length(band_names);
     num_windows = length(time_axis);
     
-    fig = figure('Position', [50, 50, max(600, 270 * num_windows), 220 * num_bands], ...
+    % --- UPDATED: Increased base height and added +100 absolute padding ---
+    fig = figure('Position', [50, 50, max(600, 270 * num_windows), 250 * num_bands + 100], ...
         'Name', sprintf('%s Band Topos', state_name), 'Visible', 'off');
-    tiledlayout(num_bands, num_windows, 'TileSpacing', 'compact', 'Padding', 'compact');
+    
+    % --- UPDATED: Changed Padding to 'normal' to prevent margin cutoff ---
+    tiledlayout(num_bands, num_windows, 'TileSpacing', 'compact', 'Padding', 'normal');
     
     for b = 1:num_bands
         for w = 1:num_windows
@@ -35,8 +39,9 @@ function plot_within_subj_topos(sA_cell, sB_cell, time_axis, band_names, cleanA,
             end
             
             if b == num_bands
-                % Add the time center cleanly to the bottom
-                text(0, -0.65, sprintf('%.2fs', time_axis(w)), 'HorizontalAlignment', 'center', 'FontSize', 16, 'FontWeight', 'bold');
+                % Calculate and print the START of the window
+                w_start = time_axis(w) - (window_size_ms / 1000 / 2);
+                text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 16, 'FontWeight', 'bold');
             end
             
             if b == num_bands && w == num_windows

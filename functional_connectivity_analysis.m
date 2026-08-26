@@ -27,18 +27,20 @@ bands = struct('alpha', [8 13], 'beta', [13 30]);
 band_names = fieldnames(bands);
 
 % Set FFT window sizes to 100ms to match the topological windowing
-win_sizes_ms = struct('alpha', 100, 'beta', 100);
+win_sizes_ms = struct('alpha', 250, 'beta', 125);
 
 % --- NEW: Single Continuous Evaluation Window (-100ms to +500ms) ---
 % Format: {CondA, CondB, [Eval-Win], Display-Name}
 % Note: Tactile/Cued stimuli hit at 1.0s, Auditory hits at 0.5s, P2_2000 hits at 2.5s.
 pairs = {
-    {'BLT', 'P1', [0.9, 1.5], 'Tactile vs Cued (-100 to 500ms)'},
-    {'BLA', 'P1', [0.4, 1.0], 'Auditory vs Cued (-100 to 500ms)'},
-    {'P1', 'P2_500', [0.9, 1.5], 'Cued vs Unpred 500 (-100 to 500ms)'},    
-    {'P1', 'P2_2000', [2.4, 3.0], 'Cued vs Unpred 2000 (-100 to 500ms)'}, 
-    {'P1', 'P3_500', [0.9, 1.5], 'Cued vs Rand 500 (-100 to 500ms)'},
-    {'P1', 'P3_missing', [0.9, 1.5], 'Cued vs Rand Missing (-100 to 500ms)'}
+    {'BLT', 'P1',        [0.9, 1.5], 'Tactile vs Cued (-100 to 500ms)'},
+    {'BLA', 'P1',        [0.4, 1.0], 'Auditory vs Cued (-100 to 500ms)'},
+    {'P1',  'P2',        [0.9, 3.0], 'Cued vs Unpred (-100 to 2000ms)'},       % 21 frames (spanning 0.9s to 3.0s)
+    {'P1',  'P2_500',    [0.9, 1.5], 'Cued vs Unpred 500 (-100 to 500ms)'},
+    {'P1',  'P2_2000',   [2.4, 3.0], 'Cued vs Unpred 2000 (-100 to 500ms)'}, 
+    {'P1',  'P3',        [0.9, 1.5], 'Cued vs Rand Cued (-100 to 500ms)'},
+    {'P1',  'P3_500',    [0.9, 1.5], 'Cued vs Rand 500 (-100 to 500ms)'},
+    {'P1',  'P3_missing', [0.9, 1.5], 'Cued vs Rand Missing (-100 to 500ms)'}
 };
 
 % Start Parallel Pool
