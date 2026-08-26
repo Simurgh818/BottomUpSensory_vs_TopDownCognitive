@@ -119,6 +119,47 @@ parfor target_subj = 1:1 %num_subjects
     temp_subj_diff = cell(length(pairs), 1);
     temp_subj_time = cell(length(pairs), 1);
     
+% =========================================================================
+    % 4.5. BUILD THE GLOBAL BROADBAND MANIFOLD (ALL CONDITIONS)
+    % =========================================================================
+    fprintf('   [%s] -> Building Global dPCA Manifold...\n', subj_id);
+    
+    % Identify all available conditions for this subject
+    avail_conds = fieldnames(subject_data);
+    stack_avg = [];
+    avg_broadband = struct();
+    
+    for c = 1:length(avail_conds)
+        c_name = avail_conds{c};
+        trials = subject_data.(c_name);
+        if ~isempty(trials) && size(trials, 3) > 0
+            % Trial Average
+            avg = mean(trials, 3, 'omitnan');
+            avg_broadband.(c_name) = avg;
+            
+            % Stack for global manifold [Channels x Time x Conditions]
+            stack_avg = cat(3, stack_avg, avg);
+        end
+    end
+    
+    % Run MAP test and SVD/dPCA fallback
+    data_2d = reshape(stack_avg, num_ch, []);
+
+    % Pass 'true' to suppress plotting inside the parfor loop!
+    [k_opt, ~] = velicer_map((data_2d - mean(data_2d, 2))', true);
+    if k_opt < 2, k_opt = 2; end
+    fprintf('      -> Velicer MAP assigned %d dimensions for Global Manifold.\n', k_opt);
+    
+    try
+        X_dpca = bsxfun(@minus, stack_avg, mean(stack_avg(:,:), 2));
+        [W_dpca, ~, ~] = dpca(X_dpca, k_opt);
+        W = W_dpca'; % [k x Channels]
+    catch
+        fprintf('      -> dPCA failed or missing. Using SVD fallback.\n');
+        [~, ~, V] = svd((data_2d - mean(data_2d, 2))', 'econ');
+        W = V(:, 1:k_opt)';
+    end
+
     % --- 5. Middle Loop: Condition Pairs ---
     for p = 1:length(pairs)
         condA = pairs{p}{1};
@@ -144,12 +185,22 @@ parfor target_subj = 1:1 %num_subjects
         
         fprintf('   [%s] -> Processing Pair: %s vs %s across Alpha & Beta...\n', subj_id, condA, condB);
         
+        % --- NEW: GENERATE dPCA TRAJECTORY & SUBSPACE FILMSTRIPS ---
+        fprintf('   [%s] -> Generating dPCA Trajectory & Subspace Filmstrips...\n', subj_id);
+        
+        avgA = avg_broadband.(condA);
+        avgB = avg_broadband.(condB);
+        
+        plot_dpca_subspace_filmstrip(avgA, avgB, W, k_opt, t_win, time_ms_eeg, ...
+            window_size_ms, step_size_ms, bg_windows, cleanA, cleanB, ...
+            all_channels_str, subj_dir, subj_id);
+
         diff_state_cell  = cell(1, length(band_names));
         sA_cell          = cell(1, length(band_names));
         sB_cell          = cell(1, length(band_names));
         win_centers_arr  = [];
         
-        % --- 6. Inner Loop: EEG Frequency Bands (SERIAL) ---
+       % --- 6. Inner Loop: EEG Frequency Bands ---
         for b = 1:length(band_names)
             current_band = band_names{b};
             f_range = bands.(current_band);
@@ -160,9 +211,15 @@ parfor target_subj = 1:1 %num_subjects
             trialsA_filt = filter_trials_band(trialsA_raw, f_range, fs);
             trialsB_filt = filter_trials_band(trialsB_raw, f_range, fs);
             
-            [sA, sB, spcA, spcB, wc, k, pcl] = compute_dynamic_connectivity(trialsA_filt, trialsB_filt, t_win, time_ms_eeg, fs, window_size_ms, step_size_ms, bg_windows);
+            % --- GENERATE 3-ROW CORRELATION FILMSTRIPS (Notebook Implementation) ---
+            plot_correlation_filmstrip(trialsA_filt, t_win, time_ms_eeg, window_size_ms, step_size_ms, ...
+                bg_windows, cleanA, current_band, all_channels_str, band_dir, subj_id);
+            plot_correlation_filmstrip(trialsB_filt, t_win, time_ms_eeg, window_size_ms, step_size_ms, ...
+                bg_windows, cleanB, current_band, all_channels_str, band_dir, subj_id);
             
-            plot_dynamic_networks(sA, sB, spcA, spcB, wc, trialsA_filt, trialsB_filt, time_ms_eeg, t_win, fs, window_size_ms, step_size_ms, condA, condB, state_name, current_band, k, pcl, all_channels_str, band_dir, subj_id);
+            % --- Dimensionality Reduction & Network Dynamics ---
+            [sA, sB, spcA, spcB, wc, k, pcl] = compute_dynamic_connectivity(trialsA_filt, trialsB_filt, ...
+                t_win, time_ms_eeg, fs, window_size_ms, step_size_ms, bg_windows);
             
             diff_state_cell{b} = sA - sB; 
             sA_cell{b} = sA;
