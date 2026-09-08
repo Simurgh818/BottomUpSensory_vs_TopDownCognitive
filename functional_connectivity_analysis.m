@@ -119,7 +119,7 @@ parfor target_subj = 1:1 %num_subjects
     temp_subj_diff = cell(length(pairs), 1);
     temp_subj_time = cell(length(pairs), 1);
     
-% =========================================================================
+    % =========================================================================
     % 4.5. BUILD THE GLOBAL BROADBAND MANIFOLD (ALL CONDITIONS)
     % =========================================================================
     fprintf('   [%s] -> Building Global dPCA Manifold...\n', subj_id);

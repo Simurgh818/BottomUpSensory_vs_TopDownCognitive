@@ -35,25 +35,26 @@ function plot_within_subj_topos(sA_cell, sB_cell, time_axis, window_size_ms, ban
             if w == 1
                 text(-0.75, 0, upper(band_names{b}), ...
                      'HorizontalAlignment', 'center', 'Rotation', 90, ...
-                     'FontSize', 16, 'FontWeight', 'bold');
+                     'FontSize', 20, 'FontWeight', 'bold');
             end
             
             if b == num_bands
                 % Calculate and print the START of the window
                 w_start = time_axis(w) - (window_size_ms / 1000 / 2);
-                text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 16, 'FontWeight', 'bold');
+                text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 20, 'FontWeight', 'bold');
             end
             
             if b == num_bands && w == num_windows
                 cb = colorbar;
                 cb.Label.String = sprintf('Nodal Index\n(%s - %s) / %s', cleanA, cleanB, cleanA);
-                cb.Label.FontSize = 14;
+                cb.Label.FontSize = 18;
+                cb.FontSize = 18;
                 cb.Label.FontWeight = 'bold';
             end
         end
     end
     
-    sgtitle(state_name, 'FontSize', 22, 'FontWeight', 'bold');
+    sgtitle(state_name, 'FontSize', 26, 'FontWeight', 'bold');
     
     save_name = fullfile(output_dir, sprintf('%s_%s_vs_%s_DeltaR_Index_Topos_%s.png', subj_id, strrep(cleanA,' ',''), strrep(cleanB,' ',''), strrep(state_name,' ','_')));
     saveas(fig, save_name);

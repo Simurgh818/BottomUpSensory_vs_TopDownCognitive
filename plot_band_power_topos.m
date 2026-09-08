@@ -82,25 +82,26 @@ function plot_band_power_topos(trialsA_raw, trialsB_raw, t_win, time_ms_eeg, fs,
             % Format annotations
             if w == 1
                 text(-0.75, 0, sprintf('%s', upper(band_names{b})), ...
-                     'HorizontalAlignment', 'center', 'Rotation', 90, 'FontSize', 14, 'FontWeight', 'bold');
+                     'HorizontalAlignment', 'center', 'Rotation', 90, 'FontSize', 18, 'FontWeight', 'bold');
             end
             
             if b == num_bands
                 % Calculate and print the START of the window (-100ms, 0ms, etc.)
                 w_start = wc - (step_size_s / 2);
-                text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 16, 'FontWeight', 'bold');
+                text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 24, 'FontWeight', 'bold');
             end
             
             if b == num_bands && w == num_windows
                 cb = colorbar;
                 cb.Label.String = sprintf('Power Index\n(%s - %s)/%s', cleanA, cleanB, cleanA);
-                cb.Label.FontSize = 14;
+                cb.Label.FontSize = 18;
+                cb.FontSize = 18;
                 cb.Label.FontWeight = 'bold';
             end
         end
     end
     
-    sgtitle(sprintf('Band Power Index: %s vs %s (%s)', cleanA, cleanB, active_state), 'FontSize', 22, 'FontWeight', 'bold');
+    sgtitle(sprintf('Band Power Index: %s vs %s (%s)', cleanA, cleanB, active_state), 'FontSize', 26, 'FontWeight', 'bold');
     save_name = fullfile(output_dir, sprintf('%s_%s_vs_%s_PowerTopos_%s.png', subj_id, condA, condB, strrep(active_state,' ','_')));
     saveas(fig, save_name);
     close(fig);
@@ -136,17 +137,18 @@ function plot_band_power_topos(trialsA_raw, trialsB_raw, t_win, time_ms_eeg, fs,
             colormap('jet');
             
             w_start = wc - (step_size_s / 2);
-            text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 16, 'FontWeight', 'bold');
+            text(0, -0.65, sprintf('%.2fs', w_start), 'HorizontalAlignment', 'center', 'FontSize', 20, 'FontWeight', 'bold');
             
             if w == num_windows
                 cb = colorbar;
                 cb.Label.String = sprintf('Ratio Index\n(%s - %s)/%s', cleanA, cleanB, cleanA);
-                cb.Label.FontSize = 14;
+                cb.Label.FontSize = 18;
+                cb.FontSize = 18;
                 cb.Label.FontWeight = 'bold';
             end
         end
         
-        sgtitle(sprintf('Beta/Alpha Ratio: %s vs %s (%s)', cleanA, cleanB, active_state), 'FontSize', 22, 'FontWeight', 'bold');
+        sgtitle(sprintf('Beta/Alpha Ratio: %s vs %s (%s)', cleanA, cleanB, active_state), 'FontSize', 26, 'FontWeight', 'bold');
         save_name_ratio = fullfile(output_dir, sprintf('%s_%s_vs_%s_BetaAlphaRatio_%s.png', subj_id, condA, condB, strrep(active_state,' ','_')));
         saveas(fig_ratio, save_name_ratio);
         close(fig_ratio);
