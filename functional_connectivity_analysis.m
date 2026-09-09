@@ -166,22 +166,35 @@ parfor target_subj = 1:num_subjects
 end
 disp('All parallel subject processing complete!');
 
+% =========================================================================
 % --- 8. BETWEEN-SUBJECT GROUP LEVEL STATISTICS ---
+% =========================================================================
 disp('Calculating Between-Subject Group Statistics...');
 group_out_dir = fullfile(output_path, 'Group_Level_Results');
 if ~exist(group_out_dir, 'dir'), mkdir(group_out_dir); end
+
 n_perms = 1000;
 alpha_level = 0.05;
 
 for p = 1:length(pairs)
-    condA = pairs{p}{1}; condB = pairs{p}{2};
-    cleanA = get_clean_name(condA); cleanB = get_clean_name(condB);
+    condA = pairs{p}{1}; 
+    condB = pairs{p}{2};
+    cleanA = get_clean_name(condA); 
+    cleanB = get_clean_name(condB);
     state_name = pairs{p}{4};
-    t_axis = GROUP_TIME_AXIS{1, p};
+    
+    % Safe extraction of t_axis across 1D or 2D cell formats
+    if ismatrix(GROUP_TIME_AXIS) && size(GROUP_TIME_AXIS, 1) >= 1
+        t_axis = GROUP_TIME_AXIS{1, p};
+    else
+        t_axis = GROUP_TIME_AXIS{p};
+    end
     
     if isempty(t_axis), continue; end
     
-    % 1. Connectivity Networks Group Stat
+    % ---------------------------------------------------------------------
+    % 1. Connectivity Networks Group Statistics (T-Test vs 0)
+    % ---------------------------------------------------------------------
     for b = 1:length(band_names)
         band = band_names{b};
         valid_subjs = 0;
@@ -197,44 +210,38 @@ for p = 1:length(pairs)
         if valid_subjs > 1
             grand_avg_net = squeeze(mean(group_tensor, 1, 'omitnan'));
             [~, p_values, ~, ~] = ttest(group_tensor, 0, 'Alpha', 0.10, 'Dim', 1);
-            % plot_group_level_networks(grand_avg_net, squeeze(p_values), t_axis, cleanA, cleanB, state_name, band, all_channels_str, chanlocs, group_out_dir);
+            
+            % if exist('plot_group_level_networks', 'file') == 2
+            %     plot_group_level_networks(grand_avg_net, squeeze(p_values), t_axis, ...
+            %         cleanA, cleanB, state_name, band, all_channels_str, chanlocs, group_out_dir);
+            % end
         end
     end
     
-    % 2. NEW: Power & Ratio Group Permutation Tests
-    fprintf('\nRunning Group-Level Power Permutation Tests for %s vs %s...\n', cleanA, cleanB);
+    % ---------------------------------------------------------------------
+    % 2. Group-Level Band Power Index & Beta/Alpha Ratio Index Figures
+    % ---------------------------------------------------------------------
+    fprintf('\nGenerating Group-Level Power Index Figures for %s vs %s...\n', cleanA, cleanB);
     alpha_idx = find(strcmpi(band_names, 'alpha'));
     beta_idx  = find(strcmpi(band_names, 'beta'));
-    
-    pow_A_group = cell(num_subjects, length(band_names));
-    pow_B_group = cell(num_subjects, length(band_names));
-    
-    for b = 1:length(band_names)
-        band = band_names{b};
-        for s = 1:num_subjects
-            if ~isempty(GROUP_TRIAL_POWER{s, p, b})
-                pow_A_group{s, b} = GROUP_TRIAL_POWER{s, p, b}{1}; % [Chans x Windows x Trials]
-                pow_B_group{s, b} = GROUP_TRIAL_POWER{s, p, b}{2};
-            end
-        end
-        
-        % Run standard band permutation
-        plot_group_power_permutation(pow_A_group(:, b), pow_B_group(:, b), t_axis, cleanA, cleanB, sprintf('%s (%s)', state_name, upper(band)), chanlocs, n_perms, alpha_level, group_out_dir);
-    end
-    
-    % Beta/Alpha Ratio Permutation
+
     if ~isempty(alpha_idx) && ~isempty(beta_idx)
-        ratio_A_group = cell(num_subjects, 1);
-        ratio_B_group = cell(num_subjects, 1);
-        
+        pow_A_group = cell(num_subjects, 2);
+        pow_B_group = cell(num_subjects, 2);
+
         for s = 1:num_subjects
-            if ~isempty(pow_A_group{s, alpha_idx}) && ~isempty(pow_A_group{s, beta_idx})
-                % Calculate ratio on a single-trial level before permutations
-                ratio_A_group{s} = pow_A_group{s, beta_idx} ./ (pow_A_group{s, alpha_idx} + eps);
-                ratio_B_group{s} = pow_B_group{s, beta_idx} ./ (pow_B_group{s, alpha_idx} + eps);
+            if ~isempty(GROUP_TRIAL_POWER{s, p, alpha_idx}) && ~isempty(GROUP_TRIAL_POWER{s, p, beta_idx})
+                pow_A_group{s, 1} = GROUP_TRIAL_POWER{s, p, alpha_idx}{1}; % Alpha Cond A
+                pow_B_group{s, 1} = GROUP_TRIAL_POWER{s, p, alpha_idx}{2}; % Alpha Cond B
+                pow_A_group{s, 2} = GROUP_TRIAL_POWER{s, p, beta_idx}{1};  % Beta Cond A
+                pow_B_group{s, 2} = GROUP_TRIAL_POWER{s, p, beta_idx}{2};  % Beta Cond B
             end
         end
-        plot_group_power_permutation(ratio_A_group, ratio_B_group, t_axis, cleanA, cleanB, sprintf('%s (BETA/ALPHA RATIO)', state_name), chanlocs, n_perms, alpha_level, group_out_dir);
+
+        % Generates both Band Power Index (Alpha & Beta) and Beta/Alpha Ratio Index
+        plot_group_power_index(pow_A_group, pow_B_group, t_axis, ...
+            cleanA, cleanB, state_name, chanlocs, n_perms, alpha_level, group_out_dir);
     end
+    
 end
 disp('Group-Level analytical extraction complete!');
