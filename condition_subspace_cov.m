@@ -1,4 +1,5 @@
 clear; clc; close all;
+
 % --- Paths ---
 if exist('I:\', 'dir')
     input_path = 'I:\My Drive\Data\New Data\EEG epoched\';
@@ -13,12 +14,10 @@ else
     error('Unknown system: Cannot determine input and output paths.');
 end
 output_path = fullfile(base_output_path, 'ch-ch_cov');
-
 if ~exist(output_path, 'dir')
     mkdir(output_path);
     fprintf('Created new output directory: %s\n', output_path);
 end
-
 conditions = {'BLA','BLT','P1','P2','P3'};
 num_ch = 32;
 fs = []; 
@@ -51,7 +50,7 @@ for c = 1:length(conditions)
         epoch_trials_p3_500ms = readmatrix(excel_file_path, 'Sheet', 'Audio onset with 500 ms tactile');
         epoch_trials_p3_missing = readmatrix(excel_file_path, 'Sheet', 'Audio onset with missing tactil');
     end
-
+    
     for s = 1:length(names_sorted)
         file_to_load = names_sorted{s}; 
         fprintf('Loading Subj %d/%d (%s) for condition: %s\n', s, length(names_sorted), file_to_load, condition);
@@ -82,19 +81,17 @@ end
 
 %% 0.2 Apply Alpha and Beta Zero-Phase Filtering & Compute Beta/Alpha Ratio
 disp('Applying Zero-Phase FIR Filters for Alpha and Beta...');
-
 fn = fs / 2; 
 ord_alpha = round(0.250 * fs); % 250 ms
 b_alpha   = fir1(ord_alpha, [8 12] / fn, 'bandpass');
-
 ord_beta  = round(0.125 * fs); % 125 ms
 b_beta    = fir1(ord_beta, [13 30] / fn, 'bandpass');
 
 % Smoothing window for envelopes (100 ms) to stabilize the ratio division
 smooth_win = round(0.100 * fs);
 smoothing_kernel = ones(smooth_win, 1) / smooth_win;
-
 cond_names = fieldnames(data_all_conds.Raw);
+
 for c = 1:length(cond_names)
     c_name = cond_names{c};
     for s = 1:length(data_all_conds.Raw.(c_name))
@@ -142,7 +139,6 @@ cfg.base          = [-1.000, -0.800];
 cfg.nTrialMatch   = 30;                
 cfg.nRep          = 50;                
 cfg.m             = 6;                 
-cfg.alpha         = 0.05;              
 cfg.seed          = 20260910;
 
 clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
@@ -161,14 +157,13 @@ iBase  = time_s >= cfg.base(1) & time_s < cfg.base(2);
 T_win  = nnz(iWin);
 t_eval = time_s(iWin);
 
-%% 3. Helper Functions
-shrinkCov = @(C, a) (1 - a) * C + a * (trace(C) / size(C, 1)) * eye(size(C, 1));
-covCentered = @(X, b, a) shrinkCov((( (X - b) - mean(X - b, 2) ) * ( (X - b) - mean(X - b, 2) )') / size(X, 2), a);
+%% 3. Helper Functions (Unregularized Empirical Covariance)
+% Simply calculates the standard covariance matrix across time points
+covCentered = @(X, b) (( (X - b) - mean(X - b, 2) ) * ( (X - b) - mean(X - b, 2) )') / size(X, 2);
 
-
-% =========================================================================
-% MASTER LOOP: PROCESS FREQUENCY BANDS (STRICTLY P1 REFERENCE)
-% =========================================================================
+%% =========================================================================
+%% MASTER LOOP: PROCESS FREQUENCY BANDS (STRICTLY P1 REFERENCE)
+%% =========================================================================
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
 cfg.group_A = {'P2_500', 'P3_500'};
@@ -208,7 +203,9 @@ for band_idx = 1:length(bands_to_process)
         
         erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
         bA   = mean(erpA(:, iBase), 2);
-        C_A_cent = covCentered(erpA(:, iWin), bA, cfg.alpha);
+        
+        % Calculate unregularized centered covariance
+        C_A_cent = covCentered(erpA(:, iWin), bA);
         
         [V, D] = eig(C_A_cent, 'vector');
         [lam, ord] = sort(D, 'descend');
@@ -239,7 +236,7 @@ for band_idx = 1:length(bands_to_process)
     grid on; xlabel('Gap Index'); ylabel('Relative Gap'); title('Mean Subspace Gaps');
     saveas(figA, fullfile(group_dir, 'Deliverable_A_Spectra.png')); close(figA);
 
-    % --- NEW Deliverable C: Subject-by-Subject Similarity Matrices ---
+    % --- Deliverable C: Subject-by-Subject Similarity Matrices ---
     figC = figure('Position', [100, 100, 300 * cfg.m, 350], 'Visible', 'off');
     tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
     
@@ -299,7 +296,10 @@ for band_idx = 1:length(bands_to_process)
             % Half A Basis recalculation per rep
             erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
             bA   = mean(erpA(:, iBase), 2);
-            C_A_cent = covCentered(erpA(:, iWin), bA, cfg.alpha);
+            
+            % Calculate unregularized centered covariance
+            C_A_cent = covCentered(erpA(:, iWin), bA);
+            
             [V, D] = eig(C_A_cent, 'vector');
             [lam, ord] = sort(D, 'descend');
             V = V(:, ord);
@@ -314,7 +314,7 @@ for band_idx = 1:length(bands_to_process)
                 end
             end
             
-            basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep, 'alpha', cfg.alpha);
+            basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep);
             
             % Half B Ceiling Evaluation
             erpB = mean(raw_ref(:, :, iB), 3, 'omitnan');
@@ -376,6 +376,7 @@ for band_idx = 1:length(bands_to_process)
             save(fullfile(subj_dir, ['proj_rep' rep_str '.mat']), '-struct', 'proj_vars');
         end
     end
+
     % ------------------------------------------------------------------
     %% CHECKPOINT 1 (B): Cross-Subject Consistency Permutation Test
     % ------------------------------------------------------------------
@@ -477,7 +478,15 @@ for band_idx = 1:length(bands_to_process)
         grid on; box on;
     end
     
-    saveas(figC, fullfile(group_dir, 'Deliverable_C_Permutation_Test.png')); close(figC);
+    save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
+    try
+        pause(0.5);
+        saveas(figC, save_file_perm);
+    catch
+        warning('Could not save %s. The file is likely locked by OneDrive or currently open.', save_file_perm);
+    end
+    close(figC);
+
     % ------------------------------------------------------------------
     %% CHECKPOINT 2: Group Level Stats, Tables, and Figures
     % ------------------------------------------------------------------
@@ -523,8 +532,15 @@ for band_idx = 1:length(bands_to_process)
     end
     grid on; xlabel('Spatial Direction Index', 'FontSize', 16); ylabel('log(r_i) \pm SEM', 'FontSize', 16);
     title(sprintf('Group B: Omission (%s %s)', band_name, cfg.ref_cond), 'FontSize', 16); legend('Location', 'best'); ylim(y_limits);
-
-    saveas(figChk2, fullfile(group_dir, 'Checkpoint2_Subspace_Redistribution.png')); close(figChk2);
+    
+    save_file_chk2 = fullfile(group_dir, 'Checkpoint2_Subspace_Redistribution.png');
+    try
+        pause(0.5);
+        saveas(figChk2, save_file_chk2);
+    catch
+        warning('Could not save %s. The file is likely locked by OneDrive.', save_file_chk2);
+    end
+    close(figChk2);
 
     % --- Export Group Results and Summary Table ---
     save(fullfile(group_dir, 'results.mat'), 'log_r_splits', 'G_splits', 'lat_splits', 'sust_splits');
@@ -549,5 +565,4 @@ for band_idx = 1:length(bands_to_process)
     end
     fclose(fid);
 end % END BAND LOOP
-
 disp('All individual component analyses across Raw, Alpha, and Beta bands completed successfully.');
