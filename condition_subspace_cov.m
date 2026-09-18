@@ -80,8 +80,8 @@ for c = 1:length(conditions)
     end
 end
 
-%% 0.2 Apply Alpha and Beta Zero-Phase Filtering
-disp('Applying Zero-Phase FIR Filters for Alpha (8-12 Hz) and Beta (13-30 Hz)...');
+%% 0.2 Apply Alpha and Beta Zero-Phase Filtering & Compute Beta/Alpha Ratio
+disp('Applying Zero-Phase FIR Filters for Alpha and Beta...');
 
 fn = fs / 2; 
 ord_alpha = round(0.250 * fs); % 250 ms
@@ -89,6 +89,10 @@ b_alpha   = fir1(ord_alpha, [8 12] / fn, 'bandpass');
 
 ord_beta  = round(0.125 * fs); % 125 ms
 b_beta    = fir1(ord_beta, [13 30] / fn, 'bandpass');
+
+% Smoothing window for envelopes (100 ms) to stabilize the ratio division
+smooth_win = round(0.100 * fs);
+smoothing_kernel = ones(smooth_win, 1) / smooth_win;
 
 cond_names = fieldnames(data_all_conds.Raw);
 for c = 1:length(cond_names)
@@ -102,14 +106,31 @@ for c = 1:length(cond_names)
         X_perm = permute(raw_data, [2, 1, 3]);
         X_2D   = reshape(X_perm, nt, nc * ntr);
         
+        % Filter original bands
         X_alpha_2D = filtfilt(b_alpha, 1, double(X_2D));
-        data_all_conds.Alpha.(c_name){s} = permute(reshape(X_alpha_2D, nt, nc, ntr), [2, 1, 3]);
-        
         X_beta_2D  = filtfilt(b_beta, 1, double(X_2D));
+        
+        % Save standard Alpha and Beta to struct
+        data_all_conds.Alpha.(c_name){s} = permute(reshape(X_alpha_2D, nt, nc, ntr), [2, 1, 3]);
         data_all_conds.Beta.(c_name){s}  = permute(reshape(X_beta_2D, nt, nc, ntr), [2, 1, 3]);
+        
+        % --- Calculate Beta/Alpha Ratio ---
+        % 1. Get Instantaneous Amplitude (Envelope) via Hilbert
+        env_alpha = abs(hilbert(X_alpha_2D));
+        env_beta  = abs(hilbert(X_beta_2D));
+        
+        % 2. Smooth envelopes to prevent dividing by near-zero instantaneous dips
+        env_alpha_smooth = filtfilt(smoothing_kernel, 1, env_alpha);
+        env_beta_smooth  = filtfilt(smoothing_kernel, 1, env_beta);
+        
+        % 3. Calculate Ratio (Adding eps to denominator prevents division by zero)
+        ratio_2D = env_beta_smooth ./ (env_alpha_smooth + eps);
+        
+        % 4. Save new Ratio dimension to Struct
+        data_all_conds.BetaAlphaRatio.(c_name){s} = permute(reshape(ratio_2D, nt, nc, ntr), [2, 1, 3]);
     end
 end
-disp('Filtering complete.');
+disp('Filtering and Beta/Alpha Ratio computation complete.');
 
 %% 1. Configuration Parameters
 cfg = struct();
@@ -148,7 +169,7 @@ covCentered = @(X, b, a) shrinkCov((( (X - b) - mean(X - b, 2) ) * ( (X - b) - m
 % =========================================================================
 % MASTER LOOP: PROCESS FREQUENCY BANDS (STRICTLY P1 REFERENCE)
 % =========================================================================
-bands_to_process = {'Raw', 'Alpha', 'Beta'};
+bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
 cfg.group_A = {'P2_500', 'P3_500'};
 cfg.group_B = {'P2_2000', 'P3_missing'};
