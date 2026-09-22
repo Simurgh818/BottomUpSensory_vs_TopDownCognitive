@@ -140,6 +140,8 @@ cfg.nTrialMatch   = 30;
 cfg.nRep          = 50;                
 cfg.m             = 6;                 
 cfg.seed          = 20260910;
+cfg.slide_win     = 0.100; % Sliding window size (100 ms)
+cfg.slide_step    = 0.025; % Sliding window step (25 ms) for smooth trajectory
 
 clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
     'BLT', 'Tactile (BLT)'), 'P1', 'Cued (P1)'), ...
@@ -156,6 +158,11 @@ iWin   = time_s >= cfg.win(1)  & time_s < cfg.win(2);
 iBase  = time_s >= cfg.base(1) & time_s < cfg.base(2);
 T_win  = nnz(iWin);
 t_eval = time_s(iWin);
+
+% --- Generate Time Vector for Sliding Window ---
+t_starts    = time_s(1) : cfg.slide_step : (time_s(end) - cfg.slide_win);
+t_centers   = t_starts + cfg.slide_win / 2;
+num_windows = length(t_starts);
 
 %% 3. Helper Functions (Unregularized Empirical Covariance)
 % Simply calculates the standard covariance matrix across time points
@@ -266,15 +273,20 @@ for band_idx = 1:length(bands_to_process)
     save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim');
     saveas(figC, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); close(figC);
 
-    % ------------------------------------------------------------------
+   % ------------------------------------------------------------------
     %% PROJECTIONS: Individual Component Evaluation (All Subjects/Reps)
     % ------------------------------------------------------------------
     % Group arrays: [Conditions x Metric/Dims x Reps x Subjects]
     G_splits     = nan(length(cfg.all_conds), cfg.nRep, num_subjects);
     log_r_splits = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
-    lat_splits   = nan(length(cfg.all_conds), cfg.nRep, num_subjects);
-    sust_splits  = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
     
+    % --- UPDATED: Preallocate latency to hold all m components ---
+    lat_splits   = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
+    sust_splits  = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
+
+    % --- Tracking Dynamic Trajectories ---
+    traj_splits  = nan(length(cfg.all_conds), cfg.m, num_windows, cfg.nRep, num_subjects);
+
     for subj = 1:num_subjects
         subj_dir = fullfile(output_path, sprintf('subj%02d', subj), band_name, cfg.ref_cond);
         if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
@@ -324,9 +336,10 @@ for band_idx = 1:length(bands_to_process)
             v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win;
             V_ceil = sum(v_ceil);
             
-            proj_B = Xi_rep(:, 1)' * XB;
-            [~, max_idx_B] = max(abs(proj_B));
-            t_lat_ceil = t_eval(max_idx_B);
+            % --- UPDATED: Calculate Ceiling Latency for ALL m components ---
+            proj_B = Xi_rep' * XB; % [m x T]
+            [~, max_idx_B] = max(abs(proj_B), [], 2);
+            t_lat_ceil = t_eval(max_idx_B); % [m x 1]
             
             % 2. Projections
             split_vars = struct('iA', iA, 'iB', iB);
@@ -339,6 +352,7 @@ for band_idx = 1:length(bands_to_process)
                 raw_cond = current_data.(cond){subj};
                 if strcmp(cond, cfg.ref_cond)
                     Xk = XB; bk = bB; idx_k = iB;
+                    erp_k = erpB; 
                 else
                     idx_k = randperm(size(raw_cond, 3), cfg.nTrialMatch);
                     erp_k = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
@@ -347,7 +361,8 @@ for band_idx = 1:length(bands_to_process)
                 end
                 
                 split_vars.(cond) = idx_k;
-                
+
+                % Static 0.0-0.5s Projection
                 v_k = sum((Xi_rep' * Xk).^2, 2) / T_win;
                 V_k = sum(v_k);
                 G_k = V_k / V_ceil;
@@ -360,14 +375,25 @@ for band_idx = 1:length(bands_to_process)
                 G_splits(c, rep, subj)        = G_k;
                 log_r_splits(c, :, rep, subj) = log_r_k;
                 
-                proj_k = Xi_rep(:, 1)' * Xk;
-                [~, max_idx_k] = max(abs(proj_k));
-                lat_splits(c, rep, subj) = (t_eval(max_idx_k) - t_lat_ceil) * 1000;
+                % --- UPDATED: Calculate Projected Latency for ALL m components ---
+                proj_k = Xi_rep' * Xk; % [m x T]
+                [~, max_idx_k] = max(abs(proj_k), [], 2);
+                lat_splits(c, :, rep, subj) = (t_eval(max_idx_k) - t_lat_ceil)' * 1000;
                 
                 xbar = mean(Xk, 2); Xd = Xk - xbar;
                 v_sust = (Xi_rep' * xbar).^2;
                 v_dyn  = sum((Xi_rep' * Xd).^2, 2) / T_win;
                 sust_splits(c, :, rep, subj) = v_sust ./ (v_sust + v_dyn + eps);
+
+                % --- Moving Window Dynamic Projection ---
+                for w = 1:num_windows
+                    w_mask = time_s >= t_starts(w) & time_s < (t_starts(w) + cfg.slide_win);
+                    if nnz(w_mask) > 0
+                        X_win = erp_k(:, w_mask) - bk;
+                        v_win = sum((Xi_rep' * X_win).^2, 2) / nnz(w_mask);
+                        traj_splits(c, :, w, rep, subj) = v_win;
+                    end
+                end
             end
             
             rep_str = sprintf('%02d', rep);
@@ -479,12 +505,7 @@ for band_idx = 1:length(bands_to_process)
     end
     
     save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
-    try
-        pause(0.5);
-        saveas(figC, save_file_perm);
-    catch
-        warning('Could not save %s. The file is likely locked by OneDrive or currently open.', save_file_perm);
-    end
+    try pause(0.5); saveas(figC, save_file_perm); catch, warning('Could not save %s.', save_file_perm); end
     close(figC);
 
     % ------------------------------------------------------------------
@@ -534,35 +555,138 @@ for band_idx = 1:length(bands_to_process)
     title(sprintf('Group B: Omission (%s %s)', band_name, cfg.ref_cond), 'FontSize', 16); legend('Location', 'best'); ylim(y_limits);
     
     save_file_chk2 = fullfile(group_dir, 'Checkpoint2_Subspace_Redistribution.png');
-    try
-        pause(0.5);
-        saveas(figChk2, save_file_chk2);
-    catch
-        warning('Could not save %s. The file is likely locked by OneDrive.', save_file_chk2);
-    end
+    try pause(0.5); saveas(figChk2, save_file_chk2); catch, warning('Could not save %s.', save_file_chk2); end
     close(figChk2);
 
-    % --- Export Group Results and Summary Table ---
-    save(fullfile(group_dir, 'results.mat'), 'log_r_splits', 'G_splits', 'lat_splits', 'sust_splits');
+    % ------------------------------------------------------------------
+    %% CHECKPOINT 3: Subspace Trajectory Alignment (Moving Window)
+    % ------------------------------------------------------------------
+    % Average trajectories across reps (dim 4) and subjects (dim 5)
+    subj_mean_traj  = squeeze(mean(traj_splits, 4, 'omitnan'));  % [nCond x m x nWin x Subjs]
+    group_mean_traj = squeeze(mean(subj_mean_traj, 4, 'omitnan')); % [nCond x m x nWin]
     
+    % Calculate Standard Error of the Mean (SEM) for Shading
+    group_sem_traj = squeeze(std(subj_mean_traj, 0, 4, 'omitnan')) ./ sqrt(num_subjects); % [nCond x m x nWin]
+    
+    % --- FIND SIGNIFICANT COMPONENTS (p < 0.05) ---
+    sig_components = find(p_vals < 0.05)';
+    if isempty(sig_components)
+        fprintf('\nNo components passed p < 0.05 consistency threshold. Defaulting to \\xi_1 for plotting.\n');
+        sig_components = 1;
+    end
+    num_sig = length(sig_components);
+    
+    % Dynamically scale figure height based on the number of significant components
+    fig_height = max(450, num_sig * 400);
+    figChk3 = figure('Position', [100, 100, 1400, fig_height], 'Visible', 'off');
+    tiledlayout(num_sig, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+    
+    c_idx_ref = find(strcmp(cfg.all_conds, cfg.ref_cond));
+    
+    for k_idx = 1:num_sig
+        k = sig_components(k_idx);
+        
+        % Dynamic Y-limit per component (Max Mean + Max SEM)
+        max_y = max(max(group_mean_traj(:, k, :) + group_sem_traj(:, k, :))) * 1.05;
+        
+        % --- Group A ---
+        nexttile; hold on;
+        patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [0 0 max_y max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
+        xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
+        
+        % Plot Reference Trajectory & SEM first
+        if ~isempty(c_idx_ref)
+            y_val_ref = reshape(group_mean_traj(c_idx_ref, k, :), 1, []);
+            y_sem_ref = reshape(group_sem_traj(c_idx_ref, k, :), 1, []);
+            
+            fill([t_centers, fliplr(t_centers)], max(0, [y_val_ref + y_sem_ref, fliplr(y_val_ref - y_sem_ref)]), ...
+                 [0.5 0.5 0.5], 'FaceAlpha', 0.25, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            plot(t_centers, y_val_ref, 'k-', 'LineWidth', 2, 'DisplayName', sprintf('Reference (%s)', clean_name(cfg.ref_cond)));
+        end
+        
+        for i = 1:length(cfg.group_A)
+            c_idx = find(strcmp(cfg.all_conds, cfg.group_A{i}));
+            if isempty(c_idx), continue; end
+            col_idx = mod(i-1, 3) + 1;
+            
+            y_val = reshape(group_mean_traj(c_idx, k, :), 1, []);
+            y_sem = reshape(group_sem_traj(c_idx, k, :), 1, []);
+            
+            fill([t_centers, fliplr(t_centers)], max(0, [y_val + y_sem, fliplr(y_val - y_sem)]), ...
+                 colors_A{col_idx}, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            plot(t_centers, y_val, '-', 'Color', colors_A{col_idx}, 'LineWidth', 2, 'DisplayName', clean_name(cfg.group_A{i}));
+        end
+        
+        grid on; xlabel('Time (s)', 'FontSize', 14); ylabel('Projected Variance', 'FontSize', 14);
+        title(sprintf('Group A: \\xi_%d Trajectory (p = %.3f)', k, p_vals(k)), 'FontSize', 16);
+        if k_idx == 1, legend('Location', 'best'); end
+        xlim([t_centers(1), t_centers(end)]); ylim([0, max_y]);
+        
+        % --- Group B ---
+        nexttile; hold on;
+        patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [0 0 max_y max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
+        xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
+        
+        if ~isempty(c_idx_ref)
+            fill([t_centers, fliplr(t_centers)], max(0, [y_val_ref + y_sem_ref, fliplr(y_val_ref - y_sem_ref)]), ...
+                 [0.5 0.5 0.5], 'FaceAlpha', 0.25, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            plot(t_centers, y_val_ref, 'k-', 'LineWidth', 2, 'DisplayName', sprintf('Reference (%s)', clean_name(cfg.ref_cond)));
+        end
+        
+        for i = 1:length(cfg.group_B)
+            c_idx = find(strcmp(cfg.all_conds, cfg.group_B{i}));
+            if isempty(c_idx), continue; end
+            
+            y_val = reshape(group_mean_traj(c_idx, k, :), 1, []);
+            y_sem = reshape(group_sem_traj(c_idx, k, :), 1, []);
+            
+            fill([t_centers, fliplr(t_centers)], max(0, [y_val + y_sem, fliplr(y_val - y_sem)]), ...
+                 colors_B{i}, 'FaceAlpha', 0.2, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            plot(t_centers, y_val, '-', 'Color', colors_B{i}, 'LineWidth', 2, 'DisplayName', clean_name(cfg.group_B{i}));
+        end
+        
+        grid on; xlabel('Time (s)', 'FontSize', 14); ylabel('Projected Variance', 'FontSize', 14);
+        title(sprintf('Group B: \\xi_%d Trajectory (p = %.3f)', k, p_vals(k)), 'FontSize', 16);
+        if k_idx == 1, legend('Location', 'best'); end
+        xlim([t_centers(1), t_centers(end)]); ylim([0, max_y]);
+    end
+    
+    sgtitle(sprintf('Subspace Trajectories (Significant Components: %s %s)', band_name, cfg.ref_cond), 'FontSize', 20, 'FontWeight', 'bold');
+    
+    save_file_chk3 = fullfile(group_dir, 'Checkpoint3_Subspace_Trajectories.png');
+    try pause(0.5); saveas(figChk3, save_file_chk3); catch, warning('Could not save %s.', save_file_chk3); end
+    close(figChk3);
+
+    % --- Export Group Results and Summary Table ---
+    save(fullfile(group_dir, 'results.mat'), 'log_r_splits', 'G_splits', 'lat_splits', 'sust_splits', 'traj_splits', 't_centers');
+    
+    % --- UPDATED: Summary Table Output for all Significant Components ---
     fid = fopen(fullfile(group_dir, 'summary_table.txt'), 'w');
     for out = [1, fid]
         fprintf(out, '\n========================================================================================\n');
         fprintf(out, 'SUMMARY TABLE: %s REFERENCE (BAND: %s) [Average over %d subjects]\n', cfg.ref_cond, upper(band_name), num_subjects);
-        fprintf(out, '----------------------------------------------------------------------------------------\n');
-        fprintf(out, '%-18s | %-10s | %-10s | %-18s | %-15s\n', 'Condition', 'Gain (G)', 'log(r_1)', '\Delta Latency (\xi_1)', 'Sustained % (\xi_1)');
-        fprintf(out, '----------------------------------------------------------------------------------------\n');
-        for c = 1:length(cfg.all_conds)
-            cond = cfg.all_conds{c};
-            % Average across subjects and reps
-            med_G   = mean(G_splits(c, :), 'all', 'omitnan'); 
-            med_lr1 = group_mean_log_r(c, 1);
-            med_lat = mean(lat_splits(c, :), 'all', 'omitnan'); 
-            med_sus = mean(sust_splits(c, 1, :), 'all', 'omitnan') * 100;
+        fprintf(out, '========================================================================================\n');
+        
+        for k = sig_components
+            fprintf(out, '\n--- SIGNIFICANT DIRECTION: \\xi_%d (p = %.3f) ---\n', k, p_vals(k));
+            fprintf(out, '----------------------------------------------------------------------------------------\n');
+            fprintf(out, '%-18s | %-10s | %-10s | %-18s | %-15s\n', 'Condition', 'Gain (G)', sprintf('log(r_%d)', k), sprintf('\\Delta Latency (\\xi_%d)', k), sprintf('Sustained %% (\\xi_%d)', k));
+            fprintf(out, '----------------------------------------------------------------------------------------\n');
             
-            fprintf(out, '%-18s | %-10.3f | %-10.3f | %+7.1f ms         | %6.2f%%\n', cond, med_G, med_lr1, med_lat, med_sus);
+            for c = 1:length(cfg.all_conds)
+                cond = cfg.all_conds{c};
+                
+                med_G     = mean(G_splits(c, :), 'all', 'omitnan'); % Gain is global across the subspace
+                med_lr_k  = group_mean_log_r(c, k);
+                med_lat_k = mean(lat_splits(c, k, :), 'all', 'omitnan'); 
+                med_sus_k = mean(sust_splits(c, k, :), 'all', 'omitnan') * 100;
+                
+                fprintf(out, '%-18s | %-10.3f | %-10.3f | %+7.1f ms         | %6.2f%%\n', cond, med_G, med_lr_k, med_lat_k, med_sus_k);
+            end
         end
+        fprintf(out, '\n\n');
     end
     fclose(fid);
+
 end % END BAND LOOP
 disp('All individual component analyses across Raw, Alpha, and Beta bands completed successfully.');
