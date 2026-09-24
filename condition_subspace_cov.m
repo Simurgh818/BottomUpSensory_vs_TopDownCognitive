@@ -134,7 +134,7 @@ cfg = struct();
 cfg.num_ch        = 32;
 cfg.fs            = fs;                
 cfg.tStart        = -1.000;            
-cfg.win           = [0.000, 0.500];    
+cfg.win           = [0.000, 1.000];    
 cfg.base          = [-1.000, -0.800];  
 cfg.nTrialMatch   = 30;                
 cfg.nRep          = 50;                
@@ -273,7 +273,7 @@ for band_idx = 1:length(bands_to_process)
     save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim');
     saveas(figC, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); close(figC);
 
-   % ------------------------------------------------------------------
+    % ------------------------------------------------------------------
     %% PROJECTIONS: Individual Component Evaluation (All Subjects/Reps)
     % ------------------------------------------------------------------
     % Group arrays: [Conditions x Metric/Dims x Reps x Subjects]
@@ -656,6 +656,194 @@ for band_idx = 1:length(bands_to_process)
     save_file_chk3 = fullfile(group_dir, 'Checkpoint3_Subspace_Trajectories.png');
     try pause(0.5); saveas(figChk3, save_file_chk3); catch, warning('Could not save %s.', save_file_chk3); end
     close(figChk3);
+
+    % =========================================================================
+    % CHECKPOINT 3b: 6-ROW TOPOPLOT/TRAJECTORY FILMSTRIPS (ALL 6 DIRECTIONS)
+    % =========================================================================
+    
+    % 1. Calculate the Group-Average Spatial Direction (Xi_bar)
+    Xi_bar = mean(Xi_aligned, 3);
+    Xi_bar = Xi_bar ./ vecnorm(Xi_bar); % Normalize to unit length
+    
+    % Define the time points for the topoplots (-0.1s to 1.0s, 100ms steps)
+    topo_times_s = -0.1 : 0.1 : 1.0;
+    num_topos = length(topo_times_s);
+    
+    % Find the exact array indices for these time points using the aligned time_s axis
+    topo_idx = zeros(1, num_topos);
+    for t = 1:num_topos
+        [~, topo_idx(t)] = min(abs(time_s - topo_times_s(t))); 
+    end
+    
+    % Define conditions and universally accepted RGB colors for looping
+    groupA_conds = {'P1', 'P2_500', 'P3_500'};
+    groupB_conds = {'P1', 'P2_2000', 'P3_missing'};
+    colors_A = {[0 0 0], [0.850 0.325 0.098], [0.929 0.694 0.125]}; % Black, Orange, Yellow
+    colors_B = {[0 0 0], [0.466 0.674 0.188], [0.301 0.745 0.933]}; % Black, Green, Light Blue
+    
+    % Loop through ALL 6 spatial directions
+    for k = 1:cfg.m
+        xi = Xi_bar(:, k); 
+        
+        % --- UPDATED: Dynamic Y-limits based strictly on the -0.1s to 1.0s window ---
+        time_mask = (t_centers >= -0.1) & (t_centers <= 1.0);
+        
+        % Find absolute min and max variance across ALL conditions in this window
+        y_upper = group_mean_traj(:, k, time_mask) + group_sem_traj(:, k, time_mask);
+        y_lower = group_mean_traj(:, k, time_mask) - group_sem_traj(:, k, time_mask);
+        
+        raw_max_y = max(y_upper(:));
+        raw_min_y = min(y_lower(:));
+        
+        % Add 5% padding to top and bottom for clean visualization
+        y_padding = (raw_max_y - raw_min_y) * 0.05;
+        if y_padding == 0, y_padding = 1; end % Fallback safety
+        max_y = raw_max_y + y_padding;
+        min_y = max(0, raw_min_y - y_padding); % Variance cannot be negative
+        
+        % -----------------------------------------------------------------
+        % FIGURE 1: GROUP A (Stimulus Delivered)
+        % -----------------------------------------------------------------
+        figA = figure('Position', [50, 50, 1600, 1100], 'Name', sprintf('Dir %d - Group A', k), 'Visible', 'off');
+        tiledlayout(6, num_topos, 'TileSpacing', 'compact', 'Padding', 'normal');
+        
+        for c = 1:length(groupA_conds)
+            cond = groupA_conds{c};
+            col = colors_A{c};
+            c_name_clean = clean_name(cond);
+            
+            % Grand-Average ERP for Topoplots
+            erp_all = cat(3, current_data.(cond){:});
+            avg_data = mean(erp_all, 3, 'omitnan');
+            
+            % ROW 1 (For this condition): TOPOPLOTS
+            traj_full = xi' * avg_data; 
+            c_lim = [-max(abs(traj_full)), max(abs(traj_full))] * 0.5; % Scale by 0.5 for visual contrast
+            
+            for t = 1:num_topos
+                nexttile;
+                amp_at_t = xi' * avg_data(:, topo_idx(t)); 
+                topo_reconstructed = xi * amp_at_t; 
+                
+                topoplot(topo_reconstructed, EEG.chanlocs, 'numcontour', 0);
+                clim(c_lim); colormap('jet');
+                
+                if c == 1
+                    title(sprintf('%.1fs', topo_times_s(t)), 'FontSize', 12, 'FontWeight', 'bold');
+                end
+                if t == 1
+                    text(-0.8, 0, sprintf('%s', c_name_clean), 'Rotation', 90, 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
+                end
+            end
+            
+            % ROW 2 (For this condition): TRAJECTORY TRACE
+            nexttile([1, num_topos]); hold on;
+            
+            % Background formatting (Scaled to new min_y)
+            patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [min_y min_y max_y max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
+            xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
+            
+            % Plot Trace
+            c_idx = find(strcmp(cfg.all_conds, cond));
+            if ~isempty(c_idx)
+                y_val = reshape(group_mean_traj(c_idx, k, :), 1, []);
+                y_sem = reshape(group_sem_traj(c_idx, k, :), 1, []);
+                
+                fill([t_centers, fliplr(t_centers)], max(0, [y_val + y_sem, fliplr(y_val - y_sem)]), ...
+                     col, 'FaceAlpha', 0.25, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                plot(t_centers, y_val, '-', 'Color', col, 'LineWidth', 2.5);
+            end
+            
+            % Tightly constrain X and Y axes
+            xlim([-0.1, 1.0]); ylim([min_y, max_y]); 
+            ylabel('Proj. Var', 'FontSize', 12, 'FontWeight', 'bold');
+            grid on;
+            
+            % Only show X-axis labels on the very last row
+            if c < length(groupA_conds)
+                xticklabels({});
+            else
+                xlabel('Time (s)', 'FontSize', 14, 'FontWeight', 'bold');
+            end
+        end
+        sgtitle(sprintf('Group A: Spatial Reconfiguration Filmstrip (\\xi_%d) [%s]', k, band_name), 'FontSize', 22, 'FontWeight', 'bold');
+        
+        save_file_A = fullfile(group_dir, sprintf('Checkpoint3b_GroupA_Filmstrip_Xi%d.png', k));
+        try pause(0.5); saveas(figA, save_file_A); catch, warning('Could not save %s.', save_file_A); end
+        close(figA);
+        
+        % -----------------------------------------------------------------
+        % FIGURE 2: GROUP B (Omission)
+        % -----------------------------------------------------------------
+        figB = figure('Position', [100, 100, 1600, 1100], 'Name', sprintf('Dir %d - Group B', k), 'Visible', 'off');
+        tiledlayout(6, num_topos, 'TileSpacing', 'compact', 'Padding', 'normal');
+        
+        for c = 1:length(groupB_conds)
+            cond = groupB_conds{c};
+            col = colors_B{c};
+            c_name_clean = clean_name(cond);
+            
+            % Grand-Average ERP for Topoplots
+            erp_all = cat(3, current_data.(cond){:});
+            avg_data = mean(erp_all, 3, 'omitnan');
+            
+            % ROW 1 (For this condition): TOPOPLOTS
+            traj_full = xi' * avg_data; 
+            c_lim = [-max(abs(traj_full)), max(abs(traj_full))] * 0.5; 
+            
+            for t = 1:num_topos
+                nexttile;
+                amp_at_t = xi' * avg_data(:, topo_idx(t)); 
+                topo_reconstructed = xi * amp_at_t; 
+                
+                topoplot(topo_reconstructed, EEG.chanlocs, 'numcontour', 0);
+                clim(c_lim); colormap('jet');
+                
+                if c == 1
+                    title(sprintf('%.1fs', topo_times_s(t)), 'FontSize', 12, 'FontWeight', 'bold');
+                end
+                if t == 1
+                    text(-0.8, 0, sprintf('%s', c_name_clean), 'Rotation', 90, 'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold');
+                end
+            end
+            
+            % ROW 2 (For this condition): TRAJECTORY TRACE
+            nexttile([1, num_topos]); hold on;
+            
+            % Background formatting (Scaled to new min_y)
+            patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [min_y min_y max_y max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
+            xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
+            
+            % Plot Trace
+            c_idx = find(strcmp(cfg.all_conds, cond));
+            if ~isempty(c_idx)
+                y_val = reshape(group_mean_traj(c_idx, k, :), 1, []);
+                y_sem = reshape(group_sem_traj(c_idx, k, :), 1, []);
+                
+                fill([t_centers, fliplr(t_centers)], max(0, [y_val + y_sem, fliplr(y_val - y_sem)]), ...
+                     col, 'FaceAlpha', 0.25, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                plot(t_centers, y_val, '-', 'Color', col, 'LineWidth', 2.5);
+            end
+            
+            % Tightly constrain X and Y axes
+            xlim([-0.1, 1.0]); ylim([min_y, max_y]); 
+            ylabel('Proj. Var', 'FontSize', 12, 'FontWeight', 'bold');
+            grid on;
+            
+            % Only show X-axis labels on the very last row
+            if c < length(groupB_conds)
+                xticklabels({});
+            else
+                xlabel('Time (s)', 'FontSize', 14, 'FontWeight', 'bold');
+            end
+        end
+        sgtitle(sprintf('Group B: Spatial Reconfiguration Filmstrip (\\xi_%d) [%s]', k, band_name), 'FontSize', 22, 'FontWeight', 'bold');
+        
+        save_file_B = fullfile(group_dir, sprintf('Checkpoint3b_GroupB_Filmstrip_Xi%d.png', k));
+        try pause(0.5); saveas(figB, save_file_B); catch, warning('Could not save %s.', save_file_B); end
+        close(figB);
+        
+    end % End of all 6 Direction Loop
 
     % --- Export Group Results and Summary Table ---
     save(fullfile(group_dir, 'results.mat'), 'log_r_splits', 'G_splits', 'lat_splits', 'sust_splits', 'traj_splits', 't_centers');
