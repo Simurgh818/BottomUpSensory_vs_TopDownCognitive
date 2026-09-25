@@ -618,7 +618,7 @@ for band_idx = 1:length(bands_to_process)
         
         % Group A Plot
         subplot(1, 2, 1); hold on;
-        set(gca, 'FontSize', 26);
+        set(gca, 'FontSize', 22);
         yline(0, 'k--', 'LineWidth', 1.5, 'DisplayName', sprintf('Ceiling (%s B)', cfg.ref_cond));
         colors_A = {[0.850 0.325 0.098], [0.929 0.694 0.125], [0.494 0.184 0.556]};
         for i = 1:length(cfg.group_A)
@@ -631,13 +631,13 @@ for band_idx = 1:length(bands_to_process)
         grid on; 
         xlabel('Spatial Direction Index', 'FontSize', 20); 
         ylabel('log(r_i) \pm SEM', 'FontSize', 20);
-        title(sprintf('Group A: Stimulus Delivered (%s)', strrep(g_name, '_', ' ')), 'FontSize', 28); 
-        lgd1 = legend('Location', 'best'); lgd1.FontSize = 26;
+        title(sprintf('Group A: Stimulus Delivered (%s)', strrep(g_name, '_', ' ')), 'FontSize', 24); 
+        lgd1 = legend('Location', 'best'); lgd1.FontSize = 22;
         ylim([cp2_y_min, cp2_y_max]);
         
         % Group B Plot
         subplot(1, 2, 2); hold on;
-        set(gca, 'FontSize', 26);
+        set(gca, 'FontSize', 22);
         yline(0, 'k--', 'LineWidth', 1.5, 'DisplayName', sprintf('Ceiling (%s B)', cfg.ref_cond));
         colors_B = {[0.466 0.674 0.188], [0.301 0.745 0.933]};
         for i = 1:length(cfg.group_B)
@@ -649,11 +649,11 @@ for band_idx = 1:length(bands_to_process)
         grid on; 
         xlabel('Spatial Direction Index', 'FontSize', 20); 
         ylabel('log(r_i) \pm SEM', 'FontSize', 20);
-        title(sprintf('Group B: Omission (%s)', strrep(g_name, '_', ' ')), 'FontSize', 28); 
-        lgd2 = legend('Location', 'best'); lgd2.FontSize = 26;
+        title(sprintf('Group B: Omission (%s)', strrep(g_name, '_', ' ')), 'FontSize', 24); 
+        lgd2 = legend('Location', 'best'); lgd2.FontSize = 22;
         ylim([cp2_y_min, cp2_y_max]);
         
-        sgtitle(sprintf('Subspace Redistribution: %s %s', band_name, cfg.ref_cond), 'FontSize', 28, 'FontWeight', 'bold');
+        sgtitle(sprintf('Subspace Redistribution: %s %s', band_name, cfg.ref_cond), 'FontSize', 24, 'FontWeight', 'bold');
         
         % --- EXPORTING AS SVG AND PNG ---
         save_base_chk2 = fullfile(group_dir, sprintf('Checkpoint2_Redistribution_%s', g_name));
@@ -688,7 +688,7 @@ for band_idx = 1:length(bands_to_process)
             
             % --- CP3a: Group A ---
             nexttile; hold on;
-            set(gca, 'FontSize', 26);
+            set(gca, 'FontSize', 22);
             patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [cp3a_min_y cp3a_min_y cp3a_max_y cp3a_max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
             xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
             
@@ -710,13 +710,13 @@ for band_idx = 1:length(bands_to_process)
             grid on; 
             xlabel('Time (s)', 'FontSize', 20); 
             ylabel('Projected Variance', 'FontSize', 20);
-            title(sprintf('Group A: \\xi_%d Trajectory', k), 'FontSize', 28); 
-            if k_idx == 1, lgdA = legend('Location', 'best'); lgdA.FontSize = 26; end
+            title(sprintf('Group A: \\xi_%d Trajectory', k), 'FontSize', 24); 
+            if k_idx == 1, lgdA = legend('Location', 'best'); lgdA.FontSize = 22; end
             xlim([t_centers(1), t_centers(end)]); ylim([cp3a_min_y, cp3a_max_y]);
             
             % --- CP3a: Group B ---
             nexttile; hold on;
-            set(gca, 'FontSize', 26);
+            set(gca, 'FontSize', 22);
             patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [cp3a_min_y cp3a_min_y cp3a_max_y cp3a_max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
             xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
             
@@ -735,11 +735,11 @@ for band_idx = 1:length(bands_to_process)
             grid on; 
             xlabel('Time (s)', 'FontSize', 20); 
             ylabel('Projected Variance', 'FontSize', 20);
-            title(sprintf('Group B: \\xi_%d Trajectory', k), 'FontSize', 28); 
-            if k_idx == 1, lgdB = legend('Location', 'best'); lgdB.FontSize = 26; end
+            title(sprintf('Group B: \\xi_%d Trajectory', k), 'FontSize', 24); 
+            if k_idx == 1, lgdB = legend('Location', 'best'); lgdB.FontSize = 22; end
             xlim([t_centers(1), t_centers(end)]); ylim([cp3a_min_y, cp3a_max_y]);
         end
-        sgtitle(sprintf('Subspace Trajectories: %s (%s)', band_name, strrep(g_name, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
+        sgtitle(sprintf('Subspace Trajectories: %s (%s)', band_name, strrep(g_name, '_', ' ')), 'FontSize', 24, 'FontWeight', 'bold');
         
         % --- EXPORTING AS SVG AND PNG ---
         save_base_chk3 = fullfile(group_dir, sprintf('Checkpoint3a_Trajectories_%s', g_name));
@@ -787,7 +787,7 @@ for band_idx = 1:length(bands_to_process)
                 
                 % TILE 1 (Left Column): SINGLE TOPOPLOT (0.4 - 0.6s)
                 nexttile((c-1)*4 + 1); 
-                set(gca, 'FontSize', 26);
+                set(gca, 'FontSize', 22);
                 amp_04_06 = mean(xi' * avg_data(:, idx_04_06), 2);
                 topo_reconstructed = xi * amp_04_06; 
                 
@@ -800,11 +800,11 @@ for band_idx = 1:length(bands_to_process)
                 cb.Label.String = 'Proj. Amp'; 
                 cb.Label.FontSize = 20; 
                 cb.FontSize = 20;
-                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(cond)), 'FontSize', 28, 'FontWeight', 'bold');
+                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(cond)), 'FontSize', 24, 'FontWeight', 'bold');
                 
                 % TILE 2 (Right Columns): TRAJECTORY TRACE (Spans 3 cols)
                 nexttile((c-1)*4 + 2, [1 3]); hold on;
-                set(gca, 'FontSize', 26);
+                set(gca, 'FontSize', 22);
                 patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [min_y min_y max_y max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
                 xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
                 
@@ -818,7 +818,7 @@ for band_idx = 1:length(bands_to_process)
                 ylabel('Proj. Var', 'FontSize', 20, 'FontWeight', 'bold'); grid on;
                 if c < length(groupA_conds), xticklabels({}); else, xlabel('Time (s)', 'FontSize', 20, 'FontWeight', 'bold'); end
             end
-            sgtitle(sprintf('Group A: Spatial Reconfiguration (\\xi_%d) [%s]', k, strrep(g_name, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
+            sgtitle(sprintf('Group A: Spatial Reconfiguration (\\xi_%d) [%s]', k, strrep(g_name, '_', ' ')), 'FontSize', 24, 'FontWeight', 'bold');
             
             % --- EXPORTING AS SVG AND PNG ---
             save_base_A = fullfile(group_dir, sprintf('Checkpoint3b_GroupA_Xi%d_%s', k, g_name));
@@ -848,7 +848,7 @@ for band_idx = 1:length(bands_to_process)
                 
                 % TILE 1 (Left Column): SINGLE TOPOPLOT (0.4 - 0.6s)
                 nexttile((c-1)*4 + 1); 
-                set(gca, 'FontSize', 26);
+                set(gca, 'FontSize', 22);
                 amp_04_06 = mean(xi' * avg_data(:, idx_04_06), 2);
                 topo_reconstructed = xi * amp_04_06; 
                 
@@ -861,11 +861,11 @@ for band_idx = 1:length(bands_to_process)
                 cb.Label.String = 'Proj. Amp'; 
                 cb.Label.FontSize = 20; 
                 cb.FontSize = 20;
-                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(cond)), 'FontSize', 28, 'FontWeight', 'bold');
+                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(cond)), 'FontSize', 24, 'FontWeight', 'bold');
                 
                 % TILE 2 (Right Columns): TRAJECTORY TRACE (Spans 3 cols)
                 nexttile((c-1)*4 + 2, [1 3]); hold on;
-                set(gca, 'FontSize', 26);
+                set(gca, 'FontSize', 22);
                 patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [min_y min_y max_y max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
                 xline(0, 'k--', 'LineWidth', 1, 'HandleVisibility', 'off');
                 
@@ -879,7 +879,7 @@ for band_idx = 1:length(bands_to_process)
                 ylabel('Proj. Var', 'FontSize', 20, 'FontWeight', 'bold'); grid on;
                 if c < length(groupB_conds), xticklabels({}); else, xlabel('Time (s)', 'FontSize', 20, 'FontWeight', 'bold'); end
             end
-            sgtitle(sprintf('Group B: Spatial Reconfiguration (\\xi_%d) [%s]', k, strrep(g_name, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
+            sgtitle(sprintf('Group B: Spatial Reconfiguration (\\xi_%d) [%s]', k, strrep(g_name, '_', ' ')), 'FontSize', 24, 'FontWeight', 'bold');
             
             % --- EXPORTING AS SVG AND PNG ---
             save_base_B = fullfile(group_dir, sprintf('Checkpoint3b_GroupB_Xi%d_%s', k, g_name));
@@ -922,22 +922,11 @@ for band_idx = 1:length(bands_to_process)
                 for c = 1:length(cfg.all_conds)
                     cond = cfg.all_conds{c};
                     
-                    % Safely slice conditions dynamically based on their underlying array size
-                    if size(G_splits, 2) == num_subjects
-                        med_G = mean(G_splits(c, curr_subjs), 'all', 'omitnan'); 
-                    else
-                        med_G = mean(G_splits(c, :), 'all', 'omitnan'); % Fallback
-                    end
-                    
-                    med_lr_k = grp_mean_log_r(c, k);
-                    
-                    if size(lat_splits, 3) == num_subjects
-                        med_lat_k = mean(lat_splits(c, k, curr_subjs), 'all', 'omitnan'); 
-                        med_sus_k = mean(sust_splits(c, k, curr_subjs), 'all', 'omitnan') * 100;
-                    else
-                        med_lat_k = mean(lat_splits(c, k, :), 'all', 'omitnan'); 
-                        med_sus_k = mean(sust_splits(c, k, :), 'all', 'omitnan') * 100;
-                    end
+                    % Explicitly slice the correct subject dimension for each metric
+                    med_G     = mean(G_splits(c, :, curr_subjs), 'all', 'omitnan'); 
+                    med_lr_k  = grp_mean_log_r(c, k);
+                    med_lat_k = mean(lat_splits(c, k, :, curr_subjs), 'all', 'omitnan'); 
+                    med_sus_k = mean(sust_splits(c, k, :, curr_subjs), 'all', 'omitnan') * 100;
                     
                     fprintf(out, '%-18s | %-10.3f | %-10.3f | %+7.1f ms         | %6.2f%%\n', cond, med_G, med_lr_k, med_lat_k, med_sus_k);
                 end
