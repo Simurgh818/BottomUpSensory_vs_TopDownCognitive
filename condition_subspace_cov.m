@@ -525,35 +525,45 @@ for band_idx = 1:length(bands_to_process)
     % =========================================================================
     % 3. PRE-CALCULATE SYNCHRONIZED Y-LIMITS & C-LIMITS ACROSS BOTH COHORTS
     % =========================================================================
-    % This guarantees that Cohort A and Cohort B share identical Y-axes AND Colorbars.
-    time_mask = (t_centers >= -0.1) & (t_centers <= 1.0);
-    global_cond_ylims = zeros(length(cfg.all_conds), cfg.m, 2);
-    global_clims = zeros(cfg.m, 1);
-    all_log_r = [];
+    % Calculates unified limits per direction (k) across all conditions and groups.
+    time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
+    
+    % --- UPDATED: Ignore auditory ERP (-0.5s) & edge artifacts for full limits ---
+    time_mask_full = (t_centers >= -0.15); 
+    
+    global_ylims_full = zeros(cfg.m, 2); % For Checkpoint 3a (Full trajectory)
+    global_ylims_zoom = zeros(cfg.m, 2); % For Checkpoint 3b (-0.1 to 1.0s)
+    global_clims      = zeros(cfg.m, 1);
+    all_log_r         = [];
     
     % Calculate cohort-specific spatial directions for accurate pre-calculation
     Xi_g1 = mean(Xi_aligned(:, :, g1_subjs), 3, 'omitnan'); Xi_g1 = Xi_g1 ./ vecnorm(Xi_g1);
     Xi_g2 = mean(Xi_aligned(:, :, g2_subjs), 3, 'omitnan'); Xi_g2 = Xi_g2 ./ vecnorm(Xi_g2);
     
     for k = 1:cfg.m
-        max_c = 0; % Track maximum color limit for this direction
+        all_up_full = []; all_dn_full = [];
+        all_up_zoom = []; all_dn_zoom = [];
+        max_c = 0; 
+        
         for c_idx = 1:length(cfg.all_conds)
             cond = cfg.all_conds{c_idx};
-            all_up = []; all_dn = [];
             
             % Evaluate Cohort 1
             if ~isempty(g1_subjs)
-                % Y-lims
-                g1_val = squeeze(subj_mean_traj(c_idx, k, time_mask, g1_subjs));
+                g1_val = squeeze(subj_mean_traj(c_idx, k, :, g1_subjs));
                 if length(g1_subjs) == 1, g1_val = g1_val(:); g1_m = g1_val; g1_s = zeros(size(g1_val));
                 else, g1_m = mean(g1_val, 2, 'omitnan'); g1_s = std(g1_val, 0, 2, 'omitnan') ./ sqrt(length(g1_subjs)); end
-                all_up = [all_up; g1_m(:) + g1_s(:)]; all_dn = [all_dn; g1_m(:) - g1_s(:)];
                 
-                % Color limits based on absolute topoplot amplitude (Scaled by 0.5)
+                % Apply time_mask_full to exclude auditory ERP & edge ringing
+                all_up_full = [all_up_full; g1_m(time_mask_full) + g1_s(time_mask_full)];
+                all_dn_full = [all_dn_full; g1_m(time_mask_full) - g1_s(time_mask_full)];
+                
+                all_up_zoom = [all_up_zoom; g1_m(time_mask_zoom) + g1_s(time_mask_zoom)];
+                all_dn_zoom = [all_dn_zoom; g1_m(time_mask_zoom) - g1_s(time_mask_zoom)];
+                
                 erp_g1 = mean(cat(3, current_data.(cond){g1_subjs}), 3, 'omitnan');
                 max_c = max(max_c, max(abs(Xi_g1(:, k)' * erp_g1)) * 0.5);
                 
-                % Log R limits
                 if k == 1
                     g1_lr_m = mean(subj_mean_log_r(c_idx, :, g1_subjs), 3, 'omitnan');
                     g1_lr_s = std(subj_mean_log_r(c_idx, :, g1_subjs), 0, 3, 'omitnan') ./ sqrt(length(g1_subjs));
@@ -563,31 +573,42 @@ for band_idx = 1:length(bands_to_process)
             
             % Evaluate Cohort 2
             if ~isempty(g2_subjs)
-                % Y-lims
-                g2_val = squeeze(subj_mean_traj(c_idx, k, time_mask, g2_subjs));
+                g2_val = squeeze(subj_mean_traj(c_idx, k, :, g2_subjs));
                 if length(g2_subjs) == 1, g2_val = g2_val(:); g2_m = g2_val; g2_s = zeros(size(g2_val));
                 else, g2_m = mean(g2_val, 2, 'omitnan'); g2_s = std(g2_val, 0, 2, 'omitnan') ./ sqrt(length(g2_subjs)); end
-                all_up = [all_up; g2_m(:) + g2_s(:)]; all_dn = [all_dn; g2_m(:) - g2_s(:)];
                 
-                % Color limits based on absolute topoplot amplitude
+                % Apply time_mask_full to exclude auditory ERP & edge ringing
+                all_up_full = [all_up_full; g2_m(time_mask_full) + g2_s(time_mask_full)];
+                all_dn_full = [all_dn_full; g2_m(time_mask_full) - g2_s(time_mask_full)];
+                
+                all_up_zoom = [all_up_zoom; g2_m(time_mask_zoom) + g2_s(time_mask_zoom)];
+                all_dn_zoom = [all_dn_zoom; g2_m(time_mask_zoom) - g2_s(time_mask_zoom)];
+                
                 erp_g2 = mean(cat(3, current_data.(cond){g2_subjs}), 3, 'omitnan');
                 max_c = max(max_c, max(abs(Xi_g2(:, k)' * erp_g2)) * 0.5);
                 
-                % Log R limits
                 if k == 1
                     g2_lr_m = mean(subj_mean_log_r(c_idx, :, g2_subjs), 3, 'omitnan');
                     g2_lr_s = std(subj_mean_log_r(c_idx, :, g2_subjs), 0, 3, 'omitnan') ./ sqrt(length(g2_subjs));
                     all_log_r = [all_log_r; g2_lr_m(:) + g2_lr_s(:); g2_lr_m(:) - g2_lr_s(:)];
                 end
             end
-            
-            if isempty(all_up), all_up = 1; all_dn = 0; end
-            y_up = max(all_up); y_dn = min(all_dn);
-            y_pad = (y_up - y_dn) * 0.05; if y_pad == 0 || isnan(y_pad), y_pad = 1; end
-            
-            global_cond_ylims(c_idx, k, 1) = max(0, y_dn - y_pad);
-            global_cond_ylims(c_idx, k, 2) = y_up + y_pad;
         end
+        
+        % Finalize FULL Limits (Checkpoint 3a)
+        if isempty(all_up_full), all_up_full = 1; all_dn_full = 0; end
+        y_up_f = max(all_up_full); y_dn_f = min(all_dn_full);
+        pad_f = (y_up_f - y_dn_f) * 0.05; if pad_f == 0 || isnan(pad_f), pad_f = 1; end
+        global_ylims_full(k, 1) = max(0, y_dn_f - pad_f);
+        global_ylims_full(k, 2) = y_up_f + pad_f;
+        
+        % Finalize ZOOM Limits (Checkpoint 3b)
+        if isempty(all_up_zoom), all_up_zoom = 1; all_dn_zoom = 0; end
+        y_up_z = max(all_up_zoom); y_dn_z = min(all_dn_zoom);
+        pad_z = (y_up_z - y_dn_z) * 0.05; if pad_z == 0 || isnan(pad_z), pad_z = 1; end
+        global_ylims_zoom(k, 1) = max(0, y_dn_z - pad_z);
+        global_ylims_zoom(k, 2) = y_up_z + pad_z;
+        
         if max_c == 0, max_c = 1; end % Fallback safety
         global_clims(k) = max_c;
     end
@@ -629,6 +650,7 @@ for band_idx = 1:length(bands_to_process)
                 'Color', colors_A{col_idx}, 'LineWidth', 2, 'MarkerFaceColor', colors_A{col_idx}, 'DisplayName', clean_name(cfg.group_A{i}));
         end
         grid on; 
+        xlim([0.75, cfg.m + 0.25]); xticks(1:cfg.m);
         xlabel('Spatial Direction Index', 'FontSize', 20); 
         ylabel('log(r_i) \pm SEM', 'FontSize', 20);
         title(sprintf('Group A: Stimulus Delivered (%s)', strrep(g_name, '_', ' ')), 'FontSize', 24); 
@@ -647,6 +669,7 @@ for band_idx = 1:length(bands_to_process)
                 'Color', colors_B{i}, 'LineWidth', 2, 'MarkerFaceColor', colors_B{i}, 'DisplayName', clean_name(cfg.group_B{i}));
         end
         grid on; 
+        xlim([0.75, cfg.m + 0.25]); xticks(1:cfg.m);
         xlabel('Spatial Direction Index', 'FontSize', 20); 
         ylabel('log(r_i) \pm SEM', 'FontSize', 20);
         title(sprintf('Group B: Omission (%s)', strrep(g_name, '_', ' ')), 'FontSize', 24); 
@@ -665,7 +688,7 @@ for band_idx = 1:length(bands_to_process)
         close(figChk2);
         
         % -----------------------------------------------------------------
-        % CHECKPOINT 3a: SUBSPACE TRAJECTORIES (FOR CURRENT SUBGROUP)
+        % CHECKPOINT 3a: FULL SUBSPACE TRAJECTORIES 
         % -----------------------------------------------------------------
         grp_mean_traj = squeeze(mean(subj_mean_traj(:, :, :, curr_subjs), 4, 'omitnan')); % [nCond x m x nWin]
         grp_sem_traj  = squeeze(std(subj_mean_traj(:, :, :, curr_subjs), 0, 4, 'omitnan')) ./ sqrt(curr_n);
@@ -682,9 +705,9 @@ for band_idx = 1:length(bands_to_process)
         for k_idx = 1:num_sig
             k = sig_components(k_idx);
             
-            % Shared CP3a Y-Limits (Max across ALL conditions in BOTH cohorts)
-            cp3a_min_y = min(global_cond_ylims(:, k, 1));
-            cp3a_max_y = max(global_cond_ylims(:, k, 2));
+            % Shared CP3a Y-Limits (Full Timeline Max across ALL conditions in BOTH cohorts)
+            cp3a_min_y = global_ylims_full(k, 1);
+            cp3a_max_y = global_ylims_full(k, 2);
             
             % --- CP3a: Group A ---
             nexttile; hold on;
@@ -751,7 +774,7 @@ for band_idx = 1:length(bands_to_process)
         close(figChk3);
         
         % =========================================================================
-        % CHECKPOINT 3b: SIDE-BY-SIDE TOPOPLOT & TRAJECTORIES
+        % CHECKPOINT 3b: SIDE-BY-SIDE TOPOPLOT & TRAJECTORIES (ZOOMED)
         % =========================================================================
         Xi_bar = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
         Xi_bar = Xi_bar ./ vecnorm(Xi_bar); 
@@ -765,8 +788,10 @@ for band_idx = 1:length(bands_to_process)
         for k = 1:cfg.m
             xi = Xi_bar(:, k); 
             
-            % --- Pull the pre-calculated Global Color Limit ---
+            % --- Pull the pre-calculated Global Limits ---
             c_lim = [-global_clims(k), global_clims(k)];
+            min_y = global_ylims_zoom(k, 1);
+            max_y = global_ylims_zoom(k, 2);
             
             % -----------------------------------------------------------------
             % FIGURE 1: GROUP A (Stimulus Delivered)
@@ -778,10 +803,6 @@ for band_idx = 1:length(bands_to_process)
                 cond = groupA_conds{c}; col = cols_A{c};
                 c_idx = find(strcmp(cfg.all_conds, cond));
                 
-                % Pull the synchronized condition-specific limits
-                min_y = global_cond_ylims(c_idx, k, 1);
-                max_y = global_cond_ylims(c_idx, k, 2);
-                
                 erp_all = cat(3, current_data.(cond){curr_subjs});
                 avg_data = mean(erp_all, 3, 'omitnan');
                 
@@ -792,8 +813,6 @@ for band_idx = 1:length(bands_to_process)
                 topo_reconstructed = xi * amp_04_06; 
                 
                 topoplot(topo_reconstructed, EEG.chanlocs, 'numcontour', 0);
-                
-                % Apply synchronized global limits
                 clim(c_lim); colormap('jet');
                 
                 cb = colorbar; 
@@ -839,10 +858,6 @@ for band_idx = 1:length(bands_to_process)
                 cond = groupB_conds{c}; col = cols_B{c};
                 c_idx = find(strcmp(cfg.all_conds, cond));
                 
-                % Pull the synchronized condition-specific limits
-                min_y = global_cond_ylims(c_idx, k, 1);
-                max_y = global_cond_ylims(c_idx, k, 2);
-                
                 erp_all = cat(3, current_data.(cond){curr_subjs});
                 avg_data = mean(erp_all, 3, 'omitnan');
                 
@@ -853,8 +868,6 @@ for band_idx = 1:length(bands_to_process)
                 topo_reconstructed = xi * amp_04_06; 
                 
                 topoplot(topo_reconstructed, EEG.chanlocs, 'numcontour', 0);
-                
-                % Apply synchronized global limits
                 clim(c_lim); colormap('jet');
                 
                 cb = colorbar; 
