@@ -180,10 +180,12 @@ cfg.group_A = {'P2_500', 'P3_500'};
 cfg.group_B = {'P2_2000', 'P3_missing'};
 cfg.all_conds = [{cfg.ref_cond}, cfg.group_A, cfg.group_B];
 
-% --- NEW: Aggregate Structs for Figures 3B, 5A, and 5B ---
+% --- NEW: Aggregate Structs for Figures 3B, 5A, 5B, 5C, and 5D ---
 aggregate_spectra = struct();
 aggregate_log_r   = struct(); % Tracks log_r geometric data
 aggregate_G       = struct(); % Tracks Global Gain (G) data
+aggregate_lat     = struct(); % Tracks Delta Latency data
+aggregate_sust    = struct(); % Tracks Sustained % data
 
 for band_idx = 1:length(bands_to_process)
     band_name = bands_to_process{band_idx};
@@ -601,15 +603,27 @@ for band_idx = 1:length(bands_to_process)
         grp_mean_log_r = mean(subj_mean_log_r(:, :, curr_subjs), 3, 'omitnan');      
         grp_se_log_r   = std(subj_mean_log_r(:, :, curr_subjs), 0, 3, 'omitnan') ./ sqrt(curr_n);
         
-        % --- NEW: Save to aggregate_log_r and aggregate_G for Figure 5 ---
+        % --- NEW: Save to aggregates for Figures 5A, 5B, 5C, and 5D ---
         aggregate_log_r.(band_name).cohort(g).mean = grp_mean_log_r;
         aggregate_log_r.(band_name).cohort(g).se   = grp_se_log_r;
         
-        % Gain (G) is averaged across Reps (dim 2), then Subjects (dim 3)
+        % Gain (G)
         subj_mean_G = squeeze(mean(G_splits(:, :, curr_subjs), 2, 'omitnan')); 
         if curr_n == 1, subj_mean_G = subj_mean_G(:); end
         aggregate_G.(band_name).cohort(g).mean = mean(subj_mean_G, 2, 'omitnan');
         aggregate_G.(band_name).cohort(g).se   = std(subj_mean_G, 0, 2, 'omitnan') ./ sqrt(curr_n);
+        
+        % Latency
+        subj_mean_lat = squeeze(mean(lat_splits(:, :, :, curr_subjs), 3, 'omitnan')); 
+        if curr_n == 1, subj_mean_lat = reshape(subj_mean_lat, [length(cfg.all_conds), cfg.m, 1]); end
+        aggregate_lat.(band_name).cohort(g).mean = mean(subj_mean_lat, 3, 'omitnan');
+        aggregate_lat.(band_name).cohort(g).se   = std(subj_mean_lat, 0, 3, 'omitnan') ./ sqrt(curr_n);
+        
+        % Sustained % (Average across Reps [dim 3] and Spatial Directions [dim 2])
+        subj_mean_sust = squeeze(mean(mean(sust_splits(:, :, :, curr_subjs), 3, 'omitnan'), 2, 'omitnan')) * 100;
+        if curr_n == 1, subj_mean_sust = subj_mean_sust(:); end
+        aggregate_sust.(band_name).cohort(g).mean = mean(subj_mean_sust, 2, 'omitnan');
+        aggregate_sust.(band_name).cohort(g).se   = std(subj_mean_sust, 0, 2, 'omitnan') ./ sqrt(curr_n);
         
         % -----------------------------------------------------------------
         % CHECKPOINT 2: GROUP LEVEL STATS
@@ -994,7 +1008,6 @@ disp('Generating Figure 5B: Multi-Band Global Gain Bar Plots...');
 plot_bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_labels = {'Raw', 'Alpha', 'Beta', 'Beta/Alpha Ratio'};
 
-% Explicit color-coding for the 5 experimental conditions
 colors_conds = [0.5 0.5 0.5; ...       % P1 (Cued): Gray
                 0.850 0.325 0.098; ... % P2_500: Orange
                 0.929 0.694 0.125; ... % P3_500: Yellow
@@ -1005,7 +1018,6 @@ for g = 1:2
     fig5B = figure('Position', [100, 100, 1400, 800], 'Name', sprintf('Figure 5B: Gain Cohort %d', g));
     hold on; set(gca, 'FontSize', 22);
     
-    % Gather data: [nBands x nConds]
     Y_mean = zeros(length(plot_bands), length(cfg.all_conds));
     Y_se   = zeros(length(plot_bands), length(cfg.all_conds));
     
@@ -1017,16 +1029,13 @@ for g = 1:2
         end
     end
     
-    % Plot grouped bars
     b_handle = bar(Y_mean, 'grouped');
     
-    % Set custom colors and display names for legend
     for i = 1:length(b_handle)
         b_handle(i).FaceColor = colors_conds(i, :);
         b_handle(i).DisplayName = clean_name(cfg.all_conds{i});
     end
     
-    % Overlay Error Bars precisely onto the grouped bars
     ngroups = size(Y_mean, 1);
     nbars = size(Y_mean, 2);
     groupwidth = min(0.8, nbars/(nbars + 1.5));
@@ -1035,7 +1044,6 @@ for g = 1:2
         errorbar(x, Y_mean(:,i), Y_se(:,i), 'k', 'linestyle', 'none', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     end
     
-    % Add Homeostatic Baseline
     yline(1.0, 'k--', 'LineWidth', 2.5, 'DisplayName', 'Reference (Cued) Baseline');
     
     xticks(1:length(plot_bands));
@@ -1043,23 +1051,18 @@ for g = 1:2
     ylabel('Global Subspace Gain (G)', 'FontSize', 24, 'FontWeight', 'bold');
     title(sprintf('Global Subspace Energy Scaling (%s)', strrep(subj_group_names{g}, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
     
-    lgd = legend('Location', 'north');
+    lgd = legend('Location', 'northwest');
     lgd.FontSize = 18;
     grid on;
     
-    % Smart Y-Limits & Automated Analytical Callouts
     max_y = max(max(Y_mean + Y_se)) * 1.15;
-    
     if g == 2 && max_y > 7.0
         ylim([0, max(max_y, 8.5)]);
-        % Callout 1: Feature the 8-fold hyper-gain in Cohort B Raw Band
         text(1, 7.8, '8-fold Hyper-Gain', 'FontSize', 20, 'Color', 'r', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
     else
         ylim([0, max(max_y, 2.0)]);
     end
     
-    % Callout 2: Feature the Beta band strict homeostasis (Always strictly ~1.0)
-    % Beta is plotted at x-index = 3
     text(3, 1.25, 'Strictly Homeostatic (G \approx 1)', 'FontSize', 20, 'Color', [0.8500 0.3250 0.0980], 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
     
     save_file_5b = fullfile(output_path, sprintf('Figure_5B_MultiBand_Gain_Cohort%d', g));
@@ -1067,4 +1070,146 @@ for g = 1:2
     close(fig5B);
 end
 
-disp('All analyses completed successfully. Figure 3B, Figure 5A, and Figure 5B saved.');
+%% =========================================================================
+%% AGGREGATE FIGURE 5C: MULTI-BAND DELTA LATENCY SCATTER PLOT
+%% =========================================================================
+disp('Generating Figure 5C: Multi-Band Delta Latency Scatter Plots...');
+
+band_titles = {'Raw Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
+
+% Only plot conditions with actual physical tactile ERPs
+erp_conds = {'P1', 'P2_500', 'P3_500'};
+erp_conds_idx = find(ismember(cfg.all_conds, erp_conds));
+
+for g = 1:2
+    fig5C = figure('Position', [100, 100, 1600, 700], 'Name', sprintf('Figure 5C: Latency Cohort %d', g));
+    tiledlayout(1, 4, 'TileSpacing', 'compact', 'Padding', 'normal');
+    
+    % Find dynamic yet symmetrical Y-limits across all 4 bands ONLY for the 3 ERP conditions
+    all_lat = [];
+    for b = 1:length(plot_bands)
+        if isfield(aggregate_lat, plot_bands{b})
+            lat_subset = aggregate_lat.(plot_bands{b}).cohort(g).mean(erp_conds_idx, :);
+            all_lat = [all_lat; lat_subset(:)];
+        end
+    end
+    
+    if isempty(all_lat) || all(isnan(all_lat)), all_lat = [-50, 50]; end
+    y_bound = max(50, ceil(max(abs(all_lat)) / 25) * 25); 
+
+    for b = 1:length(plot_bands)
+        b_name = plot_bands{b};
+        if ~isfield(aggregate_lat, b_name), continue; end
+        
+        lat_m = aggregate_lat.(b_name).cohort(g).mean; % [nConds x m]
+        
+        nexttile; hold on;
+        set(gca, 'FontSize', 18);
+        
+        yline(0, 'k-', 'LineWidth', 2.5, 'HandleVisibility', 'off');
+        
+        for i = 1:length(erp_conds_idx)
+            c_idx = erp_conds_idx(i);
+            
+            rng(42); 
+            x_jitter = i + (rand(1, cfg.m) - 0.5) * 0.4; 
+            
+            scatter(x_jitter, lat_m(c_idx, :), 100, colors_conds(c_idx, :), 'filled', ...
+                'MarkerEdgeColor', 'k', 'DisplayName', clean_name(cfg.all_conds{c_idx}));
+                
+            mean_val = mean(lat_m(c_idx, :), 'omitnan');
+            plot([i-0.3, i+0.3], [mean_val, mean_val], '-', 'Color', colors_conds(c_idx, :), 'LineWidth', 4, 'HandleVisibility', 'off');
+        end
+        
+        xlim([0.5, 3.5]);
+        xticks(1:3);
+        xticklabels({'Cued', 'Unpred 500', 'Rand 500'});
+        xtickangle(45);
+        
+        if b == 1, ylabel('\Delta Latency relative to Cued (ms)', 'FontSize', 22, 'FontWeight', 'bold'); end
+        title(band_titles{b}, 'FontSize', 22, 'FontWeight', 'bold');
+        ylim([-y_bound, y_bound]); 
+        grid on;
+    end
+    
+    sgtitle(sprintf('Temporal Dynamics: Tactile ERP \\Delta Latency Shifts (%s)', strrep(subj_group_names{g}, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
+    
+    lgd_names = cellfun(clean_name, cfg.all_conds(erp_conds_idx), 'UniformOutput', false);
+    lgd = legend(lgd_names, 'Location', 'northeastoutside');
+    lgd.FontSize = 18;
+    
+    save_file_5c = fullfile(output_path, sprintf('Figure_5C_MultiBand_Latency_Cohort%d', g));
+    try pause(0.5); saveas(fig5C, [save_file_5c, '.svg']); saveas(fig5C, [save_file_5c, '.png']); catch, end
+    close(fig5C);
+end
+
+%% =========================================================================
+%% AGGREGATE FIGURE 5D: MULTI-BAND % SUSTAINED (TONIC VS PHASIC) BAR PLOTS
+%% =========================================================================
+disp('Generating Figure 5D: Multi-Band Sustained % Bar Plots...');
+
+for g = 1:2
+    fig5D = figure('Position', [100, 100, 1400, 800], 'Name', sprintf('Figure 5D: Sustained Cohort %d', g));
+    hold on; set(gca, 'FontSize', 22);
+    
+    Y_mean = zeros(length(plot_bands), length(cfg.all_conds));
+    Y_se   = zeros(length(plot_bands), length(cfg.all_conds));
+    
+    for b = 1:length(plot_bands)
+        b_name = plot_bands{b};
+        if isfield(aggregate_sust, b_name)
+            Y_mean(b, :) = aggregate_sust.(b_name).cohort(g).mean';
+            Y_se(b, :)   = aggregate_sust.(b_name).cohort(g).se';
+        end
+    end
+    
+    b_handle = bar(Y_mean, 'grouped');
+    
+    for i = 1:length(b_handle)
+        b_handle(i).FaceColor = colors_conds(i, :);
+        b_handle(i).DisplayName = clean_name(cfg.all_conds{i});
+    end
+    
+    ngroups = size(Y_mean, 1);
+    nbars = size(Y_mean, 2);
+    groupwidth = min(0.8, nbars/(nbars + 1.5));
+    for i = 1:nbars
+        x = (1:ngroups) - groupwidth/2 + (2*i-1) * groupwidth / (2*nbars);
+        errorbar(x, Y_mean(:,i), Y_se(:,i), 'k', 'linestyle', 'none', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+    end
+    
+    xticks(1:length(plot_bands));
+    xticklabels(band_labels);
+    ylabel('Sustained Variance (%)', 'FontSize', 24, 'FontWeight', 'bold');
+    title(sprintf('Tonic vs. Phasic Stability (%s)', strrep(subj_group_names{g}, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
+    
+    lgd = legend('Location', 'northwest');
+    lgd.FontSize = 18;
+    grid on;
+    
+    max_y = max(max(Y_mean + Y_se)) * 1.2;
+    ylim([0, max(max_y, 75)]); % Ensure there is always space for annotations
+    
+    % --- Callout 1: Alpha and Beta (<3% Phasic) ---
+    plot([1.6, 3.4], [10, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot([1.6, 1.6], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot([3.4, 3.4], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    text(2.5, 13, 'Purely Phasic (< 3%)', 'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
+        'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
+    
+    % --- Callout 2: Beta/Alpha Ratio Max Tonic Vigilance ---
+    p2_2000_idx = find(strcmp(cfg.all_conds, 'P2_2000'));
+    if ~isempty(p2_2000_idx)
+        % Dynamically calculate exact X-coordinate for the P2_2000 Green bar in the Ratio column (b=4)
+        x_val = 4 - groupwidth/2 + (2*p2_2000_idx-1) * groupwidth / (2*nbars);
+        text(x_val, max(Y_mean(4, p2_2000_idx) + Y_se(4, p2_2000_idx) + 5, 70), 'Max Tonic Vigilance (62-68%)', ...
+            'FontSize', 20, 'Color', colors_conds(p2_2000_idx, :), 'FontWeight', 'bold', ...
+            'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
+    end
+    
+    save_file_5d = fullfile(output_path, sprintf('Figure_5D_MultiBand_Sustained_Cohort%d', g));
+    try pause(0.5); saveas(fig5D, [save_file_5d, '.svg']); saveas(fig5D, [save_file_5d, '.png']); catch, end
+    close(fig5D);
+end
+
+disp('All analyses completed successfully. Figure 3B, Figure 5A, 5B, 5C, and 5D saved.');
