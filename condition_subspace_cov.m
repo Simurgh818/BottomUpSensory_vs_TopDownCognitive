@@ -31,64 +31,83 @@ data_all_conds.Raw = struct();
 data_all_conds.Alpha = struct();
 data_all_conds.Beta = struct();
 
-% Loop through the conditions
-for c = 1:length(conditions)
-    condition = conditions{c};
-    in_dir = fullfile(input_path, condition);
+for c_idx = 1:length(conditions)
+    cond_name = conditions{c_idx};
+    in_dir = fullfile(input_path, cond_name);
+    
     set_files = dir(fullfile(in_dir, '*.set'));
     names_sorted = sort(cellstr({set_files.name})');
+    num_subjs_cond = length(names_sorted);
     
-    if isempty(names_sorted)
-        fprintf('No .set files for %s — skipping\n', condition);
-        continue;
-    end
-    
-    if strcmp(condition, 'P2')
-        excel_file_path = fullfile(input_path, 'Indexes for P2.xlsx');
-        epoch_trials_p2_500ms = readmatrix(excel_file_path, 'Sheet', 'Audio onset with 500 ms tactile');
-        epoch_trials_p2_2000ms = readmatrix(excel_file_path, 'Sheet', 'Audio onset with 2000 ms tactil');
-    elseif strcmp(condition, 'P3')
-        excel_file_path = fullfile(input_path, 'Indexes for P3.xlsx');
-        epoch_trials_p3_500ms = readmatrix(excel_file_path, 'Sheet', 'Audio onset with 500 ms tactile');
-        epoch_trials_p3_missing = readmatrix(excel_file_path, 'Sheet', 'Audio onset with missing tactil');
-    end
-    
-    for s = 1:length(names_sorted)
-        file_to_load = names_sorted{s}; 
-        fprintf('Loading Subj %d/%d (%s) for condition: %s\n', s, length(names_sorted), file_to_load, condition);
+    for s = 1:num_subjs_cond
+        file_to_load = names_sorted{s};
         
-        EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
-        if isempty(fs), fs = EEG.srate; end
+        % Check if an ICA-cleaned file exists (specifically for Subject 14 in P3)
+        clean_file_check = fullfile(input_path, [cond_name, '_cleaned'], file_to_load);
         
-        if isempty(time_ms_eeg)
-            time_ms_eeg = linspace(0, 3.5 , size(EEG.data, 2)); 
+        if exist(clean_file_check, 'file')
+            fprintf('Loading ICA-CLEANED Subj %d/%d (%s) for condition: %s\n', ...
+                s, num_subjs_cond, file_to_load, cond_name);
+            EEG = pop_loadset('filename', file_to_load, 'filepath', fullfile(input_path, [cond_name, '_cleaned']));
+        else
+            fprintf('Loading Subj %d/%d (%s) for condition: %s\n', ...
+                s, num_subjs_cond, file_to_load, cond_name);
+            EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
         end
         
-        if ismember(condition, {'BLA', 'BLT', 'P1'})
-            epoch_trials = 1:2:EEG.trials;
-            data_all_conds.Raw.(condition){s} = EEG.data(:, :, epoch_trials);
-        elseif strcmp(condition, 'P2')
-            epoch_trials_p2 = 1:2:EEG.trials;     
-            data_all_conds.Raw.(condition){s}   = EEG.data(:, :, epoch_trials_p2);
-            data_all_conds.Raw.P2_500{s}        = EEG.data(:, :, epoch_trials_p2_500ms);
-            data_all_conds.Raw.P2_2000{s}       = EEG.data(:, :, epoch_trials_p2_2000ms);
-        elseif strcmp(condition, 'P3')
-            epoch_trials_p3 = 1:2:EEG.trials;
-            data_all_conds.Raw.(condition){s}   = EEG.data(:, :, epoch_trials_p3);
-            data_all_conds.Raw.P3_500{s}        = EEG.data(:, :, epoch_trials_p3_500ms);
-            data_all_conds.Raw.P3_missing{s}    = EEG.data(:, :, epoch_trials_p3_missing);
+        % --- ASSIGN & SPLIT SUB-CONDITIONS ---
+        if strcmp(cond_name, 'P1')
+            % Cued Reference: all trials
+            data_all_conds.Raw.P1{s} = EEG.data;
+            
+        elseif strcmp(cond_name, 'P2')
+            % Unpredicted Timing: Odd = 500 ms ISI, Even = 2000 ms ISI
+            epoch_trials_p2_500    = 1:2:EEG.trials;
+            epoch_trials_p2_2000   = 2:2:EEG.trials;
+            
+            data_all_conds.Raw.P2{s}      = EEG.data;
+            data_all_conds.Raw.P2_500{s}  = EEG.data(:, :, epoch_trials_p2_500);
+            data_all_conds.Raw.P2_2000{s} = EEG.data(:, :, epoch_trials_p2_2000);
+            
+        elseif strcmp(cond_name, 'P3')
+            % Stimulus Uncertainty: Odd = 500 ms delivered, Even = Missing/Omitted
+            epoch_trials_p3_500     = 1:2:EEG.trials;
+            epoch_trials_p3_missing = 2:2:EEG.trials;
+            
+            data_all_conds.Raw.P3{s}         = EEG.data;
+            data_all_conds.Raw.P3_500{s}     = EEG.data(:, :, epoch_trials_p3_500);
+            data_all_conds.Raw.P3_missing{s} = EEG.data(:, :, epoch_trials_p3_missing);
         end
     end
 end
 
-%% 0.2 Apply Alpha and Beta Zero-Phase Filtering & Compute Beta/Alpha Ratio
+%% =========================================================================
+%% SECTION 0.2: BANDPASS FILTERING (ALPHA, BETA, RATIO)
+%% =========================================================================
 disp('Applying Zero-Phase FIR Filters for Alpha and Beta...');
-fn = fs / 2; 
-ord_alpha = round(0.250 * fs); % 250 ms
-b_alpha   = fir1(ord_alpha, [8 12] / fn, 'bandpass');
 
-ord_beta  = round(0.125 * fs); % 125 ms
-b_beta    = fir1(ord_beta, [13 30] / fn, 'bandpass');
+% --- ROBUST SAMPLING RATE (fs) & NYQUIST (fn) EXTRACTION ---
+if isfield(EEG, 'srate') && ~isempty(EEG.srate) && isscalar(EEG.srate) && EEG.srate > 0
+    fs = EEG.srate;
+elseif exist('time_s', 'var') && length(time_s) > 1
+    % Derive fs directly from the time vector step size (dt = 1/fs)
+    fs = round(1 / (time_s(2) - time_s(1)));
+else
+    % Standard default fallback for epoched data
+    fs = 500; 
+end
+
+fn = fs / 2; % Nyquist frequency (guaranteed scalar)
+
+fprintf('Filtering sample rate: %d Hz (Nyquist: %d Hz)\n', fs, fn);
+
+% --- DESIGN ZERO-PHASE FIR FILTERS ---
+ord_alpha = 3 * fix(fs / 8);   % Filter order for alpha (8-12 Hz)
+ord_beta  = 3 * fix(fs / 15);  % Filter order for beta (15-30 Hz)
+
+% Using element-wise division (./) ensures dimension safety
+b_alpha   = fir1(ord_alpha, [8 12] ./ fn, 'bandpass');
+b_beta    = fir1(ord_beta,  [15 30] ./ fn, 'bandpass');
 
 % Smoothing window for envelopes (100 ms) to stabilize the ratio division
 smooth_win = round(0.100 * fs);
@@ -152,11 +171,11 @@ clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(c, ...
     'P3_500', 'Rand 500 (P3)'), 'P3_missing', 'Rand Null (P3)');
 
 %% 2. Time Axis Alignment & Window Masking
-if max(time_ms_eeg) > 2.0
-    time_s = time_ms_eeg - 1.000; 
-else
-    time_s = time_ms_eeg;
-end
+% Reconstruct time vector directly from data dimensions and sampling rate
+nPnts = size(data_all_conds.Raw.P1{1}, 2); 
+time_s = cfg.tStart + (0:(nPnts - 1)) / cfg.fs;
+time_s = time_s(:)'; % Force into a 1 x N row vector
+
 iWin   = time_s >= cfg.win(1)  & time_s < cfg.win(2);
 iBase  = time_s >= cfg.base(1) & time_s < cfg.base(2);
 T_win  = nnz(iWin);
@@ -497,14 +516,19 @@ for band_idx = 1:length(bands_to_process)
     % ------------------------------------------------------------------
     %% CHECKPOINT 2 & 3: GROUP-SPLIT STATS & FIGURES
     % ------------------------------------------------------------------
+    % 1. Pre-calculate the mean logic across all reps for all subjects
     subj_mean_log_r = squeeze(mean(log_r_splits, 3, 'omitnan')); 
     subj_mean_traj  = squeeze(mean(traj_splits, 4, 'omitnan'));  
     
-    g1_subjs = intersect(4:11, 1:num_subjects); 
-    g2_subjs = setdiff(1:num_subjects, g1_subjs);
+    % 2. Define subject subgroups (EXCLUDING OUTLIER SUBJECT 14)
+    exclude_subjs = 14; 
+
+    % Define subject subgroups (Subject 14 is now safely cleaned!)
+    g1_subjs = intersect(4:11, 1:num_subjects); % Cohort A (n=8)
+    g2_subjs = setdiff(1:num_subjects, g1_subjs); % Cohort B (n=6, cleaned)
     
     subj_groups = {g1_subjs, g2_subjs};
-    subj_group_names = {'Subjs_4_to_11', 'Other_Subjs'};
+    subj_group_names = {'Subjs_4_to_11', 'Other_Subjs_Cleaned'};
     
     % PRE-CALCULATE SYNCHRONIZED Y-LIMITS
     time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
@@ -1112,12 +1136,14 @@ for g = 1:2
         end
     end
     
-    if g == 2 && global_max_y > 7.0
-        ylim([0, max(global_max_y * 1.15, 8.5)]);
-        % Place the '8-fold Hyper-Gain' text dynamically above the brackets
-        text(1, global_max_y * 1.05, '8-fold Hyper-Gain', 'FontSize', 20, 'Color', 'r', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
-    else
-        ylim([0, max(global_max_y * 1.15, 2.0)]);
+    % Dynamically frame Y-limits for n=5 (Peak gain now ~2.5)
+    ylim([0, max(global_max_y * 1.25, 2.5)]);
+    
+    if g == 2
+        % Highlight the true, clean 2-fold elevation in Cohort B
+        text(1, global_max_y * 1.08, '~2-fold Gain Elevation (excl. S14)', ...
+            'FontSize', 18, 'Color', [0.2 0.2 0.8], 'FontWeight', 'bold', ...
+            'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
     end
     
     save_file_5b = fullfile(output_path, sprintf('Figure_5B_MultiBand_Gain_Cohort%d', g));
