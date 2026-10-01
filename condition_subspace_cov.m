@@ -603,7 +603,7 @@ for band_idx = 1:length(bands_to_process)
         grp_mean_log_r = mean(subj_mean_log_r(:, :, curr_subjs), 3, 'omitnan');      
         grp_se_log_r   = std(subj_mean_log_r(:, :, curr_subjs), 0, 3, 'omitnan') ./ sqrt(curr_n);
         
-        % --- NEW: Save to aggregates for Figures 5A, 5B, 5C, and 5D ---
+        % --- Save to aggregates for Figures 5A, 5B, 5C, and 5D ---
         aggregate_log_r.(band_name).cohort(g).mean = grp_mean_log_r;
         aggregate_log_r.(band_name).cohort(g).se   = grp_se_log_r;
         
@@ -612,18 +612,24 @@ for band_idx = 1:length(bands_to_process)
         if curr_n == 1, subj_mean_G = subj_mean_G(:); end
         aggregate_G.(band_name).cohort(g).mean = mean(subj_mean_G, 2, 'omitnan');
         aggregate_G.(band_name).cohort(g).se   = std(subj_mean_G, 0, 2, 'omitnan') ./ sqrt(curr_n);
+        aggregate_G.(band_name).cohort(g).subj_data = subj_mean_G; % Track for t-tests
         
         % Latency
-        subj_mean_lat = squeeze(mean(lat_splits(:, :, :, curr_subjs), 3, 'omitnan')); 
-        if curr_n == 1, subj_mean_lat = reshape(subj_mean_lat, [length(cfg.all_conds), cfg.m, 1]); end
-        aggregate_lat.(band_name).cohort(g).mean = mean(subj_mean_lat, 3, 'omitnan');
-        aggregate_lat.(band_name).cohort(g).se   = std(subj_mean_lat, 0, 3, 'omitnan') ./ sqrt(curr_n);
+        subj_mean_lat = squeeze(mean(mean(lat_splits(:, :, :, curr_subjs), 3, 'omitnan'), 2, 'omitnan')); 
+        if curr_n == 1, subj_mean_lat = subj_mean_lat(:); end
+        lat_dir_mean = squeeze(mean(lat_splits(:, :, :, curr_subjs), 3, 'omitnan'));
+        if curr_n == 1, lat_dir_mean = reshape(lat_dir_mean, [length(cfg.all_conds), cfg.m, 1]); end
         
-        % Sustained % (Average across Reps [dim 3] and Spatial Directions [dim 2])
+        aggregate_lat.(band_name).cohort(g).mean = mean(lat_dir_mean, 3, 'omitnan');
+        aggregate_lat.(band_name).cohort(g).se   = std(lat_dir_mean, 0, 3, 'omitnan') ./ sqrt(curr_n);
+        aggregate_lat.(band_name).cohort(g).subj_data = subj_mean_lat; 
+        
+        % Sustained % 
         subj_mean_sust = squeeze(mean(mean(sust_splits(:, :, :, curr_subjs), 3, 'omitnan'), 2, 'omitnan')) * 100;
         if curr_n == 1, subj_mean_sust = subj_mean_sust(:); end
         aggregate_sust.(band_name).cohort(g).mean = mean(subj_mean_sust, 2, 'omitnan');
         aggregate_sust.(band_name).cohort(g).se   = std(subj_mean_sust, 0, 2, 'omitnan') ./ sqrt(curr_n);
+        aggregate_sust.(band_name).cohort(g).subj_data = subj_mean_sust; 
         
         % -----------------------------------------------------------------
         % CHECKPOINT 2: GROUP LEVEL STATS
@@ -1003,7 +1009,7 @@ end
 %% =========================================================================
 %% AGGREGATE FIGURE 5B: MULTI-BAND GLOBAL GAIN (G) BAR PLOTS
 %% =========================================================================
-disp('Generating Figure 5B: Multi-Band Global Gain Bar Plots...');
+disp('Generating Figure 5B: Multi-Band Global Gain Bar Plots (with Stats)...');
 
 plot_bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_labels = {'Raw', 'Alpha', 'Beta', 'Beta/Alpha Ratio'};
@@ -1014,6 +1020,12 @@ colors_conds = [0.5 0.5 0.5; ...       % P1 (Cued): Gray
                 0.466 0.674 0.188; ... % P2_2000: Green
                 0.301 0.745 0.933];    % P3_missing: Blue
                 
+idx_P1      = find(strcmp(cfg.all_conds, 'P1'));
+idx_P2_500  = find(strcmp(cfg.all_conds, 'P2_500'));
+idx_P3_500  = find(strcmp(cfg.all_conds, 'P3_500'));
+idx_P2_2000 = find(strcmp(cfg.all_conds, 'P2_2000'));
+idx_P3_mis  = find(strcmp(cfg.all_conds, 'P3_missing'));
+
 for g = 1:2
     fig5B = figure('Position', [100, 100, 1400, 800], 'Name', sprintf('Figure 5B: Gain Cohort %d', g));
     hold on; set(gca, 'FontSize', 22);
@@ -1039,6 +1051,8 @@ for g = 1:2
     ngroups = size(Y_mean, 1);
     nbars = size(Y_mean, 2);
     groupwidth = min(0.8, nbars/(nbars + 1.5));
+    get_x_pos = @(b, c) b - groupwidth/2 + (2*c-1) * groupwidth / (2*nbars);
+    
     for i = 1:nbars
         x = (1:ngroups) - groupwidth/2 + (2*i-1) * groupwidth / (2*nbars);
         errorbar(x, Y_mean(:,i), Y_se(:,i), 'k', 'linestyle', 'none', 'LineWidth', 1.5, 'HandleVisibility', 'off');
@@ -1051,19 +1065,60 @@ for g = 1:2
     ylabel('Global Subspace Gain (G)', 'FontSize', 24, 'FontWeight', 'bold');
     title(sprintf('Global Subspace Energy Scaling (%s)', strrep(subj_group_names{g}, '_', ' ')), 'FontSize', 28, 'FontWeight', 'bold');
     
-    lgd = legend('Location', 'northwest');
+    % --- UPDATED: Legend moved to North ---
+    lgd = legend('Location', 'north');
     lgd.FontSize = 18;
     grid on;
     
-    max_y = max(max(Y_mean + Y_se)) * 1.15;
-    if g == 2 && max_y > 7.0
-        ylim([0, max(max_y, 8.5)]);
-        text(1, 7.8, '8-fold Hyper-Gain', 'FontSize', 20, 'Color', 'r', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
-    else
-        ylim([0, max(max_y, 2.0)]);
+    % --- SIGNIFICANCE TESTING & BRACKETS FOR GAIN ---
+    global_max_y = max(max(Y_mean + Y_se));
+    
+    for b = 1:length(plot_bands)
+        b_name = plot_bands{b};
+        if ~isfield(aggregate_G, b_name), continue; end
+        G_data = aggregate_G.(b_name).cohort(g).subj_data;
+        if size(G_data, 2) <= 1, continue; end
+        
+        band_max = max(Y_mean(b,:) + Y_se(b,:));
+        y_shift = max(0.1, band_max * 0.08); 
+        current_y = band_max + y_shift;
+        
+        % Test Group A > Cued (Right Tail)
+        for a_idx = [idx_P2_500, idx_P3_500]
+            if isempty(a_idx) || isempty(idx_P1), continue; end
+            [~, p] = ttest(G_data(a_idx, :), G_data(idx_P1, :), 'Tail', 'right');
+            if p < 0.05
+                x1 = get_x_pos(b, idx_P1); x2 = get_x_pos(b, a_idx);
+                plot([x1, x1, x2, x2], [current_y, current_y+y_shift*0.3, current_y+y_shift*0.3, current_y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                star = '*'; if p < 0.01, star = '**'; end; if p < 0.001, star = '***'; end;
+                text(mean([x1, x2]), current_y+y_shift*0.6, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                current_y = current_y + y_shift * 1.2;
+                global_max_y = max(global_max_y, current_y);
+            end
+        end
+        
+        % Test Group B < Cued (Left Tail)
+        for b_idx = [idx_P2_2000, idx_P3_mis]
+            if isempty(b_idx) || isempty(idx_P1), continue; end
+            [~, p] = ttest(G_data(b_idx, :), G_data(idx_P1, :), 'Tail', 'left');
+            if p < 0.05
+                x1 = get_x_pos(b, idx_P1); x2 = get_x_pos(b, b_idx);
+                plot([x1, x1, x2, x2], [current_y, current_y+y_shift*0.3, current_y+y_shift*0.3, current_y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                star = '*'; if p < 0.01, star = '**'; end; if p < 0.001, star = '***'; end;
+                text(mean([x1, x2]), current_y+y_shift*0.6, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                current_y = current_y + y_shift * 1.2;
+                global_max_y = max(global_max_y, current_y);
+            end
+        end
     end
     
-    text(3, 1.25, 'Strictly Homeostatic (G \approx 1)', 'FontSize', 20, 'Color', [0.8500 0.3250 0.0980], 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
+    if g == 2 && global_max_y > 7.0
+        ylim([0, max(global_max_y * 1.15, 8.5)]);
+        % Place the '8-fold Hyper-Gain' text dynamically above the brackets
+        text(1, global_max_y * 1.05, '8-fold Hyper-Gain', 'FontSize', 20, 'Color', 'r', 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
+    else
+        ylim([0, max(global_max_y * 1.15, 2.0)]);
+    end
     
     save_file_5b = fullfile(output_path, sprintf('Figure_5B_MultiBand_Gain_Cohort%d', g));
     try pause(0.5); saveas(fig5B, [save_file_5b, '.svg']); saveas(fig5B, [save_file_5b, '.png']); catch, end
@@ -1119,6 +1174,22 @@ for g = 1:2
                 
             mean_val = mean(lat_m(c_idx, :), 'omitnan');
             plot([i-0.3, i+0.3], [mean_val, mean_val], '-', 'Color', colors_conds(c_idx, :), 'LineWidth', 4, 'HandleVisibility', 'off');
+            
+            if c_idx ~= find(strcmp(cfg.all_conds, 'P1'))
+                lat_data = aggregate_lat.(b_name).cohort(g).subj_data(c_idx, :);
+                [~, p_val] = ttest(lat_data, 0); 
+                if p_val < 0.05
+                    star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end;
+                    test_mean = mean(lat_data, 'omitnan');
+                    if test_mean > 0
+                        y_star = max(lat_m(c_idx, :)) + y_bound * 0.08;
+                    else
+                        y_star = min(lat_m(c_idx, :)) - y_bound * 0.08;
+                    end
+                    text(i, y_star, star, 'FontSize', 24, 'FontWeight', 'bold', ...
+                        'HorizontalAlignment', 'center', 'Color', colors_conds(c_idx, :));
+                end
+            end
         end
         
         xlim([0.5, 3.5]);
@@ -1128,7 +1199,7 @@ for g = 1:2
         
         if b == 1, ylabel('\Delta Latency relative to Cued (ms)', 'FontSize', 22, 'FontWeight', 'bold'); end
         title(band_titles{b}, 'FontSize', 22, 'FontWeight', 'bold');
-        ylim([-y_bound, y_bound]); 
+        ylim([-y_bound * 1.15, y_bound * 1.15]); 
         grid on;
     end
     
@@ -1147,6 +1218,12 @@ end
 %% AGGREGATE FIGURE 5D: MULTI-BAND % SUSTAINED (TONIC VS PHASIC) BAR PLOTS
 %% =========================================================================
 disp('Generating Figure 5D: Multi-Band Sustained % Bar Plots...');
+
+idx_P1      = find(strcmp(cfg.all_conds, 'P1'));
+idx_P2_500  = find(strcmp(cfg.all_conds, 'P2_500'));
+idx_P3_500  = find(strcmp(cfg.all_conds, 'P3_500'));
+idx_P2_2000 = find(strcmp(cfg.all_conds, 'P2_2000'));
+idx_P3_mis  = find(strcmp(cfg.all_conds, 'P3_missing'));
 
 for g = 1:2
     fig5D = figure('Position', [100, 100, 1400, 800], 'Name', sprintf('Figure 5D: Sustained Cohort %d', g));
@@ -1173,6 +1250,8 @@ for g = 1:2
     ngroups = size(Y_mean, 1);
     nbars = size(Y_mean, 2);
     groupwidth = min(0.8, nbars/(nbars + 1.5));
+    get_x_pos = @(b, c) b - groupwidth/2 + (2*c-1) * groupwidth / (2*nbars);
+    
     for i = 1:nbars
         x = (1:ngroups) - groupwidth/2 + (2*i-1) * groupwidth / (2*nbars);
         errorbar(x, Y_mean(:,i), Y_se(:,i), 'k', 'linestyle', 'none', 'LineWidth', 1.5, 'HandleVisibility', 'off');
@@ -1188,23 +1267,106 @@ for g = 1:2
     grid on;
     
     max_y = max(max(Y_mean + Y_se)) * 1.2;
-    ylim([0, max(max_y, 75)]); % Ensure there is always space for annotations
+    ylim([0, max(max_y, 75) + 15]); 
     
-    % --- Callout 1: Alpha and Beta (<3% Phasic) ---
     plot([1.6, 3.4], [10, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     plot([1.6, 1.6], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     plot([3.4, 3.4], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     text(2.5, 13, 'Purely Phasic (< 3%)', 'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
         'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
     
-    % --- Callout 2: Beta/Alpha Ratio Max Tonic Vigilance ---
-    p2_2000_idx = find(strcmp(cfg.all_conds, 'P2_2000'));
-    if ~isempty(p2_2000_idx)
-        % Dynamically calculate exact X-coordinate for the P2_2000 Green bar in the Ratio column (b=4)
-        x_val = 4 - groupwidth/2 + (2*p2_2000_idx-1) * groupwidth / (2*nbars);
-        text(x_val, max(Y_mean(4, p2_2000_idx) + Y_se(4, p2_2000_idx) + 5, 70), 'Max Tonic Vigilance (62-68%)', ...
-            'FontSize', 20, 'Color', colors_conds(p2_2000_idx, :), 'FontWeight', 'bold', ...
-            'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
+    % --- SIGNIFICANCE TESTING & BRACKETS ---
+    
+    % 1. Raw Band (b=1): Cued > Rand 500 & Cued > Rand Missing
+    if isfield(aggregate_sust, 'Raw') && ~isempty(idx_P1)
+        raw_data = aggregate_sust.Raw.cohort(g).subj_data;
+        if size(raw_data, 2) > 1 
+            y_shift = 4; 
+            if ~isempty(idx_P3_500)
+                [~, p1] = ttest(raw_data(idx_P1, :), raw_data(idx_P3_500, :), 'Tail', 'right');
+                if p1 < 0.05
+                    x1 = get_x_pos(1, idx_P1); x2 = get_x_pos(1, idx_P3_500);
+                    y = max(Y_mean(1, [idx_P1, idx_P3_500]) + Y_se(1, [idx_P1, idx_P3_500])) + y_shift;
+                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    star = '*'; if p1 < 0.01, star = '**'; end; if p1 < 0.001, star = '***'; end;
+                    text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    y_shift = 10; 
+                end
+            end
+            if ~isempty(idx_P3_mis)
+                [~, p2] = ttest(raw_data(idx_P1, :), raw_data(idx_P3_mis, :), 'Tail', 'right');
+                if p2 < 0.05
+                    x1 = get_x_pos(1, idx_P1); x2 = get_x_pos(1, idx_P3_mis);
+                    y = max(Y_mean(1, [idx_P1, idx_P3_mis]) + Y_se(1, [idx_P1, idx_P3_mis])) + y_shift;
+                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    star = '*'; if p2 < 0.01, star = '**'; end; if p2 < 0.001, star = '***'; end;
+                    text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                end
+            end
+        end
+    end
+    
+    % --- NEW: 2. Alpha (b=2) and Beta (b=3) Bands: Cued > Rand 500 & Cued > Rand Missing ---
+    for b_idx = 2:3
+        b_name = plot_bands{b_idx};
+        if isfield(aggregate_sust, b_name) && ~isempty(idx_P1)
+            sust_data = aggregate_sust.(b_name).cohort(g).subj_data;
+            if size(sust_data, 2) > 1 
+                y_shift = 17; % Start high enough to clear the "Purely Phasic" text
+                
+                if ~isempty(idx_P3_500)
+                    [~, p_ab1] = ttest(sust_data(idx_P1, :), sust_data(idx_P3_500, :), 'Tail', 'right');
+                    if p_ab1 < 0.05
+                        x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_500);
+                        y = max(Y_mean(b_idx, [idx_P1, idx_P3_500]) + Y_se(b_idx, [idx_P1, idx_P3_500])) + y_shift;
+                        plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                        star = '*'; if p_ab1 < 0.01, star = '**'; end; if p_ab1 < 0.001, star = '***'; end;
+                        text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                        y_shift = y_shift + 6; 
+                    end
+                end
+                
+                if ~isempty(idx_P3_mis)
+                    [~, p_ab2] = ttest(sust_data(idx_P1, :), sust_data(idx_P3_mis, :), 'Tail', 'right');
+                    if p_ab2 < 0.05
+                        x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_mis);
+                        y = max(Y_mean(b_idx, [idx_P1, idx_P3_mis]) + Y_se(b_idx, [idx_P1, idx_P3_mis])) + y_shift;
+                        plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                        star = '*'; if p_ab2 < 0.01, star = '**'; end; if p_ab2 < 0.001, star = '***'; end;
+                        text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    end
+                end
+            end
+        end
+    end
+    
+    % 3. Beta/Alpha Ratio (b=4): Unpred 2000 > Cued & Unpred 2000 > Unpred 500
+    if isfield(aggregate_sust, 'BetaAlphaRatio') && ~isempty(idx_P2_2000)
+        ratio_data = aggregate_sust.BetaAlphaRatio.cohort(g).subj_data;
+        if size(ratio_data, 2) > 1
+            y_shift = 4;
+            if ~isempty(idx_P1)
+                [~, p3] = ttest(ratio_data(idx_P2_2000, :), ratio_data(idx_P1, :), 'Tail', 'right');
+                if p3 < 0.05
+                    x1 = get_x_pos(4, idx_P1); x2 = get_x_pos(4, idx_P2_2000);
+                    y = max(Y_mean(4, [idx_P1, idx_P2_2000]) + Y_se(4, [idx_P1, idx_P2_2000])) + y_shift;
+                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    star = '*'; if p3 < 0.01, star = '**'; end; if p3 < 0.001, star = '***'; end;
+                    text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    y_shift = 10;
+                end
+            end
+            if ~isempty(idx_P2_500)
+                [~, p4] = ttest(ratio_data(idx_P2_2000, :), ratio_data(idx_P2_500, :), 'Tail', 'right');
+                if p4 < 0.05
+                    x1 = get_x_pos(4, idx_P2_500); x2 = get_x_pos(4, idx_P2_2000);
+                    y = max(Y_mean(4, [idx_P2_500, idx_P2_2000]) + Y_se(4, [idx_P2_500, idx_P2_2000])) + y_shift;
+                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    star = '*'; if p4 < 0.01, star = '**'; end; if p4 < 0.001, star = '***'; end;
+                    text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                end
+            end
+        end
     end
     
     save_file_5d = fullfile(output_path, sprintf('Figure_5D_MultiBand_Sustained_Cohort%d', g));
