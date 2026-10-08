@@ -1,5 +1,5 @@
 %% =========================================================================
-%% CLEAN SUBJECT 14 VIA ICA & VERIFY ARTIFACT REMOVAL
+%% CLEAN SUBJECT 3 VIA ICA & VERIFY ARTIFACT REMOVAL
 %% =========================================================================
 clear; clc; close all;
 
@@ -16,17 +16,17 @@ else
     error('Unknown path.');
 end
 
-% 1. Load Subject 14 P3 file
+% 1. Load Subject 3 P3 file
 in_dir = fullfile(input_path, 'P3');
 set_files = dir(fullfile(in_dir, '*.set'));
 names_sorted = sort(cellstr({set_files.name})');
-s14_file = names_sorted{14};
+s3_file = names_sorted{3}; % Target Subject 3
 
-fprintf('Loading Subject 14: %s\n', s14_file);
-EEG = pop_loadset('filename', s14_file, 'filepath', in_dir);
+fprintf('Loading Subject 3: %s\n', s3_file);
+EEG = pop_loadset('filename', s3_file, 'filepath', in_dir);
 
-% 2. Run Extended Infomax ICA on Subject 14
-fprintf('Running Infomax ICA on Subject 14 (All P3 Trials)...\n');
+% 2. Run Extended Infomax ICA on Subject 3
+fprintf('Running Infomax ICA on Subject 3 (All P3 Trials)...\n');
 EEG = pop_runica(EEG, 'extended', 1, 'interupt', 'off');
 
 % 3. Classify Components (Using EEGLAB ICLabel if installed, or inspect topoplots)
@@ -34,6 +34,7 @@ try
     EEG = iclabel(EEG);
     % Automatically flag ICs where Eye, Muscle, or Channel Noise probability > 0.70
     artifact_classes = EEG.etc.ic_classification.ICLabel.classifications;
+    
     % Column 2: Muscle, Column 3: Eye, Column 5: Channel Noise
     bad_ics = find(artifact_classes(:, 2) > 0.70 | artifact_classes(:, 3) > 0.70 | artifact_classes(:, 5) > 0.70);
 catch
@@ -56,18 +57,16 @@ if ~isfield(EEG_clean, 'xmin') || isempty(EEG_clean.xmin)
     EEG_clean.xmin = EEG.xmin;
     EEG_clean.xmax = EEG.xmax;
 end
-
 EEG_clean = eeg_checkset(EEG_clean); % Forces EEGLAB to rebuild EEG.times from srate and xmin
 
 % 5. Save Cleaned Dataset to Disk
 clean_save_dir = fullfile(input_path, 'P3_cleaned');
 if ~exist(clean_save_dir, 'dir'), mkdir(clean_save_dir); end
-pop_saveset(EEG_clean, 'filename', s14_file, 'filepath', clean_save_dir);
+pop_saveset(EEG_clean, 'filename', s3_file, 'filepath', clean_save_dir);
 
 % 6. Quantitative Verification: Check Baseline Noise Ratio After Cleaning
 time_s = linspace(-1.0, 2.5, EEG.pnts);
 iBase  = time_s >= -1.0 & time_s < -0.8;
-
 var_raw_before = mean(var(mean(EEG.data(:, iBase, :), 3), 0, 2));
 var_raw_after  = mean(var(mean(EEG_clean.data(:, iBase, :), 3), 0, 2));
 
