@@ -32,7 +32,7 @@ idx_p3_mis = find(strcmp(conditions, 'P3_missing'));
 subj_G_matrix = squeeze(mean(G_splits, 2, 'omitnan'))'; % [num_subjs x nCond]
 
 cohort_A_idx = intersect(4:11, 1:num_subjs);
-cohort_B_idx = setdiff(1:num_subjs, [cohort_A_idx,14]);
+cohort_B_idx = setdiff(1:num_subjs, [cohort_A_idx]); % , 14
 
 %% =========================================================================
 %% 3. IDENTIFY THE NEW OUTLIER (IGNORING EXCLUDED SUBJECTS)
@@ -225,7 +225,7 @@ title('Pre-Cue Noise Stability', 'FontSize', 16, 'FontWeight', 'bold');
 legend('Location', 'best'); grid on;
 
 % Panel C: Waveform Check
-chan_idx = 13; % Default to C3/Cz equivalent
+chan_idx = 14; % Default to 14 for C3 15 for Cz equivalent
 erp_P1     = squeeze(mean(data_all_conds.Raw.P1{outlier_subj}(chan_idx, :, :), 3, 'omitnan'));
 erp_P3_500 = squeeze(mean(data_all_conds.Raw.P3_500{outlier_subj}(chan_idx, :, :), 3, 'omitnan'));
 
