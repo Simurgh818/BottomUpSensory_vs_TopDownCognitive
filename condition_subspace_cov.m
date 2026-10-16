@@ -31,6 +31,25 @@ data_all_conds.Raw = struct();
 data_all_conds.Alpha = struct();
 data_all_conds.Beta = struct();
 
+% --- PRE-LOAD EXCEL INDICES ONCE ---
+excel_p2 = fullfile(input_path, 'Indexes for P2.xlsx');
+if exist(excel_p2, 'file')
+    epoch_trials_p2_500  = readmatrix(excel_p2, 'Sheet', 'Audio onset with 500 ms tactile');
+    epoch_trials_p2_2000 = readmatrix(excel_p2, 'Sheet', 'Audio onset with 2000 ms tactil');
+    % Remove NaNs from trailing empty rows
+    epoch_trials_p2_500  = epoch_trials_p2_500(~isnan(epoch_trials_p2_500));
+    epoch_trials_p2_2000 = epoch_trials_p2_2000(~isnan(epoch_trials_p2_2000));
+end
+
+excel_p3 = fullfile(input_path, 'Indexes for P3.xlsx');
+if exist(excel_p3, 'file')
+    epoch_trials_p3_500 = readmatrix(excel_p3, 'Sheet', 'Audio onset with 500 ms tactile');
+    epoch_trials_p3_mis = readmatrix(excel_p3, 'Sheet', 'Audio onset with missing tactil');
+    % Remove NaNs from trailing empty rows
+    epoch_trials_p3_500 = epoch_trials_p3_500(~isnan(epoch_trials_p3_500));
+    epoch_trials_p3_mis = epoch_trials_p3_mis(~isnan(epoch_trials_p3_mis));
+end
+
 for c_idx = 1:length(conditions)
     cond_name = conditions{c_idx};
     in_dir = fullfile(input_path, cond_name);
@@ -39,48 +58,52 @@ for c_idx = 1:length(conditions)
     names_sorted = sort(cellstr({set_files.name})');
     num_subjs_cond = length(names_sorted);
     
+    if isempty(names_sorted)
+        fprintf('No .set files for %s — skipping\n', cond_name);
+        continue;
+    end
+    
     for s = 1:num_subjs_cond
         file_to_load = names_sorted{s};
         
-        % Automatically loads ICA-cleaned files if present (e.g., S3 and S14 in P3_cleaned)
-        clean_file_check = fullfile(input_path, [cond_name, '_cleaned'], file_to_load);
+        % --- STRICTLY LOAD ORIGINAL RAW DATA (IGNORE ICA-CLEANED) ---
+        fprintf('Loading RAW Subj %d/%d (%s) for condition: %s\n', ...
+            s, num_subjs_cond, file_to_load, cond_name);
         
-        if exist(clean_file_check, 'file')
-            fprintf('Loading ICA-CLEANED Subj %d/%d (%s) for condition: %s\n', ...
-                s, num_subjs_cond, file_to_load, cond_name);
-            EEG = pop_loadset('filename', file_to_load, 'filepath', fullfile(input_path, [cond_name, '_cleaned']));
-        else
-            fprintf('Loading Subj %d/%d (%s) for condition: %s\n', ...
-                s, num_subjs_cond, file_to_load, cond_name);
-            EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
+        EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
+        % % Automatically loads ICA-cleaned files if present (e.g., S3 and S14 in P3_cleaned)
+        % clean_file_check = fullfile(input_path, [cond_name, '_cleaned'], file_to_load);
+        % 
+        % if exist(clean_file_check, 'file')
+        %     fprintf('Loading ICA-CLEANED Subj %d/%d (%s) for condition: %s\n', ...
+        %         s, num_subjs_cond, file_to_load, cond_name);
+        %     EEG = pop_loadset('filename', file_to_load, 'filepath', fullfile(input_path, [cond_name, '_cleaned']));
+        % else
+        %     fprintf('Loading Subj %d/%d (%s) for condition: %s\n', ...
+        %         s, num_subjs_cond, file_to_load, cond_name);
+        %     EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
+        % end
+        
+        if isempty(fs), fs = EEG.srate; end
+        if isempty(time_ms_eeg)
+            time_ms_eeg = linspace(0, 3.5, size(EEG.data, 2)); 
         end
         
-        % --- ASSIGN & SPLIT SUB-CONDITIONS ---
-        if strcmp(cond_name, 'BLA')
-            % Auditory Control: all trials
-            data_all_conds.Raw.BLA{s} = EEG.data;
-            
-        elseif strcmp(cond_name, 'P1')
-            % Cued Reference: all trials
-            data_all_conds.Raw.P1{s} = EEG.data;
+        % --- ASSIGN & SPLIT SUB-CONDITIONS USING EXCEL INDICES ---
+        if ismember(cond_name, {'BLA', 'BLT', 'P1'})
+            % 60 trials for P1, BLA, BLT
+            epoch_trials = 1:2:EEG.trials; 
+            data_all_conds.Raw.(cond_name){s} = double(EEG.data(:, :, epoch_trials));
             
         elseif strcmp(cond_name, 'P2')
-            % Unpredicted Timing: Odd = 500 ms ISI, Even = 2000 ms ISI
-            epoch_trials_p2_500    = 1:2:EEG.trials;
-            epoch_trials_p2_2000   = 2:2:EEG.trials;
-            
-            data_all_conds.Raw.P2{s}      = EEG.data;
-            data_all_conds.Raw.P2_500{s}  = EEG.data(:, :, epoch_trials_p2_500);
-            data_all_conds.Raw.P2_2000{s} = EEG.data(:, :, epoch_trials_p2_2000);
+            data_all_conds.Raw.P2{s}      = double(EEG.data(:, :, 1:2:EEG.trials));
+            data_all_conds.Raw.P2_500{s}  = double(EEG.data(:, :, epoch_trials_p2_500));
+            data_all_conds.Raw.P2_2000{s} = double(EEG.data(:, :, epoch_trials_p2_2000));
             
         elseif strcmp(cond_name, 'P3')
-            % Stimulus Uncertainty: Odd = 500 ms delivered, Even = Missing/Omitted
-            epoch_trials_p3_500     = 1:2:EEG.trials;
-            epoch_trials_p3_missing = 2:2:EEG.trials;
-            
-            data_all_conds.Raw.P3{s}         = EEG.data;
-            data_all_conds.Raw.P3_500{s}     = EEG.data(:, :, epoch_trials_p3_500);
-            data_all_conds.Raw.P3_missing{s} = EEG.data(:, :, epoch_trials_p3_missing);
+            data_all_conds.Raw.P3{s}         = double(EEG.data(:, :, 1:2:EEG.trials));
+            data_all_conds.Raw.P3_500{s}     = double(EEG.data(:, :, epoch_trials_p3_500));
+            data_all_conds.Raw.P3_missing{s} = double(EEG.data(:, :, epoch_trials_p3_mis));
         end
     end
 end
