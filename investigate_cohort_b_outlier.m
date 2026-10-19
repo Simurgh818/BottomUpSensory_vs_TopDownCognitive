@@ -171,84 +171,226 @@ time_s = -1.000 + (0:(nPnts - 1)) / 500;
 data_before_screen = data_all_conds.Raw;
 
 %% =========================================================================
-%% 5B. TRIAL-BY-TRIAL OUTLIER SCREENING (BIDIRECTIONAL +/- 30 uV & 3x MAD)
+%% 5B. 2D GRID-SEARCH OPTIMIZATION (TARGETING FIRST 10 TRIALS PER CONDITION)
 %% =========================================================================
 cfg = struct('win', [0 1.0], 'base', [-1.0 -0.8], 'erp_win', [-0.2 0.8], 'm', 6);
-iWin    = time_s >= cfg.win(1)     & time_s < cfg.win(2);
-iBase   = time_s >= cfg.base(1)    & time_s < cfg.base(2);
-iErpWin = time_s >= cfg.erp_win(1) & time_s <= cfg.erp_win(2);
+iWin      = time_s >= cfg.win(1)     & time_s < cfg.win(2);
+iBase     = time_s >= cfg.base(1)    & time_s < cfg.base(2);
+iErpWin   = time_s >= cfg.erp_win(1) & time_s <= cfg.erp_win(2);
+iZeroZone = time_s >= -0.200         & time_s <= 0.200; % Peristimulus baseline window [-0.2, 0.2] s
+iPreStim  = time_s >= -0.200         & time_s <= 0.000; % Expectation ERP window [-0.2, 0.0] s
 
-cond_keys = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
+cond_keys     = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
+smooth_pts    = round(0.100 * 500); % 100 ms moving average for sustained drift
+sat_thresh_uV = 100;                % Hard peak-amplitude ceiling: +/- 100 uV
 
-% --- UPDATED THRESHOLDS ---
-sat_thresh_uV   = 100; % Hard peak-amplitude ceiling: +/- 100 uV
-drift_thresh_uV = 25;  % Bidirectional slow-drift ceiling: +/- 30 uV (|drift| > 30 uV)
-mad_mult        = 2.5; % Relative statistical cutoff: Median + 3.0 * MAD
+% --- 1. PRE-COMPUTE TRIAL METRICS FOR ALL TARGET SUBJECTS & CONDITIONS ---
+precomp = struct();
+for t_idx = 1:length(target_subjs)
+    s = target_subjs(t_idx);
+    for c = 1:length(cond_keys)
+        c_name = cond_keys{c};
+        X_raw = data_all_conds.Raw.(c_name){s};
+        [~, ~, nTr] = size(X_raw);
+        
+        X_bc_all       = zeros(size(X_raw));
+        trial_max_amp  = zeros(nTr, 1);
+        trial_c3_drift = zeros(nTr, 1);
+        
+        for tr = 1:nTr
+            epoch = X_raw(:, :, tr);
+            epoch_bc = epoch - mean(epoch(:, iBase), 2);
+            X_bc_all(:, :, tr) = epoch_bc;
+            
+            % Bidirectional C3 Drift: Max |100ms-smoothed voltage| in [-0.2, 0.8] s
+            c3_smooth = movmean(epoch_bc(chan_idx, iErpWin), smooth_pts);
+            trial_c3_drift(tr) = max(abs(c3_smooth));
+            
+            % Peak Absolute Amplitude on C3 in [-0.2, 0.8] s
+            trial_max_amp(tr) = max(abs(epoch_bc(chan_idx, iErpWin)));
+        end
+        
+        precomp(s).(c_name).X_bc_all       = X_bc_all;
+        precomp(s).(c_name).trial_c3_drift = trial_c3_drift;
+        precomp(s).(c_name).trial_max_amp  = trial_max_amp;
+        precomp(s).(c_name).c3_traces      = squeeze(X_bc_all(chan_idx, :, :)); % [nTime x nTr]
+    end
+end
 
-smooth_pts = round(0.100 * 500); % 100 ms window for measuring sustained drift
+% --- 2. 2D GRID SEARCH TARGETING FIRST 10 TRIALS OF EACH CONDITION ---
+opt_mode    = 'per_subject';   % 'per_subject' or 'global'
+drift_grid  = 16 : 1 : 50;     % Candidate drift thresholds: 16 to 50 uV
+mad_grid    = 2.5 : 0.25 : 10; % Candidate MAD multipliers: 2.5 to 10.0
+min_keep_p3 = 14;              % Minimum kept trials out of 30
+ref_idx_10  = 1:10;            % First 10 trials as condition-specific expectation baseline
 
-screening_stats = struct();
+cost_surface   = inf(length(drift_grid), length(mad_grid), length(target_subjs));
+null_diff_f10  = nan(length(drift_grid), length(mad_grid), length(target_subjs));
+r500_diff_f10  = nan(length(drift_grid), length(mad_grid), length(target_subjs));
+null_abs_val   = nan(length(drift_grid), length(mad_grid), length(target_subjs));
+r500_abs_val   = nan(length(drift_grid), length(mad_grid), length(target_subjs));
+rej_counts_mis = zeros(length(drift_grid), length(mad_grid), length(target_subjs));
+rej_counts_500 = zeros(length(drift_grid), length(mad_grid), length(target_subjs));
 
-fprintf('\n========================================================================\n');
-fprintf(' EXECUTING TRIAL-LEVEL SCREENING: SUBJECT 3 & SUBJECT 14\n');
-fprintf('========================================================================\n');
+f10_null_base = zeros(length(target_subjs), 1);
+f10_r500_base = zeros(length(target_subjs), 1);
 
 for t_idx = 1:length(target_subjs)
     s = target_subjs(t_idx);
-    fprintf('\n--- SUBJECT %02d TRIAL SCREENING SUMMARY ---\n', s);
+    
+    % Extract P3_missing (Rand Null) and P3_500 (Rand 500) metrics
+    d_mis  = precomp(s).P3_missing.trial_c3_drift;
+    a_mis  = precomp(s).P3_missing.trial_max_amp;
+    tr_mis = precomp(s).P3_missing.c3_traces;
+    
+    d_500  = precomp(s).P3_500.trial_c3_drift;
+    a_500  = precomp(s).P3_500.trial_max_amp;
+    tr_500 = precomp(s).P3_500.c3_traces;
+    
+    % Compute condition-specific First-10-Trials Reference ERPs (excluding any >35 uV spike in 1:10)
+    valid_10_mis = ref_idx_10(d_mis(ref_idx_10) <= 35 & a_mis(ref_idx_10) <= sat_thresh_uV);
+    if isempty(valid_10_mis), valid_10_mis = ref_idx_10; end
+    erp_mis_f10 = mean(tr_mis(:, valid_10_mis), 2, 'omitnan');
+    
+    valid_10_500 = ref_idx_10(d_500(ref_idx_10) <= 35 & a_500(ref_idx_10) <= sat_thresh_uV);
+    if isempty(valid_10_500), valid_10_500 = ref_idx_10; end
+    erp_500_f10 = mean(tr_500(:, valid_10_500), 2, 'omitnan');
+    
+    % Store First-10-Trials reference traces for plotting in Section 7
+    precomp(s).P3_missing.erp_f10 = erp_mis_f10;
+    precomp(s).P3_500.erp_f10     = erp_500_f10;
+    
+    f10_null_base(t_idx) = mean(erp_mis_f10(iPreStim));
+    f10_r500_base(t_idx) = mean(erp_500_f10(iPreStim));
+    
+    for id = 1:length(drift_grid)
+        d_lim = drift_grid(id);
+        for im = 1:length(mad_grid)
+            m_val = mad_grid(im);
+            
+            % --- Evaluate Rand Null (P3_missing) ---
+            rob_d_mis = median(d_mis) + m_val * mad(d_mis, 1);
+            rob_a_mis = median(a_mis) + m_val * mad(a_mis, 1);
+            bad_mis   = (a_mis > sat_thresh_uV) | (a_mis > rob_a_mis) | ...
+                        (d_mis > d_lim)         | (d_mis > rob_d_mis);
+            
+            % --- Evaluate Rand 500 (P3_500) ---
+            rob_d_500 = median(d_500) + m_val * mad(d_500, 1);
+            rob_a_500 = median(a_500) + m_val * mad(a_500, 1);
+            bad_500   = (a_500 > sat_thresh_uV) | (a_500 > rob_a_500) | ...
+                        (d_500 > d_lim)         | (d_500 > rob_d_500);
+            
+            if sum(~bad_500) < min_keep_p3
+                [~, ord500] = sort(d_500, 'ascend');
+                bad_500 = true(size(d_500));
+                bad_500(ord500(1:min_keep_p3)) = false;
+            end
+            if sum(~bad_mis) < min_keep_p3
+                continue; 
+            end
+            
+            erp_mis_cand = mean(tr_mis(:, ~bad_mis), 2, 'omitnan');
+            erp_500_cand = mean(tr_500(:, ~bad_500), 2, 'omitnan');
+            
+            % Objective: Match each condition's cleaned ERP to its OWN First-10-Trials expectation baseline
+            % 1. Rand Null alignment to First 10 Trials ([-0.2, 0.0]s expectation + [-0.2, 0.2]s peristimulus + full trace)
+            err_mis_pre  = abs(mean(erp_mis_cand(iPreStim))  - mean(erp_mis_f10(iPreStim)));
+            err_mis_zero = abs(mean(erp_mis_cand(iZeroZone)) - mean(erp_mis_f10(iZeroZone)));
+            err_mis_full = abs(mean(erp_mis_cand(iErpWin))   - mean(erp_mis_f10(iErpWin)));
+            
+            % 2. Rand 500 alignment to First 10 Trials ([-0.2, 0.0]s expectation + [-0.2, 0.2]s peristimulus)
+            err_500_pre  = abs(mean(erp_500_cand(iPreStim))  - mean(erp_500_f10(iPreStim)));
+            err_500_zero = abs(mean(erp_500_cand(iZeroZone)) - mean(erp_500_f10(iZeroZone)));
+            
+            % 3. Penalize keeping trials that exceed 30 uV so optimizer doesn't inflate drift_thresh_uV
+            %    to cancel positive drifts with negative drifts
+            max_kept_drift = max([d_mis(~bad_mis); d_500(~bad_500)]);
+            leak_penalty   = 0.15 * max(0, max_kept_drift - 28);
+            
+            cost_surface(id, im, t_idx) = 1.2 * err_mis_pre + 1.0 * err_mis_zero + 0.5 * err_mis_full + ...
+                                          1.0 * err_500_pre + 0.5 * err_500_zero + leak_penalty;
+                                      
+            null_diff_f10(id, im, t_idx)  = mean(erp_mis_cand(iPreStim)) - mean(erp_mis_f10(iPreStim));
+            r500_diff_f10(id, im, t_idx)  = mean(erp_500_cand(iPreStim)) - mean(erp_500_f10(iPreStim));
+            null_abs_val(id, im, t_idx)   = mean(erp_mis_cand(iPreStim));
+            r500_abs_val(id, im, t_idx)   = mean(erp_500_cand(iPreStim));
+            rej_counts_mis(id, im, t_idx) = sum(bad_mis);
+            rej_counts_500(id, im, t_idx) = sum(bad_500);
+        end
+    end
+end
+
+% Determine optimal (drift_thresh_uV, mad_mult)
+subj_opt_drift = zeros(length(target_subjs), 1);
+subj_opt_mad   = zeros(length(target_subjs), 1);
+
+joint_cost = sum(cost_surface, 3);
+[~, lin_idx_glob] = min(joint_cost(:));
+[id_glob, im_glob] = ind2sub(size(joint_cost), lin_idx_glob);
+glob_drift_opt = drift_grid(id_glob);
+glob_mad_opt   = mad_grid(im_glob);
+
+fprintf('\n========================================================================================\n');
+fprintf(' 2D GRID-SEARCH RESULTS (TARGETING FIRST 10 TRIALS BASELINE [-0.2, 0.0s] PER CONDITION)\n');
+fprintf('========================================================================================\n');
+fprintf('>>> GLOBAL OPTIMUM (Shared S3 & S14): drift_thresh_uV = %d uV | mad_mult = %.2f\n', ...
+    glob_drift_opt, glob_mad_opt);
+
+for t_idx = 1:length(target_subjs)
+    s = target_subjs(t_idx);
+    sub_cost = cost_surface(:, :, t_idx);
+    [~, lin_idx_s] = min(sub_cost(:));
+    [id_s, im_s] = ind2sub(size(sub_cost), lin_idx_s);
+    
+    if strcmpi(opt_mode, 'per_subject')
+        subj_opt_drift(t_idx) = drift_grid(id_s);
+        subj_opt_mad(t_idx)   = mad_grid(im_s);
+        id_app = id_s; im_app = im_s;
+    else
+        subj_opt_drift(t_idx) = glob_drift_opt;
+        subj_opt_mad(t_idx)   = glob_mad_opt;
+        id_app = id_glob; im_app = im_glob;
+    end
+    
+    fprintf('\n  * Subject %02d First-10-Trials Baseline [-0.2,0s] -> Rand Null: %+5.2f uV | Rand 500: %+5.2f uV\n', ...
+        s, f10_null_base(t_idx), f10_r500_base(t_idx));
+    fprintf('    - Applied (%s): drift_thresh_uV = %d uV | mad_mult = %.2f\n', ...
+        upper(opt_mode), subj_opt_drift(t_idx), subj_opt_mad(t_idx));
+    fprintf('    - Cleaned Rand Null [-0.2,0s]: %+5.2f uV (Diff vs First 10: %+5.2f uV | Rej: %d/30)\n', ...
+        null_abs_val(id_app, im_app, t_idx), null_diff_f10(id_app, im_app, t_idx), rej_counts_mis(id_app, im_app, t_idx));
+    fprintf('    - Cleaned Rand 500  [-0.2,0s]: %+5.2f uV (Diff vs First 10: %+5.2f uV | Rej: %d/30)\n', ...
+        r500_abs_val(id_app, im_app, t_idx), r500_diff_f10(id_app, im_app, t_idx), rej_counts_500(id_app, im_app, t_idx));
+end
+
+% --- 3. APPLY OPTIMAL THRESHOLDS & EXPORT SCREENED DATASETS ---
+screening_stats = struct();
+
+for t_idx = 1:length(target_subjs)
+    s = target_subjs(t_idx);
+    drift_thresh_uV = subj_opt_drift(t_idx);
+    mad_mult        = subj_opt_mad(t_idx);
+    
+    fprintf('\n--- SUBJECT %02d TRIAL SCREENING SUMMARY (drift_thresh = %d uV, mad_mult = %.2f) ---\n', ...
+        s, drift_thresh_uV, mad_mult);
     fprintf('%-12s | %-10s | %-12s | %-12s | %-12s | %-10s\n', ...
-        'Condition', 'Total Tr', 'Saturated', 'Drift/Base', 'Total Rej', 'Kept Tr');
+        'Condition', 'Total Tr', 'Saturated', 'C3 Drift', 'Total Rej', 'Kept Tr');
     fprintf('--------------------------------------------------------------------------------\n');
     
     for c = 1:length(cond_keys)
         c_name = cond_keys{c};
-        X_raw = data_all_conds.Raw.(c_name){s}; 
-        [nCh, nT, nTr] = size(X_raw);
+        X_bc_all       = precomp(s).(c_name).X_bc_all;
+        trial_c3_drift = precomp(s).(c_name).trial_c3_drift;
+        trial_max_amp  = precomp(s).(c_name).trial_max_amp;
+        nTr            = length(trial_c3_drift);
         
-        X_bc_all         = zeros(size(X_raw));
-        trial_max_amp    = zeros(nTr, 1);
-        trial_c3_drift   = zeros(nTr, 1);
-        trial_glob_drift = zeros(nTr, 1);
-        trial_base_var   = zeros(nTr, 1);
+        rob_sat_lim   = median(trial_max_amp)  + mad_mult * mad(trial_max_amp, 1);
+        rob_drift_lim = median(trial_c3_drift) + mad_mult * mad(trial_c3_drift, 1);
         
-        for tr = 1:nTr
-            epoch = X_raw(:, :, tr);
-            % Baseline-correct to pre-cue window [-1.0, -0.8] s (no detrend distortion)
-            base_val = mean(epoch(:, iBase), 2);
-            epoch_bc = epoch - base_val;
-            X_bc_all(:, :, tr) = epoch_bc;
-            
-            % 1. Bidirectional C3 Drift: Max absolute 100ms-smoothed excursion in [-0.2, 0.8] s
-            %    Catches BOTH positive (> +30 uV) and negative (< -30 uV) drifts
-            c3_smooth = movmean(epoch_bc(chan_idx, iErpWin), smooth_pts);
-            trial_c3_drift(tr) = max(abs(c3_smooth));
-            
-            % 2. Global Channel Drift across all 32 channels
-            trial_glob_drift(tr) = median( abs(mean(epoch_bc(:, iWin), 2)) );
-            
-            % 3. Peak Absolute Amplitude on C3 in [-0.2, 0.8] s (catches both + and - spikes)
-            trial_max_amp(tr) = max(abs(epoch_bc(chan_idx, iErpWin)));
-            
-            % 4. Pre-cue Baseline Variance Instability
-            trial_base_var(tr) = mean(var(epoch_bc(:, iBase), 0, 2));
-        end
+        is_saturated = (trial_max_amp > sat_thresh_uV)    | (trial_max_amp > rob_sat_lim);
+        is_drifting  = (trial_c3_drift > drift_thresh_uV) | (trial_c3_drift > rob_drift_lim);
+        bad_trials   = is_saturated | is_drifting;
         
-        % Relative MAD thresholds (Median + 3.0 * MAD)
-        rob_sat_lim   = median(trial_max_amp)    + mad_mult * mad(trial_max_amp, 1);
-        rob_drift_lim = median(trial_c3_drift)   + mad_mult * mad(trial_c3_drift, 1);
-        rob_glob_lim  = median(trial_glob_drift) + mad_mult * mad(trial_glob_drift, 1);
-        rob_base_lim  = median(trial_base_var)   + mad_mult * mad(trial_base_var, 1);
-        
-        is_saturated = (trial_max_amp > sat_thresh_uV) | (trial_max_amp > rob_sat_lim);
-        is_drifting  = (trial_c3_drift > drift_thresh_uV) | ...
-                       (trial_c3_drift > rob_drift_lim)   | ...
-                       (trial_glob_drift > rob_glob_lim)  | ...
-                       (trial_base_var > rob_base_lim);
-        
-        bad_trials = is_saturated | is_drifting;
-        
-        % Safety floor: keep at least 12 clean trials so covariance math doesn't crash
-        min_keep = min(12, nTr);
+        min_keep = min(min_keep_p3, nTr);
         if sum(~bad_trials) < min_keep
             artifact_score = (trial_c3_drift / (median(trial_c3_drift) + eps)) + ...
                              (trial_max_amp  / (median(trial_max_amp) + eps));
@@ -261,22 +403,28 @@ for t_idx = 1:length(target_subjs)
         X_clean(:, :, bad_trials) = NaN;
         data_all_conds.Raw.(c_name){s} = X_clean;
         
-        screening_stats(s).(c_name).bad_trials     = bad_trials;
-        screening_stats(s).(c_name).trial_max_amp  = trial_max_amp;
-        screening_stats(s).(c_name).trial_c3_drift = trial_c3_drift;
-        screening_stats(s).(c_name).X_before       = X_bc_all;
-        screening_stats(s).(c_name).X_after        = X_clean;
+        screening_stats(s).(c_name).bad_trials      = bad_trials;
+        screening_stats(s).(c_name).trial_max_amp   = trial_max_amp;
+        screening_stats(s).(c_name).trial_c3_drift  = trial_c3_drift;
+        screening_stats(s).(c_name).X_before        = X_bc_all;
+        screening_stats(s).(c_name).X_after         = X_clean;
+        screening_stats(s).(c_name).drift_thresh_uV = drift_thresh_uV;
+        screening_stats(s).(c_name).mad_mult        = mad_mult;
+        if isfield(precomp(s).(c_name), 'erp_f10')
+            screening_stats(s).(c_name).erp_f10 = precomp(s).(c_name).erp_f10;
+        end
         
         fprintf('%-12s | %-10d | %-12d | %-12d | %-12d | %-10d\n', ...
             c_name, nTr, sum(is_saturated), sum(is_drifting), sum(bad_trials), sum(~bad_trials));
     end
     
-    % Save updated trial-screened datasets back to *_cleaned folders
     if save_trial_cleaned_sets
         EEG_p1 = EEG_templates.P1{s};
         EEG_p1.data(:, :, 1:2:EEG_p1.trials) = single(data_all_conds.Raw.P1{s});
         out_p1 = fullfile(input_path, 'P1_cleaned');
         if ~exist(out_p1, 'dir'), mkdir(out_p1); end
+        EEG_p1.icaact = []; % Clear mismatched activity matrix
+        EEG_p1 = eeg_checkset(EEG_p1); % Recalculate internal consistency checks
         pop_saveset(EEG_p1, 'filename', EEG_p1.filename_orig, 'filepath', out_p1);
         
         EEG_p2 = EEG_templates.P2{s};
@@ -284,6 +432,8 @@ for t_idx = 1:length(target_subjs)
         EEG_p2.data(:, :, epoch_trials_p2_2000) = single(data_all_conds.Raw.P2_2000{s});
         out_p2 = fullfile(input_path, 'P2_cleaned');
         if ~exist(out_p2, 'dir'), mkdir(out_p2); end
+        EEG_p2.icaact = []; % Clear mismatched activity matrix
+        EEG_p2 = eeg_checkset(EEG_p2); % Recalculate internal consistency checks
         pop_saveset(EEG_p2, 'filename', EEG_p2.filename_orig, 'filepath', out_p2);
         
         EEG_p3 = EEG_templates.P3{s};
@@ -291,6 +441,8 @@ for t_idx = 1:length(target_subjs)
         EEG_p3.data(:, :, epoch_trials_p3_mis) = single(data_all_conds.Raw.P3_missing{s});
         out_p3 = fullfile(input_path, 'P3_cleaned');
         if ~exist(out_p3, 'dir'), mkdir(out_p3); end
+        EEG_p3.icaact = []; % Clear mismatched activity matrix
+        EEG_p3 = eeg_checkset(EEG_p3); % Recalculate internal consistency checks
         pop_saveset(EEG_p3, 'filename', EEG_p3.filename_orig, 'filepath', out_p3);
     end
 end
@@ -344,6 +496,8 @@ end
 %% =========================================================================
 for t_idx = 1:length(target_subjs)
     s = target_subjs(t_idx);
+    curr_drift_thresh = screening_stats(s).P3_missing.drift_thresh_uV;
+    curr_mad_mult     = screening_stats(s).P3_missing.mad_mult;
     
     fig_verify = figure('Position', [50, 50, 1700, 900], ...
         'Name', sprintf('Subject %d C3 Trial Screening & ERP Cleanup', s));
@@ -353,11 +507,13 @@ for t_idx = 1:length(target_subjs)
     erp_p1_clean = squeeze(mean(data_all_conds.Raw.P1{s}(chan_idx, :, :), 3, 'omitnan'));
     erp_500_bef  = squeeze(mean(screening_stats(s).P3_500.X_before(chan_idx, :, :), 3, 'omitnan'));
     erp_500_aft  = squeeze(mean(data_all_conds.Raw.P3_500{s}(chan_idx, :, :), 3, 'omitnan'));
+    erp_500_f10  = screening_stats(s).P3_500.erp_f10;
+    
     erp_mis_bef  = squeeze(mean(screening_stats(s).P3_missing.X_before(chan_idx, :, :), 3, 'omitnan'));
     erp_mis_aft  = squeeze(mean(data_all_conds.Raw.P3_missing{s}(chan_idx, :, :), 3, 'omitnan'));
+    erp_mis_f10  = screening_stats(s).P3_missing.erp_f10;
 
     % --- PRE-CALCULATE SYNCHRONIZED Y-LIMITS FOR EACH COLUMN ---
-    % Column 1: Screening limits
     drift_v_500 = screening_stats(s).P3_500.trial_c3_drift;
     sat_v_500   = screening_stats(s).P3_500.trial_max_amp;
     drift_v_mis = screening_stats(s).P3_missing.trial_c3_drift;
@@ -366,7 +522,6 @@ for t_idx = 1:length(target_subjs)
     if isempty(col1_max) || isnan(col1_max) || col1_max <= 0, col1_max = 100; end
     ylim_col1   = [0, col1_max * 1.05];
     
-    % Column 2: Single-Trial Trace limits
     X_bef_500 = screening_stats(s).P3_500.X_before;
     X_bef_mis = screening_stats(s).P3_missing.X_before;
     tr_500_bc = squeeze(X_bef_500(chan_idx, :, :));
@@ -376,10 +531,17 @@ for t_idx = 1:length(target_subjs)
     if isempty(col2_bound) || isnan(col2_bound) || col2_bound <= 0, col2_bound = 100; end
     ylim_col2  = [-col2_bound * 1.05, col2_bound * 1.05];
     
-    % Column 3: ERP limits (Robust Safety Check Included)
-    all_erps = [erp_p1_clean(iErpWin); erp_500_bef(iErpWin); erp_500_aft(iErpWin); ...
-                erp_mis_bef(iErpWin); erp_mis_aft(iErpWin)];
-    all_erps = all_erps(~isnan(all_erps)); % Strip any NaNs
+    % Force all sliced erp arrays into strictly 1D column vectors before concatenating
+    v_p1  = erp_p1_clean(iErpWin);
+    v_5b  = erp_500_bef(iErpWin);
+    v_5a  = erp_500_aft(iErpWin);
+    v_5f  = erp_500_f10(iErpWin);
+    v_mb  = erp_mis_bef(iErpWin);
+    v_ma  = erp_mis_aft(iErpWin);
+    v_mf  = erp_mis_f10(iErpWin);
+    
+    all_erps = [v_p1(:); v_5b(:); v_5a(:); v_5f(:); v_mb(:); v_ma(:); v_mf(:)];
+    all_erps = all_erps(~isnan(all_erps));
     
     if isempty(all_erps)
         ylim_col3 = [-5, 5];
@@ -390,14 +552,11 @@ for t_idx = 1:length(target_subjs)
         if pad3 == 0 || isnan(pad3), pad3 = 2; end
         ylim_col3 = [col3_min - pad3, col3_max + pad3];
     end
-    % Ensure final vector is strictly increasing
     if ylim_col3(1) >= ylim_col3(2)
         ylim_col3 = [ylim_col3(1) - 5, ylim_col3(2) + 5];
     end
 
-
     % ================= ROW 1: RAND 500 =================
-    % Panel 1: Trial Screening (Rand 500)
     nexttile(1); hold on; set(gca, 'FontSize', 14);
     bad_tr_500 = screening_stats(s).P3_500.bad_trials;
     tr_idx_500 = 1:length(bad_tr_500);
@@ -408,13 +567,12 @@ for t_idx = 1:length(target_subjs)
         plot(tr_idx_500(bad_tr_500), sat_v_500(bad_tr_500), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'DisplayName', 'Rejected');
         plot(tr_idx_500(bad_tr_500), drift_v_500(bad_tr_500), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'HandleVisibility', 'off');
     end
-    yline(drift_thresh_uV, 'b--', 'Drift Thresh (30 \muV)', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    yline(sat_thresh_uV, 'r--', 'Sat Thresh (100 \muV)', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(curr_drift_thresh, 'b--', sprintf('Drift Thresh (%g \\muV)', curr_drift_thresh), 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(sat_thresh_uV, 'r--', sprintf('Sat Thresh (%g \\muV)', sat_thresh_uV), 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xlabel('Trial Index (Rand 500)'); ylabel('|Amplitude / Drift| (\muV)');
     title(sprintf('Rand 500 Screening (Rej: %d/%d)', sum(bad_tr_500), length(bad_tr_500)), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on; ylim(ylim_col1);
     
-    % Panel 2: Single-Trial Traces (Rand 500)
     nexttile(2); hold on; set(gca, 'FontSize', 14);
     for tr = 1:size(X_bef_500, 3)
         trace_c3 = tr_500_bc(:, tr);
@@ -426,29 +584,27 @@ for t_idx = 1:length(target_subjs)
     end
     plot(nan, nan, 'Color', [0.6 0.6 0.6], 'LineWidth', 2, 'DisplayName', 'Kept');
     plot(nan, nan, 'Color', [0.9 0.2 0.2], 'LineWidth', 2, 'DisplayName', 'Rejected');
-    yline(drift_thresh_uV, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    yline(-drift_thresh_uV, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(-curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     xlim([-0.2, 0.8]); ylim(ylim_col2);
     xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
-    title('Rand 500 Traces (\pm30 \muV Bounds)', 'FontSize', 16, 'FontWeight', 'bold');
+    title(sprintf('Rand 500 Traces (\\pm%g \\muV Bounds)', curr_drift_thresh), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
     
-    % Panel 3: ERP Before vs After (Rand 500)
     nexttile(3); hold on; set(gca, 'FontSize', 14);
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     yline(0, 'k:', 'HandleVisibility', 'off');
     plot(time_s, erp_500_bef, '--', 'Color', [0.9 0.6 0.1 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand 500 (Before)');
-    plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.5, 'DisplayName', 'Cued P1 (Cleaned)');
+    plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.0, 'DisplayName', 'Cued P1 (Cleaned)');
+    plot(time_s, erp_500_f10, ':', 'Color', [0.55 0.35 0.0], 'LineWidth', 2.2, 'DisplayName', 'Rand 500 (Trials 1-10 Ref)');
     plot(time_s, erp_500_aft, '-', 'Color', [0.9 0.6 0.1], 'LineWidth', 2.5, 'DisplayName', 'Rand 500 (Cleaned)');
     xlim([-0.2, 0.8]); ylim(ylim_col3);
     xlabel('Time (s)'); ylabel('Voltage (\muV)');
     title(sprintf('S%d C3 ERP: Rand 500', s), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
 
-
     % ================= ROW 2: RAND NULL =================
-    % Panel 4: Trial Screening (Rand Null)
     nexttile(4); hold on; set(gca, 'FontSize', 14);
     bad_tr_mis = screening_stats(s).P3_missing.bad_trials;
     tr_idx_mis = 1:length(bad_tr_mis);
@@ -459,13 +615,12 @@ for t_idx = 1:length(target_subjs)
         plot(tr_idx_mis(bad_tr_mis), sat_v_mis(bad_tr_mis), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'DisplayName', 'Rejected');
         plot(tr_idx_mis(bad_tr_mis), drift_v_mis(bad_tr_mis), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'HandleVisibility', 'off');
     end
-    yline(drift_thresh_uV, 'b--', 'Drift Thresh (30 \muV)', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    yline(sat_thresh_uV, 'r--', 'Sat Thresh (100 \muV)', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(curr_drift_thresh, 'b--', sprintf('Drift Thresh (%g \\muV)', curr_drift_thresh), 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(sat_thresh_uV, 'r--', sprintf('Sat Thresh (%g \\muV)', sat_thresh_uV), 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xlabel('Trial Index (Rand Null)'); ylabel('|Amplitude / Drift| (\muV)');
     title(sprintf('Rand Null Screening (Rej: %d/%d)', sum(bad_tr_mis), length(bad_tr_mis)), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on; ylim(ylim_col1);
     
-    % Panel 5: Single-Trial Traces (Rand Null)
     nexttile(5); hold on; set(gca, 'FontSize', 14);
     for tr = 1:size(X_bef_mis, 3)
         trace_c3 = tr_mis_bc(:, tr);
@@ -477,25 +632,26 @@ for t_idx = 1:length(target_subjs)
     end
     plot(nan, nan, 'Color', [0.6 0.6 0.6], 'LineWidth', 2, 'DisplayName', 'Kept');
     plot(nan, nan, 'Color', [0.9 0.2 0.2], 'LineWidth', 2, 'DisplayName', 'Rejected');
-    yline(drift_thresh_uV, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    yline(-drift_thresh_uV, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(-curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     xlim([-0.2, 0.8]); ylim(ylim_col2);
     xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
-    title('Rand Null Traces (\pm30 \muV Bounds)', 'FontSize', 16, 'FontWeight', 'bold');
+    title(sprintf('Rand Null Traces (\\pm%g \\muV Bounds)', curr_drift_thresh), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
     
-    % Panel 6: ERP Before vs After (Rand Null)
     nexttile(6); hold on; set(gca, 'FontSize', 14);
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     yline(0, 'k:', 'HandleVisibility', 'off');
     plot(time_s, erp_mis_bef, '--', 'Color', [0.2 0.7 0.9 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand Null (Before)');
-    plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.5, 'DisplayName', 'Cued P1 (Cleaned)');
+    plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.0, 'DisplayName', 'Cued P1 (Cleaned)');
+    plot(time_s, erp_mis_f10, ':', 'Color', [0.0 0.35 0.65], 'LineWidth', 2.2, 'DisplayName', 'Rand Null (Trials 1-10 Ref)');
     plot(time_s, erp_mis_aft, '-', 'Color', [0.2 0.7 0.9], 'LineWidth', 2.5, 'DisplayName', 'Rand Null (Cleaned)');
     xlim([-0.2, 0.8]); ylim(ylim_col3);
     xlabel('Time (s)'); ylabel('Voltage (\muV)');
     title(sprintf('S%d C3 ERP: Rand Null', s), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
     
-    sgtitle(sprintf('Subject %d Trial Screening: Rand 500 vs. Rand Null', s), 'FontSize', 18, 'FontWeight', 'bold');
+    sgtitle(sprintf('Subject %d Trial Screening (Drift Thresh = %g \\muV, MAD Mult = %.2f)', ...
+        s, curr_drift_thresh, curr_mad_mult), 'FontSize', 18, 'FontWeight', 'bold');
 end

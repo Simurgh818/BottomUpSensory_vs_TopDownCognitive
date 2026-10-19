@@ -20,34 +20,43 @@ if ~exist(output_path, 'dir')
     fprintf('Created new output directory: %s\n', output_path);
 end
 
+screening_fig_dir = fullfile(output_path, 'Trial_Screening_Figures');
+if ~exist(screening_fig_dir, 'dir')
+    mkdir(screening_fig_dir);
+end
+
 conditions = {'BLA','BLT','P1','P2','P3'};
 num_ch = 32;
 fs = []; 
 time_ms_eeg = [];
+save_trial_cleaned_sets = true;
 
 %% 0.1 Load and import file as EEGLAB matrix
 data_all_conds = struct();
 data_all_conds.Raw = struct();
 data_all_conds.Alpha = struct();
 data_all_conds.Beta = struct();
+EEG_templates = struct();
 
 % --- PRE-LOAD EXCEL INDICES ONCE ---
 excel_p2 = fullfile(input_path, 'Indexes for P2.xlsx');
 if exist(excel_p2, 'file')
     epoch_trials_p2_500  = readmatrix(excel_p2, 'Sheet', 'Audio onset with 500 ms tactile');
     epoch_trials_p2_2000 = readmatrix(excel_p2, 'Sheet', 'Audio onset with 2000 ms tactil');
-    % Remove NaNs from trailing empty rows
     epoch_trials_p2_500  = epoch_trials_p2_500(~isnan(epoch_trials_p2_500));
     epoch_trials_p2_2000 = epoch_trials_p2_2000(~isnan(epoch_trials_p2_2000));
+else
+    error('Could not find: %s', excel_p2);
 end
 
 excel_p3 = fullfile(input_path, 'Indexes for P3.xlsx');
 if exist(excel_p3, 'file')
     epoch_trials_p3_500 = readmatrix(excel_p3, 'Sheet', 'Audio onset with 500 ms tactile');
     epoch_trials_p3_mis = readmatrix(excel_p3, 'Sheet', 'Audio onset with missing tactil');
-    % Remove NaNs from trailing empty rows
     epoch_trials_p3_500 = epoch_trials_p3_500(~isnan(epoch_trials_p3_500));
     epoch_trials_p3_mis = epoch_trials_p3_mis(~isnan(epoch_trials_p3_mis));
+else
+    error('Could not find: %s', excel_p3);
 end
 
 for c_idx = 1:length(conditions)
@@ -71,18 +80,11 @@ for c_idx = 1:length(conditions)
             s, num_subjs_cond, file_to_load, cond_name);
         
         EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
-        % % Automatically loads ICA-cleaned files if present (e.g., S3 and S14 in P3_cleaned)
-        % clean_file_check = fullfile(input_path, [cond_name, '_cleaned'], file_to_load);
-        % 
-        % if exist(clean_file_check, 'file')
-        %     fprintf('Loading ICA-CLEANED Subj %d/%d (%s) for condition: %s\n', ...
-        %         s, num_subjs_cond, file_to_load, cond_name);
-        %     EEG = pop_loadset('filename', file_to_load, 'filepath', fullfile(input_path, [cond_name, '_cleaned']));
-        % else
-        %     fprintf('Loading Subj %d/%d (%s) for condition: %s\n', ...
-        %         s, num_subjs_cond, file_to_load, cond_name);
-        %     EEG = pop_loadset('filename', file_to_load, 'filepath', in_dir);
-        % end
+        
+        if save_trial_cleaned_sets && ismember(cond_name, {'P1', 'P2', 'P3'})
+            EEG_templates.(cond_name){s} = EEG;
+            EEG_templates.(cond_name){s}.filename_orig = file_to_load;
+        end
         
         if isempty(fs), fs = EEG.srate; end
         if isempty(time_ms_eeg)
@@ -91,8 +93,7 @@ for c_idx = 1:length(conditions)
         
         % --- ASSIGN & SPLIT SUB-CONDITIONS USING EXCEL INDICES ---
         if ismember(cond_name, {'BLA', 'BLT', 'P1'})
-            % 60 trials for P1, BLA, BLT
-            epoch_trials = 1:2:EEG.trials; 
+            epoch_trials = 1:2:EEG.trials; % 60 trials for P1, BLA, BLT
             data_all_conds.Raw.(cond_name){s} = double(EEG.data(:, :, epoch_trials));
             
         elseif strcmp(cond_name, 'P2')
@@ -113,7 +114,6 @@ end
 %% =========================================================================
 disp('Applying Zero-Phase FIR Filters for Alpha and Beta...');
 
-% --- ROBUST SAMPLING RATE (fs) & NYQUIST (fn) EXTRACTION ---
 if isfield(EEG, 'srate') && ~isempty(EEG.srate) && isscalar(EEG.srate) && EEG.srate > 0
     fs = EEG.srate;
 elseif exist('time_s', 'var') && length(time_s) > 1
@@ -207,6 +207,296 @@ num_windows = length(t_starts);
 covCentered = @(X, b) (( (X - b) - mean(X - b, 2) ) * ( (X - b) - mean(X - b, 2) )') / size(X, 2);
 
 %% =========================================================================
+%% SECTION 3B: TRIAL-LEVEL OUTLIER SCREENING & 600 PPI PNG EXPORT (ALL SUBJS)
+%% =========================================================================
+num_all_subjs = length(data_all_conds.Raw.P1);
+all_target_subjs = 1:num_all_subjs;
+
+chan_idx = 14; 
+if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+    c3_match = find(strcmpi({EEG.chanlocs.labels}, 'C3'), 1);
+    if ~isempty(c3_match), chan_idx = c3_match; end
+end
+fprintf('\nUsing Channel Index %d (C3) + 32-Ch Full-Epoch Guard across all %d subjects.\n', chan_idx, num_all_subjs);
+
+iErpWin   = time_s >= -0.200 & time_s <= 0.800;
+iFullWin  = time_s >= -0.800 & time_s <= 2.400; % Full trajectory window plotted in Checkpoint 3a
+iZeroZone = time_s >= -0.200 & time_s <= 0.200;
+iPreStim  = time_s >= -0.200 & time_s <= 0.000;
+
+cond_keys_screen = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA', 'BLT'};
+cond_keys_screen = cond_keys_screen(isfield(data_all_conds.Raw, cond_keys_screen));
+
+smooth_pts    = round(0.100 * cfg.fs);
+sat_thresh_uV = 100;
+
+% --- 1. PRE-COMPUTE TRIAL METRICS FOR ALL SUBJECTS & CONDITIONS ---
+precomp = struct();
+for s = all_target_subjs
+    for c = 1:length(cond_keys_screen)
+        c_name = cond_keys_screen{c};
+        X_raw = data_all_conds.Raw.(c_name){s};
+        [~, ~, nTr] = size(X_raw);
+        
+        X_bc_all         = zeros(size(X_raw));
+        trial_max_amp    = zeros(nTr, 1);
+        trial_c3_drift   = zeros(nTr, 1);
+        trial_full_c3    = zeros(nTr, 1); % C3 drift across full [-0.8, 2.4] s window
+        trial_glob_drift = zeros(nTr, 1); % 32-channel drift across full [-0.8, 2.4] s window
+        trial_glob_sat   = zeros(nTr, 1); % 32-channel peak saturation across full [-0.8, 2.4] s window
+        
+        for tr = 1:nTr
+            epoch = X_raw(:, :, tr);
+            epoch_bc = epoch - mean(epoch(:, iBase), 2);
+            X_bc_all(:, :, tr) = epoch_bc;
+            
+            % Active ERP window [-0.2, 0.8] s on C3 (for 2D grid search & C3 ERP plots)
+            c3_smooth = movmean(epoch_bc(chan_idx, iErpWin), smooth_pts);
+            trial_c3_drift(tr) = max(abs(c3_smooth));
+            trial_max_amp(tr)  = max(abs(epoch_bc(chan_idx, iErpWin)));
+            
+            % Full-epoch [-0.8, 2.4] s C3 & 32-channel guard (prevents late >1.0s & non-C3 blowups in Xi_2..Xi_6)
+            c3_full_smooth = movmean(epoch_bc(chan_idx, iFullWin), smooth_pts);
+            trial_full_c3(tr) = max(abs(c3_full_smooth));
+            
+            ch_max_smooth = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
+            trial_glob_drift(tr) = prctile(ch_max_smooth, 90); % 90th percentile channel drift across 32 channels
+            trial_glob_sat(tr)   = prctile(max(abs(epoch_bc(:, iFullWin)), [], 2), 95);
+        end
+        
+        precomp(s).(c_name).X_bc_all         = X_bc_all;
+        precomp(s).(c_name).trial_c3_drift   = trial_c3_drift;
+        precomp(s).(c_name).trial_max_amp    = trial_max_amp;
+        precomp(s).(c_name).trial_full_c3    = trial_full_c3;
+        precomp(s).(c_name).trial_glob_drift = trial_glob_drift;
+        precomp(s).(c_name).trial_glob_sat   = trial_glob_sat;
+        precomp(s).(c_name).c3_traces        = squeeze(X_bc_all(chan_idx, :, :));
+    end
+end
+
+% --- 2. 2D GRID SEARCH TARGETING FIRST 10 TRIALS OF EACH CONDITION ---
+opt_mode    = 'per_subject';
+drift_grid  = 20 : 1 : 50;
+mad_grid    = 2.5 : 0.25 : 10;
+min_keep_p3 = 14;
+ref_idx_10  = 1:10;
+
+cost_surface   = inf(length(drift_grid), length(mad_grid), num_all_subjs);
+null_diff_f10  = nan(length(drift_grid), length(mad_grid), num_all_subjs);
+r500_diff_f10  = nan(length(drift_grid), length(mad_grid), num_all_subjs);
+rej_counts_mis = zeros(length(drift_grid), length(mad_grid), num_all_subjs);
+rej_counts_500 = zeros(length(drift_grid), length(mad_grid), num_all_subjs);
+
+for s = all_target_subjs
+    d_mis  = precomp(s).P3_missing.trial_c3_drift;
+    a_mis  = precomp(s).P3_missing.trial_max_amp;
+    fc_mis = precomp(s).P3_missing.trial_full_c3;
+    gd_mis = precomp(s).P3_missing.trial_glob_drift;
+    gs_mis = precomp(s).P3_missing.trial_glob_sat;
+    tr_mis = precomp(s).P3_missing.c3_traces;
+    
+    d_500  = precomp(s).P3_500.trial_c3_drift;
+    a_500  = precomp(s).P3_500.trial_max_amp;
+    fc_500 = precomp(s).P3_500.trial_full_c3;
+    gd_500 = precomp(s).P3_500.trial_glob_drift;
+    gs_500 = precomp(s).P3_500.trial_glob_sat;
+    tr_500 = precomp(s).P3_500.c3_traces;
+    
+    valid_10_mis = ref_idx_10(d_mis(ref_idx_10) <= 35 & a_mis(ref_idx_10) <= sat_thresh_uV);
+    if isempty(valid_10_mis), valid_10_mis = ref_idx_10; end
+    erp_mis_f10 = mean(tr_mis(:, valid_10_mis), 2, 'omitnan');
+    
+    valid_10_500 = ref_idx_10(d_500(ref_idx_10) <= 35 & a_500(ref_idx_10) <= sat_thresh_uV);
+    if isempty(valid_10_500), valid_10_500 = ref_idx_10; end
+    erp_500_f10 = mean(tr_500(:, valid_10_500), 2, 'omitnan');
+    
+    precomp(s).P3_missing.erp_f10 = erp_mis_f10;
+    precomp(s).P3_500.erp_f10     = erp_500_f10;
+    
+    for id = 1:length(drift_grid)
+        d_lim = drift_grid(id);
+        for im = 1:length(mad_grid)
+            m_val = mad_grid(im);
+            
+            rob_d_mis  = median(d_mis)  + m_val * mad(d_mis, 1);
+            rob_a_mis  = median(a_mis)  + m_val * mad(a_mis, 1);
+            rob_gd_mis = median(gd_mis) + max(3.5, m_val) * mad(gd_mis, 1);
+            bad_mis    = (a_mis > sat_thresh_uV) | (a_mis > rob_a_mis) | ...
+                         (d_mis > d_lim)         | (d_mis > rob_d_mis) | ...
+                         (fc_mis > d_lim * 1.25) | (gd_mis > max(45, d_lim * 1.4)) | ...
+                         (gd_mis > rob_gd_mis)   | (gs_mis > 120);
+            
+            rob_d_500  = median(d_500)  + m_val * mad(d_500, 1);
+            rob_a_500  = median(a_500)  + m_val * mad(a_500, 1);
+            rob_gd_500 = median(gd_500) + max(3.5, m_val) * mad(gd_500, 1);
+            bad_500    = (a_500 > sat_thresh_uV) | (a_500 > rob_a_500) | ...
+                         (d_500 > d_lim)         | (d_500 > rob_d_500) | ...
+                         (fc_500 > d_lim * 1.25) | (gd_500 > max(45, d_lim * 1.4)) | ...
+                         (gd_500 > rob_gd_500)   | (gs_500 > 120);
+            
+            if sum(~bad_500) < min_keep_p3
+                [~, ord500] = sort(d_500 + 0.5 * gd_500, 'ascend');
+                bad_500 = true(size(d_500));
+                bad_500(ord500(1:min_keep_p3)) = false;
+            end
+            if sum(~bad_mis) < min_keep_p3
+                continue; 
+            end
+            
+            erp_mis_cand = mean(tr_mis(:, ~bad_mis), 2, 'omitnan');
+            erp_500_cand = mean(tr_500(:, ~bad_500), 2, 'omitnan');
+            
+            err_mis_pre  = abs(mean(erp_mis_cand(iPreStim))  - mean(erp_mis_f10(iPreStim)));
+            err_mis_zero = abs(mean(erp_mis_cand(iZeroZone)) - mean(erp_mis_f10(iZeroZone)));
+            err_mis_full = abs(mean(erp_mis_cand(iErpWin))   - mean(erp_mis_f10(iErpWin)));
+            
+            err_500_pre  = abs(mean(erp_500_cand(iPreStim))  - mean(erp_500_f10(iPreStim)));
+            err_500_zero = abs(mean(erp_500_cand(iZeroZone)) - mean(erp_500_f10(iZeroZone)));
+            
+            max_kept_drift = max([d_mis(~bad_mis); d_500(~bad_500)]);
+            leak_penalty   = 0.15 * max(0, max_kept_drift - 28);
+            
+            cost_surface(id, im, s) = 1.2 * err_mis_pre + 1.0 * err_mis_zero + 0.5 * err_mis_full + ...
+                                      1.0 * err_500_pre + 0.5 * err_500_zero + leak_penalty;
+                                      
+            null_diff_f10(id, im, s)  = mean(erp_mis_cand(iPreStim)) - mean(erp_mis_f10(iPreStim));
+            r500_diff_f10(id, im, s)  = mean(erp_500_cand(iPreStim)) - mean(erp_500_f10(iPreStim));
+            rej_counts_mis(id, im, s) = sum(bad_mis);
+            rej_counts_500(id, im, s) = sum(bad_500);
+        end
+    end
+end
+
+subj_opt_drift = zeros(num_all_subjs, 1);
+subj_opt_mad   = zeros(num_all_subjs, 1);
+
+joint_cost = sum(cost_surface, 3);
+[~, lin_idx_glob] = min(joint_cost(:));
+[id_glob, im_glob] = ind2sub(size(joint_cost), lin_idx_glob);
+glob_drift_opt = drift_grid(id_glob);
+glob_mad_opt   = mad_grid(im_glob);
+
+fprintf('\n========================================================================================\n');
+fprintf(' 2D GRID-SEARCH RESULTS (ALL %d SUBJECTS: TARGETING FIRST 10 TRIALS BASELINE [-0.2, 0.0s])\n', num_all_subjs);
+fprintf('========================================================================================\n');
+
+for s = all_target_subjs
+    sub_cost = cost_surface(:, :, s);
+    [~, lin_idx_s] = min(sub_cost(:));
+    [id_s, im_s] = ind2sub(size(sub_cost), lin_idx_s);
+    
+    if strcmpi(opt_mode, 'per_subject')
+        subj_opt_drift(s) = drift_grid(id_s);
+        subj_opt_mad(s)   = mad_grid(im_s);
+        id_app = id_s; im_app = im_s;
+    else
+        subj_opt_drift(s) = glob_drift_opt;
+        subj_opt_mad(s)   = glob_mad_opt;
+        id_app = id_glob; im_app = im_glob;
+    end
+    
+    fprintf('  * Subject %02d | Drift Thresh = %2d uV | MAD Mult = %4.2f | Rand Null Diff vs F10: %+5.2f uV (Rej: %2d/30) | Rand 500 Diff vs F10: %+5.2f uV (Rej: %2d/30)\n', ...
+        s, subj_opt_drift(s), subj_opt_mad(s), ...
+        null_diff_f10(id_app, im_app, s), rej_counts_mis(id_app, im_app, s), ...
+        r500_diff_f10(id_app, im_app, s), rej_counts_500(id_app, im_app, s));
+end
+
+% --- 3. APPLY OPTIMAL THRESHOLDS ACROSS ALL BANDS & EXPORT SCREENED DATASETS ---
+screening_stats = struct();
+
+for s = all_target_subjs
+    drift_thresh_uV = subj_opt_drift(s);
+    mad_mult        = subj_opt_mad(s);
+    
+    for c = 1:length(cond_keys_screen)
+        c_name = cond_keys_screen{c};
+        X_bc_all         = precomp(s).(c_name).X_bc_all;
+        trial_c3_drift   = precomp(s).(c_name).trial_c3_drift;
+        trial_max_amp    = precomp(s).(c_name).trial_max_amp;
+        trial_full_c3    = precomp(s).(c_name).trial_full_c3;
+        trial_glob_drift = precomp(s).(c_name).trial_glob_drift;
+        trial_glob_sat   = precomp(s).(c_name).trial_glob_sat;
+        nTr              = length(trial_c3_drift);
+        
+        rob_sat_lim   = median(trial_max_amp)    + mad_mult * mad(trial_max_amp, 1);
+        rob_drift_lim = median(trial_c3_drift)   + mad_mult * mad(trial_c3_drift, 1);
+        rob_glob_lim  = median(trial_glob_drift) + max(3.5, mad_mult) * mad(trial_glob_drift, 1);
+        
+        is_saturated = (trial_max_amp > sat_thresh_uV)    | (trial_max_amp > rob_sat_lim) | (trial_glob_sat > 120);
+        is_drifting  = (trial_c3_drift > drift_thresh_uV) | (trial_c3_drift > rob_drift_lim) | ...
+                       (trial_full_c3 > drift_thresh_uV * 1.25) | ...
+                       (trial_glob_drift > max(45, drift_thresh_uV * 1.4)) | (trial_glob_drift > rob_glob_lim);
+        bad_trials   = is_saturated | is_drifting;
+        
+        if nTr >= 50
+            min_keep = 32;
+        else
+            min_keep = min(min_keep_p3, nTr);
+        end
+        
+        if sum(~bad_trials) < min_keep
+            artifact_score = (trial_c3_drift   / (median(trial_c3_drift) + eps)) + ...
+                             (trial_glob_drift / (median(trial_glob_drift) + eps)) + ...
+                             (trial_max_amp    / (median(trial_max_amp) + eps));
+            [~, ord_clean] = sort(artifact_score, 'ascend');
+            bad_trials = true(nTr, 1);
+            bad_trials(ord_clean(1:min_keep)) = false;
+        end
+        
+        % Mask rejected trials as NaN across Raw and all filtered bands
+        X_clean = X_bc_all;
+        X_clean(:, :, bad_trials) = NaN;
+        data_all_conds.Raw.(c_name){s} = X_clean;
+        
+        if isfield(data_all_conds.Alpha, c_name)
+            data_all_conds.Alpha.(c_name){s}(:, :, bad_trials) = NaN;
+        end
+        if isfield(data_all_conds.Beta, c_name)
+            data_all_conds.Beta.(c_name){s}(:, :, bad_trials) = NaN;
+        end
+        if isfield(data_all_conds.BetaAlphaRatio, c_name)
+            data_all_conds.BetaAlphaRatio.(c_name){s}(:, :, bad_trials) = NaN;
+        end
+        
+        screening_stats(s).(c_name).bad_trials      = bad_trials;
+        screening_stats(s).(c_name).trial_max_amp   = trial_max_amp;
+        screening_stats(s).(c_name).trial_c3_drift  = trial_c3_drift;
+        screening_stats(s).(c_name).X_before        = X_bc_all;
+        screening_stats(s).(c_name).X_after         = X_clean;
+        screening_stats(s).(c_name).drift_thresh_uV = drift_thresh_uV;
+        screening_stats(s).(c_name).mad_mult        = mad_mult;
+        if isfield(precomp(s).(c_name), 'erp_f10')
+            screening_stats(s).(c_name).erp_f10 = precomp(s).(c_name).erp_f10;
+        end
+    end
+    
+    if save_trial_cleaned_sets
+        EEG_p1 = EEG_templates.P1{s};
+        EEG_p1.data(:, :, 1:2:EEG_p1.trials) = single(data_all_conds.Raw.P1{s});
+        out_p1 = fullfile(input_path, 'P1_cleaned');
+        if ~exist(out_p1, 'dir'), mkdir(out_p1); end
+        EEG_p1.icaact = []; EEG_p1 = eeg_checkset(EEG_p1);
+        pop_saveset(EEG_p1, 'filename', EEG_p1.filename_orig, 'filepath', out_p1);
+        
+        EEG_p2 = EEG_templates.P2{s};
+        EEG_p2.data(:, :, epoch_trials_p2_500)  = single(data_all_conds.Raw.P2_500{s});
+        EEG_p2.data(:, :, epoch_trials_p2_2000) = single(data_all_conds.Raw.P2_2000{s});
+        out_p2 = fullfile(input_path, 'P2_cleaned');
+        if ~exist(out_p2, 'dir'), mkdir(out_p2); end
+        EEG_p2.icaact = []; EEG_p2 = eeg_checkset(EEG_p2);
+        pop_saveset(EEG_p2, 'filename', EEG_p2.filename_orig, 'filepath', out_p2);
+        
+        EEG_p3 = EEG_templates.P3{s};
+        EEG_p3.data(:, :, epoch_trials_p3_500) = single(data_all_conds.Raw.P3_500{s});
+        EEG_p3.data(:, :, epoch_trials_p3_mis) = single(data_all_conds.Raw.P3_missing{s});
+        out_p3 = fullfile(input_path, 'P3_cleaned');
+        if ~exist(out_p3, 'dir'), mkdir(out_p3); end
+        EEG_p3.icaact = []; EEG_p3 = eeg_checkset(EEG_p3);
+        pop_saveset(EEG_p3, 'filename', EEG_p3.filename_orig, 'filepath', out_p3);
+    end
+end
+
+%% =========================================================================
 %% MASTER LOOP: PROCESS FREQUENCY BANDS (STRICTLY P1 REFERENCE)
 %% =========================================================================
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
@@ -246,19 +536,19 @@ for band_idx = 1:length(bands_to_process)
     gap_all      = nan(cfg.m - 1, num_subjects);
     lam_full_all = nan(cfg.num_ch, num_subjects); 
     
+    % --- Inside CHECKPOINT 1 (replace lines 494-504) ---
     for s = 1:num_subjects
         raw_ref = current_data.(cfg.ref_cond){s};
-        n_trials = size(raw_ref, 3);
-        if n_trials < (cfg.nTrialMatch * 2)
-            error('Subj %d insufficient %s trials (%d < %d)', s, cfg.ref_cond, n_trials, cfg.nTrialMatch * 2);
-        end
+        valid_ref_idx = find(~isnan(squeeze(raw_ref(chan_idx, 1, :))));
         
         rng(cfg.seed + s);
-        perm = randperm(n_trials);
-        iA = perm(1:cfg.nTrialMatch);
+        perm = valid_ref_idx(randperm(length(valid_ref_idx)));
+        n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
+        iA = perm(1:n_half);
         
         erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
-        bA   = mean(erpA(:, iBase), 2);
+        bA   = mean(erpA(:, iBase), 2, 'omitnan');
+        C_A_cent = covCentered(erpA(:, iWin), bA);
         C_A_cent = covCentered(erpA(:, iWin), bA);
         
         [V, D] = eig(C_A_cent, 'vector');
@@ -342,13 +632,14 @@ for band_idx = 1:length(bands_to_process)
             rng(cfg.seed + rep + subj*1000); 
             
             raw_ref = current_data.(cfg.ref_cond){subj};
-            nRef = size(raw_ref, 3);
-            perm = randperm(nRef);
-            iA = perm(1:cfg.nTrialMatch);
-            iB = perm(cfg.nTrialMatch + (1:cfg.nTrialMatch));
+            valid_ref_idx = find(~isnan(squeeze(raw_ref(chan_idx, 1, :))));
+            perm = valid_ref_idx(randperm(length(valid_ref_idx)));
+            n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
+            iA = perm(1:n_half);
+            iB = perm(n_half + (1:n_half));
             
             erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
-            bA   = mean(erpA(:, iBase), 2);
+            bA   = mean(erpA(:, iBase), 2, 'omitnan');
             C_A_cent = covCentered(erpA(:, iWin), bA);
             
             [V, D] = eig(C_A_cent, 'vector');
@@ -367,7 +658,7 @@ for band_idx = 1:length(bands_to_process)
             basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep);
             
             erpB = mean(raw_ref(:, :, iB), 3, 'omitnan');
-            bB   = mean(erpB(:, iBase), 2);
+            bB   = mean(erpB(:, iBase), 2, 'omitnan');
             XB   = erpB(:, iWin) - bB;
             
             v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win;
@@ -389,10 +680,12 @@ for band_idx = 1:length(bands_to_process)
                     Xk = XB; bk = bB; idx_k = iB;
                     erp_k = erpB; 
                 else
-                    idx_k = randperm(size(raw_cond, 3), cfg.nTrialMatch);
-                    erp_k = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
-                    bk    = mean(erp_k(:, iBase), 2);
-                    Xk    = erp_k(:, iWin) - bk;
+                    valid_cond_idx = find(~isnan(squeeze(raw_cond(chan_idx, 1, :))));
+                    n_pick = min(cfg.nTrialMatch, length(valid_cond_idx));
+                    idx_k  = valid_cond_idx(randperm(length(valid_cond_idx), n_pick));
+                    erp_k  = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
+                    bk     = mean(erp_k(:, iBase), 2, 'omitnan');
+                    Xk     = erp_k(:, iWin) - bk;
                 end
                 
                 split_vars.(cond) = idx_k;
@@ -533,18 +826,13 @@ for band_idx = 1:length(bands_to_process)
     subj_mean_log_r = squeeze(mean(log_r_splits, 3, 'omitnan')); 
     subj_mean_traj  = squeeze(mean(traj_splits, 4, 'omitnan'));  
     
-    % --- 1. UNSPLIT POOLED ANALYSIS (ALL SUBJECTS, INCLUDING CLEANED S14) ---
     all_subjs = 1:num_subjects;                           % All Subjects (n=14)
-    
-    % --- 2. SPLIT COHORT DEFINITIONS (INCLUDING CLEANED S14 IN COHORT B) ---
     g1_subjs  = intersect(4:11, 1:num_subjects);          % Cohort A: Subjs 4 to 11 (n=8)
     g2_subjs  = setdiff(1:num_subjects, g1_subjs);        % Cohort B: Other Subjects (n=6, S14 included)
     
-    % Combine into 3 analysis passes: (1) All Subjects, (2) Cohort A, (3) Cohort B
     subj_groups = {all_subjs, g1_subjs, g2_subjs};
     num_groups  = length(subj_groups);
     
-    % PRE-CALCULATE SYNCHRONIZED Y-LIMITS ACROSS ALL GROUPS
     time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
     time_mask_full = (t_centers >= -0.15); 
     
@@ -628,19 +916,16 @@ for band_idx = 1:length(bands_to_process)
         grp_mean_log_r = mean(subj_mean_log_r(:, :, curr_subjs), 3, 'omitnan');      
         grp_se_log_r   = std(subj_mean_log_r(:, :, curr_subjs), 0, 3, 'omitnan') ./ sqrt(curr_n);
         
-        % --- Save to aggregates for Figures 5A, 5B, 5C, and 5D ---
         aggregate_log_r.(band_name).cohort(g).mean = grp_mean_log_r;
         aggregate_log_r.(band_name).cohort(g).se   = grp_se_log_r;
         aggregate_log_r.(band_name).cohort(g).subj_data = subj_mean_log_r(:, :, curr_subjs);
 
-        % Gain (G)
         subj_mean_G = squeeze(mean(G_splits(:, :, curr_subjs), 2, 'omitnan')); 
         if curr_n == 1, subj_mean_G = subj_mean_G(:); end
         aggregate_G.(band_name).cohort(g).mean = mean(subj_mean_G, 2, 'omitnan');
         aggregate_G.(band_name).cohort(g).se   = std(subj_mean_G, 0, 2, 'omitnan') ./ sqrt(curr_n);
         aggregate_G.(band_name).cohort(g).subj_data = subj_mean_G;
         
-        % Latency
         subj_mean_lat = squeeze(mean(mean(lat_splits(:, :, :, curr_subjs), 3, 'omitnan'), 2, 'omitnan')); 
         if curr_n == 1, subj_mean_lat = subj_mean_lat(:); end
         lat_dir_mean = squeeze(mean(lat_splits(:, :, :, curr_subjs), 3, 'omitnan'));
@@ -650,7 +935,6 @@ for band_idx = 1:length(bands_to_process)
         aggregate_lat.(band_name).cohort(g).se   = std(lat_dir_mean, 0, 3, 'omitnan') ./ sqrt(curr_n);
         aggregate_lat.(band_name).cohort(g).subj_data = subj_mean_lat; 
         
-        % Sustained % 
         subj_mean_sust = squeeze(mean(mean(sust_splits(:, :, :, curr_subjs), 3, 'omitnan'), 2, 'omitnan')) * 100;
         if curr_n == 1, subj_mean_sust = subj_mean_sust(:); end
         aggregate_sust.(band_name).cohort(g).mean = mean(subj_mean_sust, 2, 'omitnan');
@@ -724,10 +1008,16 @@ for band_idx = 1:length(bands_to_process)
         
         for k_idx = 1:num_sig
             k = sig_components(k_idx);
-            cp3a_min_y = global_ylims_full(k, 1);
-            cp3a_max_y = global_ylims_full(k, 2);
             
-            % --- CP3a: Group A ---
+            % Compute synchronized y-limits between Group A (left) and Group B (right) for this cohort & direction k
+            row_vals_up = reshape(grp_mean_traj(:, k, time_mask_full) + grp_sem_traj(:, k, time_mask_full), [], 1);
+            row_vals_dn = reshape(grp_mean_traj(:, k, time_mask_full) - grp_sem_traj(:, k, time_mask_full), [], 1);
+            cp3a_min_y  = max(0, min(row_vals_dn) * 0.95);
+            cp3a_max_y  = max(row_vals_up) * 1.05;
+            if isempty(cp3a_max_y) || isnan(cp3a_max_y) || cp3a_max_y <= cp3a_min_y
+                cp3a_min_y = 0; cp3a_max_y = 10;
+            end
+            
             nexttile; hold on;
             set(gca, 'FontSize', 22);
             patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [cp3a_min_y cp3a_min_y cp3a_max_y cp3a_max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
@@ -754,7 +1044,6 @@ for band_idx = 1:length(bands_to_process)
             if k_idx == 1, lgdA = legend('Location', 'best'); lgdA.FontSize = 18; end
             xlim([t_centers(1), t_centers(end)]); ylim([cp3a_min_y, cp3a_max_y]);
             
-            % --- CP3a: Group B ---
             nexttile; hold on;
             set(gca, 'FontSize', 22);
             patch([cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], [cp3a_min_y cp3a_min_y cp3a_max_y cp3a_max_y], [0.9 0.9 0.9], 'EdgeColor', 'none', 'FaceAlpha', 0.5, 'HandleVisibility', 'off');
@@ -804,7 +1093,6 @@ for band_idx = 1:length(bands_to_process)
             min_y = global_ylims_zoom(k, 1);
             max_y = global_ylims_zoom(k, 2);
             
-            % --- Group A ---
             figA = figure('Position', [50, 50, 1600, 400 * length(groupA_conds)], 'Name', sprintf('Dir %d - Group A', k), 'Visible', 'off');
             tiledlayout(length(groupA_conds), 4, 'TileSpacing', 'compact', 'Padding', 'normal');
             for c = 1:length(groupA_conds)
@@ -837,7 +1125,6 @@ for band_idx = 1:length(bands_to_process)
             try pause(0.5); saveas(figA, [save_base_A, '.svg']); saveas(figA, [save_base_A, '.png']); catch, end
             close(figA);
             
-            % --- Group B ---
             figB = figure('Position', [150, 150, 1600, 400 * length(groupB_conds)], 'Name', sprintf('Dir %d - Group B', k), 'Visible', 'off');
             tiledlayout(length(groupB_conds), 4, 'TileSpacing', 'compact', 'Padding', 'normal');
             for c = 1:length(groupB_conds)
@@ -872,7 +1159,6 @@ for band_idx = 1:length(bands_to_process)
         end
     end 
     
-    % --- Export Group Results and Summary Tables (All Subjects first, then Split Cohorts) ---
     save(fullfile(group_dir, 'results.mat'), 'log_r_splits', 'G_splits', 'lat_splits', 'sust_splits', 'traj_splits', 't_centers');
     
     fid = fopen(fullfile(group_dir, 'summary_table.txt'), 'w');
@@ -961,13 +1247,12 @@ disp('Generating Figure 5A: Multi-Band log(r) Subspace Redistribution (All Subje
 
 plot_bands_filt = {'Alpha', 'Beta'};
 band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
-    {[0 0.4470 0.7410], [0.8500 0.3250 0.0980]}); % Blue, Orange/Red
-raw_color = [0.15 0.15 0.15]; % Dark Charcoal/Black
+    {[0 0.4470 0.7410], [0.8500 0.3250 0.0980]});
+raw_color = [0.15 0.15 0.15];
 
 cond_markers_A = {'o', 's', 'd'}; cond_styles_A  = {'-', '--', ':'};
 cond_markers_B = {'^', 'v', 'd', 'p'}; cond_styles_B  = {'-', '--', ':', '-.'};
 
-% --- 1. PRE-CALCULATE SYNCHRONIZED Y-LIMITS ACROSS ALL GROUPS ---
 all_y_5a = [];
 for g_chk = 1:length(subj_group_names)
     for b_chk = {'Raw', 'Alpha', 'Beta'}
@@ -984,15 +1269,12 @@ global_5a_ymin = min(-1.5, floor(min(all_y_5a) * 1.15 * 2) / 2);
 global_5a_ymax = max( 1.5, ceil(max(all_y_5a)  * 1.15 * 2) / 2);
 star_offset = (global_5a_ymax - global_5a_ymin) * 0.03;
 
-% --- 2. GENERATE 3x2 FIGURE FOR ALL SUBJECTS (g=1) AND COHORTS 1 & 2 (g=2,3) ---
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
     fig5A = figure('Position', [100, 100, 1600, 1300], 'Name', sprintf('Figure 5A: %s', cohort_str));
     tiledlayout(3, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
     
-    % ---------------------------------------------------------------------
     % ROW 1, COL 1: Group A - RAW BROADBAND
-    % ---------------------------------------------------------------------
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -1033,9 +1315,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ---------------------------------------------------------------------
     % ROW 1, COL 2: Group B - RAW BROADBAND
-    % ---------------------------------------------------------------------
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -1075,9 +1355,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ---------------------------------------------------------------------
     % ROW 2, COL 1: Group A - ALPHA
-    % ---------------------------------------------------------------------
     b_name = 'Alpha'; col = band_colors_filt(b_name);
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
@@ -1119,9 +1397,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ---------------------------------------------------------------------
     % ROW 2, COL 2: Group B - ALPHA
-    % ---------------------------------------------------------------------
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -1161,9 +1437,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ---------------------------------------------------------------------
     % ROW 3, COL 1: Group A - BETA
-    % ---------------------------------------------------------------------
     b_name = 'Beta'; col = band_colors_filt(b_name);
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
@@ -1206,9 +1480,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ---------------------------------------------------------------------
     % ROW 3, COL 2: Group B - BETA
-    % ---------------------------------------------------------------------
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -1265,19 +1537,18 @@ plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_labels = {'Raw', 'Alpha', 'Beta', sprintf('Beta/Alpha\nRatio')};
 
 c_map = containers.Map();
-c_map('P1')         = [0.500 0.500 0.500]; % Cued Reference: Gray
-c_map('P2_500')     = [0.850 0.325 0.098]; % Unpred 500: Orange
-c_map('P3_500')     = [0.929 0.694 0.125]; % Rand 500: Yellow
-c_map('P2_2000')    = [0.466 0.674 0.188]; % Unpred 2000: Green
-c_map('P3_missing') = [0.301 0.745 0.933]; % Rand Null: Light Blue
-c_map('BLA')        = [0.494 0.184 0.556]; % Auditory Control: Purple
+c_map('P1')         = [0.500 0.500 0.500];
+c_map('P2_500')     = [0.850 0.325 0.098];
+c_map('P3_500')     = [0.929 0.694 0.125];
+c_map('P2_2000')    = [0.466 0.674 0.188];
+c_map('P3_missing') = [0.301 0.745 0.933];
+c_map('BLA')        = [0.494 0.184 0.556];
 
 conds_plot_A = [{'P1'}, cfg.group_A];                  
 conds_plot_B = [{'P1'}, intersect(cfg.group_B, cfg.all_conds, 'stable')]; 
 
 idx_P1 = find(strcmp(cfg.all_conds, 'P1'));
 
-% --- 1. PRE-CALCULATE SYNCHRONIZED Y-LIMITS ACROSS ALL GROUPS ---
 global_max_gain = 0;
 for g_chk = 1:length(subj_group_names)
     for b = 1:length(plot_bands)
@@ -1291,15 +1562,12 @@ for g_chk = 1:length(subj_group_names)
 end
 global_y_lim_5b = max(global_max_gain * 1.15, 2.5);
 
-% --- 2. GENERATE FIGURES FOR ALL SUBJECTS (g=1) AND COHORTS 1 & 2 (g=2,3) ---
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
     fig5B = figure('Position', [100, 100, 1750, 800], 'Name', sprintf('Figure 5B: Gain %s', cohort_str));
     tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
     
-    % =====================================================================
     % SUBPLOT 1: GROUP A (STIMULUS DELIVERED)
-    % =====================================================================
     nexttile; hold on; set(gca, 'FontSize', 18);
     
     nA = length(conds_plot_A);
@@ -1368,9 +1636,7 @@ for g = 1:length(subj_group_names)
     ylim([0, global_y_lim_5b]); grid on;
     lgd = legend('Location', 'north'); lgd.FontSize = 14;
     
-    % =====================================================================
     % SUBPLOT 2: GROUP B (OMISSION & AUDITORY CONTROL)
-    % =====================================================================
     nexttile; hold on; set(gca, 'FontSize', 18);
     
     nB = length(conds_plot_B);
@@ -1453,12 +1719,12 @@ disp('Generating Figure 5C: Multi-Band Delta Latency Scatter Plots...');
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_titles = {'Raw Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
 
-colors_conds = [0.500 0.500 0.500; ... % 1: P1 (Cued): Gray
-                0.850 0.325 0.098; ... % 2: P2_500: Orange
-                0.929 0.694 0.125; ... % 3: P3_500: Yellow
-                0.466 0.674 0.188; ... % 4: P2_2000: Green
-                0.301 0.745 0.933; ... % 5: P3_missing: Light Blue
-                0.494 0.184 0.556];    % 6: BLA: Purple
+colors_conds = [0.500 0.500 0.500; ...
+                0.850 0.325 0.098; ...
+                0.929 0.694 0.125; ...
+                0.466 0.674 0.188; ...
+                0.301 0.745 0.933; ...
+                0.494 0.184 0.556];
 
 erp_conds = {'P1', 'P2_500', 'P3_500'};
 erp_conds_idx = find(ismember(cfg.all_conds, erp_conds));
@@ -1483,7 +1749,7 @@ for g = 1:length(subj_group_names)
         b_name = plot_bands{b};
         if ~isfield(aggregate_lat, b_name), continue; end
         
-        lat_m = aggregate_lat.(b_name).cohort(g).mean; % [nConds x m]
+        lat_m = aggregate_lat.(b_name).cohort(g).mean;
         
         nexttile; hold on;
         set(gca, 'FontSize', 18);
@@ -1601,10 +1867,6 @@ for g = 1:length(subj_group_names)
     plot([3.4, 3.4], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     text(2.5, 13, 'Purely Phasic (< 3%)', 'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
         'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
-    
-    % =====================================================================
-    % SIGNIFICANCE TESTING & BRACKETS (WILCOXON SIGNED-RANK, TWO-DIRECTION)
-    % =====================================================================
     
     % 1. Raw Band (b=1): Cued vs Rand 500 & Cued vs Rand Missing
     if isfield(aggregate_sust, 'Raw') && ~isempty(idx_P1)
