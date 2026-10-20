@@ -230,11 +230,13 @@ cond_keys_screen = cond_keys_screen(isfield(data_all_conds.Raw, cond_keys_screen
 
 smooth_pts    = round(0.100 * cfg.fs); % 100 ms moving average
 sat_thresh_uV = 100;                   % 32-channel peak saturation ceiling (uV)
-drift_grid    = 20 : 1 : 50;           % Candidate 32-channel drift thresholds (uV)
-mad_grid      = 2.5 : 0.25 : 10;       % Candidate 32-channel MAD multipliers
-min_keep_30   = 15;                    % Minimum kept trials for 30-trial conditions
-min_keep_60   = 32;                    % Minimum kept trials for 60-trial conditions
-ref_idx_10    = 1:10;                  % First 10 trials as expectation/baseline reference
+
+% --- 2. PER-SUBJECT, PER-CONDITION 2D GRID SEARCH (FIXED ACROSS ALL TRIALS) ---
+opt_mode    = 'per_subject';
+drift_grid  = 20 : 1 : 50;
+mad_grid    = 2.5 : 0.25 : 10;
+min_keep_30 = 15;
+min_keep_60 = 32;
 
 % --- 1. PRE-COMPUTE UNIFIED 32-CHANNEL FULL-EPOCH METRICS ---
 precomp = struct();
@@ -245,46 +247,31 @@ for s = all_target_subjs
         [~, ~, nTr] = size(X_raw);
         
         X_bc_all       = zeros(size(X_raw));
-        trial_drift_32 = zeros(nTr, 1); % Unified 32-channel full-epoch sustained drift (uV)
-        trial_peak_32  = zeros(nTr, 1); % Unified 32-channel full-epoch peak amplitude (uV)
+        trial_drift_32 = zeros(nTr, 1);
+        trial_peak_32  = zeros(nTr, 1);
         
         for tr = 1:nTr
             epoch = X_raw(:, :, tr);
             epoch_bc = epoch - mean(epoch(:, iBase), 2);
             X_bc_all(:, :, tr) = epoch_bc;
             
-            % 32-channel smoothed excursion across full [-0.8, 2.4] s window
-            % Uses 90th percentile across the 32 channels so any multi-electrode drift/blink/artifact
-            % across frontal, central, parietal, temporal, or occipital sites is caught
             ch_smooth_max = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
             trial_drift_32(tr) = prctile(ch_smooth_max, 90);
             
-            % 32-channel peak amplitude across full [-0.8, 2.4] s window (95th percentile across 32 channels)
             ch_peak_max = max(abs(epoch_bc(:, iFullWin)), [], 2);
             trial_peak_32(tr) = prctile(ch_peak_max, 95);
         end
         
-        % Condition-specific First-10-Trials 32-channel Reference ERP
-        valid_10 = ref_idx_10(trial_drift_32(ref_idx_10) <= 38 & trial_peak_32(ref_idx_10) <= sat_thresh_uV);
-        if length(valid_10) < 5
-            [~, ord10] = sort(trial_drift_32(ref_idx_10), 'ascend');
-            valid_10 = ref_idx_10(ord10(1:min(6, length(ref_idx_10))));
-        end
-        erp_32_f10 = mean(X_bc_all(:, :, valid_10), 3, 'omitnan');
-        
         precomp(s).(c_name).X_bc_all       = X_bc_all;
         precomp(s).(c_name).trial_drift_32 = trial_drift_32;
         precomp(s).(c_name).trial_peak_32  = trial_peak_32;
-        precomp(s).(c_name).erp_32_f10     = erp_32_f10;
-        precomp(s).(c_name).erp_c3_f10     = squeeze(erp_32_f10(chan_idx, :))';
         precomp(s).(c_name).c3_traces      = squeeze(X_bc_all(chan_idx, :, :));
     end
 end
 
-% --- 2. PER-SUBJECT, PER-CONDITION 2D GRID SEARCH ON 32-CHANNEL METRICS ---
+% --- 2. PER-SUBJECT, PER-CONDITION 2D GRID SEARCH (TARGETING 0 uV BASELINE) ---
 screening_stats = struct();
 
-% Arrays for exported Outlier Summary Table
 tbl_Subj            = [];
 tbl_Cond            = {};
 tbl_TotalTr         = [];
@@ -300,17 +287,16 @@ tbl_MinKeep_Capped  = [];
 tbl_Outlier_Trials  = {};
 
 fprintf('\n========================================================================================================================\n');
-fprintf(' UNIFIED 32-CHANNEL FULL-EPOCH GRID-SEARCH RESULTS (ALL SUBJECTS & CONDITIONS)\n');
+fprintf(' UNIFIED 32-CHANNEL FULL-EPOCH GRID-SEARCH RESULTS (FIXED TRIAL CRITERION, TARGETING 0 uV BASELINE)\n');
 fprintf('========================================================================================================================\n');
 
 for s = all_target_subjs
     for c = 1:length(cond_keys_screen)
-        c_name     = cond_keys_screen{c};
-        X_bc_all   = precomp(s).(c_name).X_bc_all;
-        d_32       = precomp(s).(c_name).trial_drift_32;
-        a_32       = precomp(s).(c_name).trial_peak_32;
-        erp_32_f10 = precomp(s).(c_name).erp_32_f10;
-        nTr        = length(d_32);
+        c_name   = cond_keys_screen{c};
+        X_bc_all = precomp(s).(c_name).X_bc_all;
+        d_32     = precomp(s).(c_name).trial_drift_32;
+        a_32     = precomp(s).(c_name).trial_peak_32;
+        nTr      = length(d_32);
         
         if nTr >= 50
             min_keep = min_keep_60;
@@ -339,21 +325,15 @@ for s = all_target_subjs
                 
                 erp_32_cand = mean(X_bc_all(:, :, ~bad_cand), 3, 'omitnan');
                 
-                % 1. 32-channel alignment to First-10-Trials expectation/baseline & full trajectory
-                diff_pre  = mean(abs(mean(erp_32_cand(:, iPreStim), 2)  - mean(erp_32_f10(:, iPreStim), 2)));
-                diff_zero = mean(abs(mean(erp_32_cand(:, iZeroZone), 2) - mean(erp_32_f10(:, iZeroZone), 2)));
-                diff_full = mean(abs(mean(erp_32_cand(:, iFullWin), 2)  - mean(erp_32_f10(:, iFullWin), 2)));
+                % Objective: Target 0 uV pre-stimulus baseline and peristimulus window across all trials
+                err_pre  = mean(abs(mean(erp_32_cand(:, iPreStim), 2)));
+                err_zero = mean(abs(mean(erp_32_cand(:, iZeroZone), 2)));
+                err_full = mean(abs(mean(erp_32_cand(:, iFullWin), 2)));
                 
-                % 2. C3 alignment to First-10-Trials expectation baseline (keeps C3 ERP centered)
-                diff_c3_pre  = abs(mean(erp_32_cand(chan_idx, iPreStim))  - mean(erp_32_f10(chan_idx, iPreStim)));
-                diff_c3_zero = abs(mean(erp_32_cand(chan_idx, iZeroZone)) - mean(erp_32_f10(chan_idx, iZeroZone)));
-                
-                % 3. Penalize keeping high-drift trials (>28 uV) across the 32 channels
                 max_kept_d   = max(d_32(~bad_cand));
                 leak_penalty = 0.18 * max(0, max_kept_d - 28) + 0.02 * sum(bad_cand);
                 
-                cost_val = 1.0 * diff_pre + 0.8 * diff_zero + 0.6 * diff_full + ...
-                           1.0 * diff_c3_pre + 0.8 * diff_c3_zero + leak_penalty;
+                cost_val = 1.2 * err_pre + 1.0 * err_zero + 0.5 * err_full + leak_penalty;
                        
                 if cost_val < best_cost
                     best_cost  = cost_val;
@@ -363,7 +343,6 @@ for s = all_target_subjs
             end
         end
         
-        % Apply optimal 32-channel thresholds for this subject & condition
         drift_thresh_uV = best_drift;
         mad_mult        = best_mad;
         
@@ -384,7 +363,6 @@ for s = all_target_subjs
             bad_trials(ord_clean(1:min_keep)) = false;
         end
         
-        % Mask rejected trials with NaN across Raw, Alpha, Beta, and BetaAlphaRatio
         X_clean = X_bc_all;
         X_clean(:, :, bad_trials) = NaN;
         data_all_conds.Raw.(c_name){s} = X_clean;
@@ -407,7 +385,6 @@ for s = all_target_subjs
         screening_stats(s).(c_name).X_after         = X_clean;
         screening_stats(s).(c_name).drift_thresh_uV = drift_thresh_uV;
         screening_stats(s).(c_name).mad_mult        = mad_mult;
-        screening_stats(s).(c_name).erp_f10         = precomp(s).(c_name).erp_c3_f10;
         
         rej_idx_list = find(bad_trials)';
         if isempty(rej_idx_list)
@@ -511,11 +488,9 @@ for s = all_target_subjs
     erp_p1_clean = squeeze(mean(data_all_conds.Raw.P1{s}(chan_idx, :, :), 3, 'omitnan'));
     erp_500_bef  = squeeze(mean(screening_stats(s).P3_500.X_before(chan_idx, :, :), 3, 'omitnan'));
     erp_500_aft  = squeeze(mean(data_all_conds.Raw.P3_500{s}(chan_idx, :, :), 3, 'omitnan'));
-    erp_500_f10  = screening_stats(s).P3_500.erp_f10;
     
     erp_mis_bef  = squeeze(mean(screening_stats(s).P3_missing.X_before(chan_idx, :, :), 3, 'omitnan'));
     erp_mis_aft  = squeeze(mean(data_all_conds.Raw.P3_missing{s}(chan_idx, :, :), 3, 'omitnan'));
-    erp_mis_f10  = screening_stats(s).P3_missing.erp_f10;
 
     drift_v_500 = screening_stats(s).P3_500.trial_drift_32;
     sat_v_500   = screening_stats(s).P3_500.trial_max_amp;
@@ -537,12 +512,10 @@ for s = all_target_subjs
     v_p1 = erp_p1_clean(iErpWin);
     v_5b = erp_500_bef(iErpWin);
     v_5a = erp_500_aft(iErpWin);
-    v_5f = erp_500_f10(iErpWin);
     v_mb = erp_mis_bef(iErpWin);
     v_ma = erp_mis_aft(iErpWin);
-    v_mf = erp_mis_f10(iErpWin);
     
-    all_erps = [v_p1(:); v_5b(:); v_5a(:); v_5f(:); v_mb(:); v_ma(:); v_mf(:)];
+    all_erps = [v_p1(:); v_5b(:); v_5a(:); v_mb(:); v_ma(:)];
     all_erps = all_erps(~isnan(all_erps));
     
     if isempty(all_erps)
@@ -599,7 +572,6 @@ for s = all_target_subjs
     yline(0, 'k:', 'HandleVisibility', 'off');
     plot(time_s, erp_500_bef, '--', 'Color', [0.9 0.6 0.1 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand 500 (Before)');
     plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.0, 'DisplayName', 'Cued P1 (Cleaned)');
-    plot(time_s, erp_500_f10, ':', 'Color', [0.55 0.35 0.0], 'LineWidth', 2.2, 'DisplayName', 'Rand 500 (Trials 1-10 Ref)');
     plot(time_s, erp_500_aft, '-', 'Color', [0.9 0.6 0.1], 'LineWidth', 2.5, 'DisplayName', 'Rand 500 (Cleaned)');
     xlim([-0.2, 0.8]); ylim(ylim_col3);
     xlabel('Time (s)'); ylabel('Voltage (\muV)');
@@ -647,7 +619,6 @@ for s = all_target_subjs
     yline(0, 'k:', 'HandleVisibility', 'off');
     plot(time_s, erp_mis_bef, '--', 'Color', [0.2 0.7 0.9 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand Null (Before)');
     plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.0, 'DisplayName', 'Cued P1 (Cleaned)');
-    plot(time_s, erp_mis_f10, ':', 'Color', [0.0 0.35 0.65], 'LineWidth', 2.2, 'DisplayName', 'Rand Null (Trials 1-10 Ref)');
     plot(time_s, erp_mis_aft, '-', 'Color', [0.2 0.7 0.9], 'LineWidth', 2.5, 'DisplayName', 'Rand Null (Cleaned)');
     xlim([-0.2, 0.8]); ylim(ylim_col3);
     xlabel('Time (s)'); ylabel('Voltage (\muV)');
@@ -666,7 +637,6 @@ for s = all_target_subjs
     close(fig_verify);
     fprintf('  -> Saved 600 ppi PNG: %s\n', fig_png_path);
 end
-save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening_stats', 'Outlier_Summary_Table');
 
 %% =========================================================================
 %% MASTER LOOP: PROCESS FREQUENCY BANDS (STRICTLY P1 REFERENCE)
