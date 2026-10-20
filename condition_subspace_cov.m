@@ -176,7 +176,7 @@ cfg.num_ch        = 32;
 cfg.fs            = fs;                
 cfg.tStart        = -1.000;            
 cfg.win           = [0.000, 1.000];    
-cfg.base          = [-1.000, -0.800];  
+cfg.base          = [-1.000, -0.500];  
 cfg.nTrialMatch   = 30;                
 cfg.nRep          = 50;                
 cfg.m             = 6;                 
@@ -207,30 +207,36 @@ num_windows = length(t_starts);
 covCentered = @(X, b) (( (X - b) - mean(X - b, 2) ) * ( (X - b) - mean(X - b, 2) )') / size(X, 2);
 
 %% =========================================================================
-%% SECTION 3B: TRIAL-LEVEL OUTLIER SCREENING & 600 PPI PNG EXPORT (ALL SUBJS)
+%% SECTION 3B: UNIFIED FULL-EPOCH 32-CHANNEL SCREENING, TABLE & 600 PPI FIGS
 %% =========================================================================
-num_all_subjs = length(data_all_conds.Raw.P1);
+num_all_subjs    = length(data_all_conds.Raw.P1);
 all_target_subjs = 1:num_all_subjs;
 
+% Identify C3 index strictly for ERP visualization in Column 2 & 3 of verification plots
 chan_idx = 14; 
 if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
     c3_match = find(strcmpi({EEG.chanlocs.labels}, 'C3'), 1);
     if ~isempty(c3_match), chan_idx = c3_match; end
 end
-fprintf('\nUsing Channel Index %d (C3) + 32-Ch Full-Epoch Guard across all %d subjects.\n', chan_idx, num_all_subjs);
+fprintf('\nExecuting Unified Full-Epoch [-0.8, 2.4s] 32-Channel Trial Screening across all %d subjects...\n', num_all_subjs);
 
-iErpWin   = time_s >= -0.200 & time_s <= 0.800;
-iFullWin  = time_s >= -0.800 & time_s <= 2.400; % Full trajectory window plotted in Checkpoint 3a
+iErpWin   = time_s >= -0.200 & time_s <= 0.800; % Active ERP display window
+iFullWin  = time_s >= -0.800 & time_s <= 2.400; % Full trajectory window for 32-channel screening
 iZeroZone = time_s >= -0.200 & time_s <= 0.200;
 iPreStim  = time_s >= -0.200 & time_s <= 0.000;
 
 cond_keys_screen = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA', 'BLT'};
 cond_keys_screen = cond_keys_screen(isfield(data_all_conds.Raw, cond_keys_screen));
 
-smooth_pts    = round(0.100 * cfg.fs);
-sat_thresh_uV = 100;
+smooth_pts    = round(0.100 * cfg.fs); % 100 ms moving average
+sat_thresh_uV = 100;                   % 32-channel peak saturation ceiling (uV)
+drift_grid    = 20 : 1 : 50;           % Candidate 32-channel drift thresholds (uV)
+mad_grid      = 2.5 : 0.25 : 10;       % Candidate 32-channel MAD multipliers
+min_keep_30   = 15;                    % Minimum kept trials for 30-trial conditions
+min_keep_60   = 32;                    % Minimum kept trials for 60-trial conditions
+ref_idx_10    = 1:10;                  % First 10 trials as expectation/baseline reference
 
-% --- 1. PRE-COMPUTE TRIAL METRICS FOR ALL SUBJECTS & CONDITIONS ---
+% --- 1. PRE-COMPUTE UNIFIED 32-CHANNEL FULL-EPOCH METRICS ---
 precomp = struct();
 for s = all_target_subjs
     for c = 1:length(cond_keys_screen)
@@ -238,212 +244,147 @@ for s = all_target_subjs
         X_raw = data_all_conds.Raw.(c_name){s};
         [~, ~, nTr] = size(X_raw);
         
-        X_bc_all         = zeros(size(X_raw));
-        trial_max_amp    = zeros(nTr, 1);
-        trial_c3_drift   = zeros(nTr, 1);
-        trial_full_c3    = zeros(nTr, 1); % C3 drift across full [-0.8, 2.4] s window
-        trial_glob_drift = zeros(nTr, 1); % 32-channel drift across full [-0.8, 2.4] s window
-        trial_glob_sat   = zeros(nTr, 1); % 32-channel peak saturation across full [-0.8, 2.4] s window
+        X_bc_all       = zeros(size(X_raw));
+        trial_drift_32 = zeros(nTr, 1); % Unified 32-channel full-epoch sustained drift (uV)
+        trial_peak_32  = zeros(nTr, 1); % Unified 32-channel full-epoch peak amplitude (uV)
         
         for tr = 1:nTr
             epoch = X_raw(:, :, tr);
             epoch_bc = epoch - mean(epoch(:, iBase), 2);
             X_bc_all(:, :, tr) = epoch_bc;
             
-            % Active ERP window [-0.2, 0.8] s on C3 (for 2D grid search & C3 ERP plots)
-            c3_smooth = movmean(epoch_bc(chan_idx, iErpWin), smooth_pts);
-            trial_c3_drift(tr) = max(abs(c3_smooth));
-            trial_max_amp(tr)  = max(abs(epoch_bc(chan_idx, iErpWin)));
+            % 32-channel smoothed excursion across full [-0.8, 2.4] s window
+            % Uses 90th percentile across the 32 channels so any multi-electrode drift/blink/artifact
+            % across frontal, central, parietal, temporal, or occipital sites is caught
+            ch_smooth_max = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
+            trial_drift_32(tr) = prctile(ch_smooth_max, 90);
             
-            % Full-epoch [-0.8, 2.4] s C3 & 32-channel guard (prevents late >1.0s & non-C3 blowups in Xi_2..Xi_6)
-            c3_full_smooth = movmean(epoch_bc(chan_idx, iFullWin), smooth_pts);
-            trial_full_c3(tr) = max(abs(c3_full_smooth));
-            
-            ch_max_smooth = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
-            trial_glob_drift(tr) = prctile(ch_max_smooth, 90); % 90th percentile channel drift across 32 channels
-            trial_glob_sat(tr)   = prctile(max(abs(epoch_bc(:, iFullWin)), [], 2), 95);
+            % 32-channel peak amplitude across full [-0.8, 2.4] s window (95th percentile across 32 channels)
+            ch_peak_max = max(abs(epoch_bc(:, iFullWin)), [], 2);
+            trial_peak_32(tr) = prctile(ch_peak_max, 95);
         end
         
-        precomp(s).(c_name).X_bc_all         = X_bc_all;
-        precomp(s).(c_name).trial_c3_drift   = trial_c3_drift;
-        precomp(s).(c_name).trial_max_amp    = trial_max_amp;
-        precomp(s).(c_name).trial_full_c3    = trial_full_c3;
-        precomp(s).(c_name).trial_glob_drift = trial_glob_drift;
-        precomp(s).(c_name).trial_glob_sat   = trial_glob_sat;
-        precomp(s).(c_name).c3_traces        = squeeze(X_bc_all(chan_idx, :, :));
-    end
-end
-
-% --- 2. 2D GRID SEARCH TARGETING FIRST 10 TRIALS OF EACH CONDITION ---
-opt_mode    = 'per_subject';
-drift_grid  = 20 : 1 : 50;
-mad_grid    = 2.5 : 0.25 : 10;
-min_keep_p3 = 14;
-ref_idx_10  = 1:10;
-
-cost_surface   = inf(length(drift_grid), length(mad_grid), num_all_subjs);
-null_diff_f10  = nan(length(drift_grid), length(mad_grid), num_all_subjs);
-r500_diff_f10  = nan(length(drift_grid), length(mad_grid), num_all_subjs);
-rej_counts_mis = zeros(length(drift_grid), length(mad_grid), num_all_subjs);
-rej_counts_500 = zeros(length(drift_grid), length(mad_grid), num_all_subjs);
-
-for s = all_target_subjs
-    d_mis  = precomp(s).P3_missing.trial_c3_drift;
-    a_mis  = precomp(s).P3_missing.trial_max_amp;
-    fc_mis = precomp(s).P3_missing.trial_full_c3;
-    gd_mis = precomp(s).P3_missing.trial_glob_drift;
-    gs_mis = precomp(s).P3_missing.trial_glob_sat;
-    tr_mis = precomp(s).P3_missing.c3_traces;
-    
-    d_500  = precomp(s).P3_500.trial_c3_drift;
-    a_500  = precomp(s).P3_500.trial_max_amp;
-    fc_500 = precomp(s).P3_500.trial_full_c3;
-    gd_500 = precomp(s).P3_500.trial_glob_drift;
-    gs_500 = precomp(s).P3_500.trial_glob_sat;
-    tr_500 = precomp(s).P3_500.c3_traces;
-    
-    valid_10_mis = ref_idx_10(d_mis(ref_idx_10) <= 35 & a_mis(ref_idx_10) <= sat_thresh_uV);
-    if isempty(valid_10_mis), valid_10_mis = ref_idx_10; end
-    erp_mis_f10 = mean(tr_mis(:, valid_10_mis), 2, 'omitnan');
-    
-    valid_10_500 = ref_idx_10(d_500(ref_idx_10) <= 35 & a_500(ref_idx_10) <= sat_thresh_uV);
-    if isempty(valid_10_500), valid_10_500 = ref_idx_10; end
-    erp_500_f10 = mean(tr_500(:, valid_10_500), 2, 'omitnan');
-    
-    precomp(s).P3_missing.erp_f10 = erp_mis_f10;
-    precomp(s).P3_500.erp_f10     = erp_500_f10;
-    
-    for id = 1:length(drift_grid)
-        d_lim = drift_grid(id);
-        for im = 1:length(mad_grid)
-            m_val = mad_grid(im);
-            
-            rob_d_mis  = median(d_mis)  + m_val * mad(d_mis, 1);
-            rob_a_mis  = median(a_mis)  + m_val * mad(a_mis, 1);
-            rob_gd_mis = median(gd_mis) + max(3.5, m_val) * mad(gd_mis, 1);
-            bad_mis    = (a_mis > sat_thresh_uV) | (a_mis > rob_a_mis) | ...
-                         (d_mis > d_lim)         | (d_mis > rob_d_mis) | ...
-                         (fc_mis > d_lim * 1.25) | (gd_mis > max(45, d_lim * 1.4)) | ...
-                         (gd_mis > rob_gd_mis)   | (gs_mis > 120);
-            
-            rob_d_500  = median(d_500)  + m_val * mad(d_500, 1);
-            rob_a_500  = median(a_500)  + m_val * mad(a_500, 1);
-            rob_gd_500 = median(gd_500) + max(3.5, m_val) * mad(gd_500, 1);
-            bad_500    = (a_500 > sat_thresh_uV) | (a_500 > rob_a_500) | ...
-                         (d_500 > d_lim)         | (d_500 > rob_d_500) | ...
-                         (fc_500 > d_lim * 1.25) | (gd_500 > max(45, d_lim * 1.4)) | ...
-                         (gd_500 > rob_gd_500)   | (gs_500 > 120);
-            
-            if sum(~bad_500) < min_keep_p3
-                [~, ord500] = sort(d_500 + 0.5 * gd_500, 'ascend');
-                bad_500 = true(size(d_500));
-                bad_500(ord500(1:min_keep_p3)) = false;
-            end
-            if sum(~bad_mis) < min_keep_p3
-                continue; 
-            end
-            
-            erp_mis_cand = mean(tr_mis(:, ~bad_mis), 2, 'omitnan');
-            erp_500_cand = mean(tr_500(:, ~bad_500), 2, 'omitnan');
-            
-            err_mis_pre  = abs(mean(erp_mis_cand(iPreStim))  - mean(erp_mis_f10(iPreStim)));
-            err_mis_zero = abs(mean(erp_mis_cand(iZeroZone)) - mean(erp_mis_f10(iZeroZone)));
-            err_mis_full = abs(mean(erp_mis_cand(iErpWin))   - mean(erp_mis_f10(iErpWin)));
-            
-            err_500_pre  = abs(mean(erp_500_cand(iPreStim))  - mean(erp_500_f10(iPreStim)));
-            err_500_zero = abs(mean(erp_500_cand(iZeroZone)) - mean(erp_500_f10(iZeroZone)));
-            
-            max_kept_drift = max([d_mis(~bad_mis); d_500(~bad_500)]);
-            leak_penalty   = 0.15 * max(0, max_kept_drift - 28);
-            
-            cost_surface(id, im, s) = 1.2 * err_mis_pre + 1.0 * err_mis_zero + 0.5 * err_mis_full + ...
-                                      1.0 * err_500_pre + 0.5 * err_500_zero + leak_penalty;
-                                      
-            null_diff_f10(id, im, s)  = mean(erp_mis_cand(iPreStim)) - mean(erp_mis_f10(iPreStim));
-            r500_diff_f10(id, im, s)  = mean(erp_500_cand(iPreStim)) - mean(erp_500_f10(iPreStim));
-            rej_counts_mis(id, im, s) = sum(bad_mis);
-            rej_counts_500(id, im, s) = sum(bad_500);
+        % Condition-specific First-10-Trials 32-channel Reference ERP
+        valid_10 = ref_idx_10(trial_drift_32(ref_idx_10) <= 38 & trial_peak_32(ref_idx_10) <= sat_thresh_uV);
+        if length(valid_10) < 5
+            [~, ord10] = sort(trial_drift_32(ref_idx_10), 'ascend');
+            valid_10 = ref_idx_10(ord10(1:min(6, length(ref_idx_10))));
         end
+        erp_32_f10 = mean(X_bc_all(:, :, valid_10), 3, 'omitnan');
+        
+        precomp(s).(c_name).X_bc_all       = X_bc_all;
+        precomp(s).(c_name).trial_drift_32 = trial_drift_32;
+        precomp(s).(c_name).trial_peak_32  = trial_peak_32;
+        precomp(s).(c_name).erp_32_f10     = erp_32_f10;
+        precomp(s).(c_name).erp_c3_f10     = squeeze(erp_32_f10(chan_idx, :))';
+        precomp(s).(c_name).c3_traces      = squeeze(X_bc_all(chan_idx, :, :));
     end
 end
 
-subj_opt_drift = zeros(num_all_subjs, 1);
-subj_opt_mad   = zeros(num_all_subjs, 1);
-
-joint_cost = sum(cost_surface, 3);
-[~, lin_idx_glob] = min(joint_cost(:));
-[id_glob, im_glob] = ind2sub(size(joint_cost), lin_idx_glob);
-glob_drift_opt = drift_grid(id_glob);
-glob_mad_opt   = mad_grid(im_glob);
-
-fprintf('\n========================================================================================\n');
-fprintf(' 2D GRID-SEARCH RESULTS (ALL %d SUBJECTS: TARGETING FIRST 10 TRIALS BASELINE [-0.2, 0.0s])\n', num_all_subjs);
-fprintf('========================================================================================\n');
-
-for s = all_target_subjs
-    sub_cost = cost_surface(:, :, s);
-    [~, lin_idx_s] = min(sub_cost(:));
-    [id_s, im_s] = ind2sub(size(sub_cost), lin_idx_s);
-    
-    if strcmpi(opt_mode, 'per_subject')
-        subj_opt_drift(s) = drift_grid(id_s);
-        subj_opt_mad(s)   = mad_grid(im_s);
-        id_app = id_s; im_app = im_s;
-    else
-        subj_opt_drift(s) = glob_drift_opt;
-        subj_opt_mad(s)   = glob_mad_opt;
-        id_app = id_glob; im_app = im_glob;
-    end
-    
-    fprintf('  * Subject %02d | Drift Thresh = %2d uV | MAD Mult = %4.2f | Rand Null Diff vs F10: %+5.2f uV (Rej: %2d/30) | Rand 500 Diff vs F10: %+5.2f uV (Rej: %2d/30)\n', ...
-        s, subj_opt_drift(s), subj_opt_mad(s), ...
-        null_diff_f10(id_app, im_app, s), rej_counts_mis(id_app, im_app, s), ...
-        r500_diff_f10(id_app, im_app, s), rej_counts_500(id_app, im_app, s));
-end
-
-% --- 3. APPLY OPTIMAL THRESHOLDS ACROSS ALL BANDS & EXPORT SCREENED DATASETS ---
+% --- 2. PER-SUBJECT, PER-CONDITION 2D GRID SEARCH ON 32-CHANNEL METRICS ---
 screening_stats = struct();
 
+% Arrays for exported Outlier Summary Table
+tbl_Subj            = [];
+tbl_Cond            = {};
+tbl_TotalTr         = [];
+tbl_KeptTr          = [];
+tbl_RejTr           = [];
+tbl_DriftThresh_32  = [];
+tbl_MAD_Mult_32     = [];
+tbl_MaxKept_Drift   = [];
+tbl_MaxKept_MADR    = [];
+tbl_Rej_By_Sat      = [];
+tbl_Rej_By_Drift    = [];
+tbl_MinKeep_Capped  = [];
+tbl_Outlier_Trials  = {};
+
+fprintf('\n========================================================================================================================\n');
+fprintf(' UNIFIED 32-CHANNEL FULL-EPOCH GRID-SEARCH RESULTS (ALL SUBJECTS & CONDITIONS)\n');
+fprintf('========================================================================================================================\n');
+
 for s = all_target_subjs
-    drift_thresh_uV = subj_opt_drift(s);
-    mad_mult        = subj_opt_mad(s);
-    
     for c = 1:length(cond_keys_screen)
-        c_name = cond_keys_screen{c};
-        X_bc_all         = precomp(s).(c_name).X_bc_all;
-        trial_c3_drift   = precomp(s).(c_name).trial_c3_drift;
-        trial_max_amp    = precomp(s).(c_name).trial_max_amp;
-        trial_full_c3    = precomp(s).(c_name).trial_full_c3;
-        trial_glob_drift = precomp(s).(c_name).trial_glob_drift;
-        trial_glob_sat   = precomp(s).(c_name).trial_glob_sat;
-        nTr              = length(trial_c3_drift);
-        
-        rob_sat_lim   = median(trial_max_amp)    + mad_mult * mad(trial_max_amp, 1);
-        rob_drift_lim = median(trial_c3_drift)   + mad_mult * mad(trial_c3_drift, 1);
-        rob_glob_lim  = median(trial_glob_drift) + max(3.5, mad_mult) * mad(trial_glob_drift, 1);
-        
-        is_saturated = (trial_max_amp > sat_thresh_uV)    | (trial_max_amp > rob_sat_lim) | (trial_glob_sat > 120);
-        is_drifting  = (trial_c3_drift > drift_thresh_uV) | (trial_c3_drift > rob_drift_lim) | ...
-                       (trial_full_c3 > drift_thresh_uV * 1.25) | ...
-                       (trial_glob_drift > max(45, drift_thresh_uV * 1.4)) | (trial_glob_drift > rob_glob_lim);
-        bad_trials   = is_saturated | is_drifting;
+        c_name     = cond_keys_screen{c};
+        X_bc_all   = precomp(s).(c_name).X_bc_all;
+        d_32       = precomp(s).(c_name).trial_drift_32;
+        a_32       = precomp(s).(c_name).trial_peak_32;
+        erp_32_f10 = precomp(s).(c_name).erp_32_f10;
+        nTr        = length(d_32);
         
         if nTr >= 50
-            min_keep = 32;
+            min_keep = min_keep_60;
         else
-            min_keep = min(min_keep_p3, nTr);
+            min_keep = min(min_keep_30, nTr);
         end
         
+        best_cost  = inf;
+        best_drift = 30;
+        best_mad   = 3.5;
+        
+        for id = 1:length(drift_grid)
+            d_lim = drift_grid(id);
+            for im = 1:length(mad_grid)
+                m_val = mad_grid(im);
+                
+                rob_d = median(d_32) + m_val * mad(d_32, 1);
+                rob_a = median(a_32) + m_val * mad(a_32, 1);
+                
+                bad_cand = (a_32 > sat_thresh_uV) | (a_32 > rob_a) | ...
+                           (d_32 > d_lim)         | (d_32 > rob_d);
+                       
+                if sum(~bad_cand) < min_keep
+                    continue;
+                end
+                
+                erp_32_cand = mean(X_bc_all(:, :, ~bad_cand), 3, 'omitnan');
+                
+                % 1. 32-channel alignment to First-10-Trials expectation/baseline & full trajectory
+                diff_pre  = mean(abs(mean(erp_32_cand(:, iPreStim), 2)  - mean(erp_32_f10(:, iPreStim), 2)));
+                diff_zero = mean(abs(mean(erp_32_cand(:, iZeroZone), 2) - mean(erp_32_f10(:, iZeroZone), 2)));
+                diff_full = mean(abs(mean(erp_32_cand(:, iFullWin), 2)  - mean(erp_32_f10(:, iFullWin), 2)));
+                
+                % 2. C3 alignment to First-10-Trials expectation baseline (keeps C3 ERP centered)
+                diff_c3_pre  = abs(mean(erp_32_cand(chan_idx, iPreStim))  - mean(erp_32_f10(chan_idx, iPreStim)));
+                diff_c3_zero = abs(mean(erp_32_cand(chan_idx, iZeroZone)) - mean(erp_32_f10(chan_idx, iZeroZone)));
+                
+                % 3. Penalize keeping high-drift trials (>28 uV) across the 32 channels
+                max_kept_d   = max(d_32(~bad_cand));
+                leak_penalty = 0.18 * max(0, max_kept_d - 28) + 0.02 * sum(bad_cand);
+                
+                cost_val = 1.0 * diff_pre + 0.8 * diff_zero + 0.6 * diff_full + ...
+                           1.0 * diff_c3_pre + 0.8 * diff_c3_zero + leak_penalty;
+                       
+                if cost_val < best_cost
+                    best_cost  = cost_val;
+                    best_drift = d_lim;
+                    best_mad   = m_val;
+                end
+            end
+        end
+        
+        % Apply optimal 32-channel thresholds for this subject & condition
+        drift_thresh_uV = best_drift;
+        mad_mult        = best_mad;
+        
+        mad_ratio_32  = (d_32 - median(d_32)) ./ (mad(d_32, 1) + eps);
+        rob_sat_lim   = median(a_32) + mad_mult * mad(a_32, 1);
+        rob_drift_lim = median(d_32) + mad_mult * mad(d_32, 1);
+        
+        is_saturated = (a_32 > sat_thresh_uV)    | (a_32 > rob_sat_lim);
+        is_drifting  = (d_32 > drift_thresh_uV) | (d_32 > rob_drift_lim);
+        bad_trials   = is_saturated | is_drifting;
+        
+        was_capped = false;
         if sum(~bad_trials) < min_keep
-            artifact_score = (trial_c3_drift   / (median(trial_c3_drift) + eps)) + ...
-                             (trial_glob_drift / (median(trial_glob_drift) + eps)) + ...
-                             (trial_max_amp    / (median(trial_max_amp) + eps));
+            was_capped = true;
+            artifact_score = (d_32 / (median(d_32) + eps)) + (a_32 / (median(a_32) + eps));
             [~, ord_clean] = sort(artifact_score, 'ascend');
             bad_trials = true(nTr, 1);
             bad_trials(ord_clean(1:min_keep)) = false;
         end
         
-        % Mask rejected trials as NaN across Raw and all filtered bands
+        % Mask rejected trials with NaN across Raw, Alpha, Beta, and BetaAlphaRatio
         X_clean = X_bc_all;
         X_clean(:, :, bad_trials) = NaN;
         data_all_conds.Raw.(c_name){s} = X_clean;
@@ -459,15 +400,35 @@ for s = all_target_subjs
         end
         
         screening_stats(s).(c_name).bad_trials      = bad_trials;
-        screening_stats(s).(c_name).trial_max_amp   = trial_max_amp;
-        screening_stats(s).(c_name).trial_c3_drift  = trial_c3_drift;
+        screening_stats(s).(c_name).trial_max_amp   = a_32;
+        screening_stats(s).(c_name).trial_drift_32  = d_32;
+        screening_stats(s).(c_name).mad_ratio_32    = mad_ratio_32;
         screening_stats(s).(c_name).X_before        = X_bc_all;
         screening_stats(s).(c_name).X_after         = X_clean;
         screening_stats(s).(c_name).drift_thresh_uV = drift_thresh_uV;
         screening_stats(s).(c_name).mad_mult        = mad_mult;
-        if isfield(precomp(s).(c_name), 'erp_f10')
-            screening_stats(s).(c_name).erp_f10 = precomp(s).(c_name).erp_f10;
+        screening_stats(s).(c_name).erp_f10         = precomp(s).(c_name).erp_c3_f10;
+        
+        rej_idx_list = find(bad_trials)';
+        if isempty(rej_idx_list)
+            rej_str = 'None';
+        else
+            rej_str = strjoin(arrayfun(@num2str, rej_idx_list, 'UniformOutput', false), ', ');
         end
+        
+        tbl_Subj(end+1, 1)           = s;
+        tbl_Cond{end+1, 1}           = c_name;
+        tbl_TotalTr(end+1, 1)        = nTr;
+        tbl_KeptTr(end+1, 1)         = sum(~bad_trials);
+        tbl_RejTr(end+1, 1)          = sum(bad_trials);
+        tbl_DriftThresh_32(end+1, 1) = drift_thresh_uV;
+        tbl_MAD_Mult_32(end+1, 1)    = mad_mult;
+        tbl_MaxKept_Drift(end+1, 1)  = round(max([0; d_32(~bad_trials)]), 2);
+        tbl_MaxKept_MADR(end+1, 1)   = round(max([0; mad_ratio_32(~bad_trials)]), 2);
+        tbl_Rej_By_Sat(end+1, 1)     = sum(is_saturated & bad_trials);
+        tbl_Rej_By_Drift(end+1, 1)   = sum(is_drifting & bad_trials);
+        tbl_MinKeep_Capped(end+1, 1) = was_capped;
+        tbl_Outlier_Trials{end+1, 1} = rej_str;
     end
     
     if save_trial_cleaned_sets
@@ -495,6 +456,217 @@ for s = all_target_subjs
         pop_saveset(EEG_p3, 'filename', EEG_p3.filename_orig, 'filepath', out_p3);
     end
 end
+
+% --- 3. EXPORT OUTLIER TRIAL SUMMARY TABLE (.XLSX, .CSV, .TXT) ---
+Outlier_Summary_Table = table(tbl_Subj, tbl_Cond, tbl_TotalTr, tbl_KeptTr, tbl_RejTr, ...
+    tbl_DriftThresh_32, tbl_MAD_Mult_32, tbl_MaxKept_Drift, tbl_MaxKept_MADR, ...
+    tbl_Rej_By_Sat, tbl_Rej_By_Drift, tbl_MinKeep_Capped, tbl_Outlier_Trials, ...
+    'VariableNames', {'Subject', 'Condition', 'Total_Trials', 'Kept_Trials', 'Rejected_Trials', ...
+    'Drift_Thresh_32Ch_uV', 'MAD_Mult_32Ch', 'Max_Kept_32Ch_Drift_uV', 'Max_Kept_32Ch_MAD_Ratio', ...
+    'Rej_By_Saturation', 'Rej_By_Drift', 'MinKeep_Floor_Triggered', 'Outlier_Trial_Indices'});
+
+csv_table_path  = fullfile(screening_fig_dir, 'Trial_Outlier_Summary_Table.csv');
+xlsx_table_path = fullfile(screening_fig_dir, 'Trial_Outlier_Summary_Table.xlsx');
+txt_table_path  = fullfile(screening_fig_dir, 'Trial_Outlier_Summary_Table.txt');
+
+writetable(Outlier_Summary_Table, csv_table_path);
+try writetable(Outlier_Summary_Table, xlsx_table_path); catch, end
+
+fid_tbl = fopen(txt_table_path, 'w');
+for out_dest = [1, fid_tbl]
+    fprintf(out_dest, '\n======================================================================================================================================================\n');
+    fprintf(out_dest, ' UNIFIED 32-CHANNEL FULL-EPOCH TRIAL OUTLIER REPORT (ALL SUBJECTS & CONDITIONS)\n');
+    fprintf(out_dest, '======================================================================================================================================================\n');
+    fprintf(out_dest, '%-4s | %-10s | %-7s | %-7s | %-18s | %-13s | %-13s | %-7s | %s\n', ...
+        'Subj', 'Condition', 'Kept/Tr', 'Rej (n)', '32Ch Thresh/MAD', 'MaxKeptDrift', 'MaxKeptMADR', 'Capped?', 'Rejected Trial Indices');
+    fprintf(out_dest, '------------------------------------------------------------------------------------------------------------------------------------------------------\n');
+    for r = 1:height(Outlier_Summary_Table)
+        cap_str = 'No'; if Outlier_Summary_Table.MinKeep_Floor_Triggered(r), cap_str = 'YES'; end
+        fprintf(out_dest, 'S%02d  | %-10s | %2d/%-4d | %2d      | %2d uV / %5.2f MAD  | %10.2f uV | %13.2f | %-7s | %s\n', ...
+            Outlier_Summary_Table.Subject(r), Outlier_Summary_Table.Condition{r}, ...
+            Outlier_Summary_Table.Kept_Trials(r), Outlier_Summary_Table.Total_Trials(r), ...
+            Outlier_Summary_Table.Rejected_Trials(r), ...
+            Outlier_Summary_Table.Drift_Thresh_32Ch_uV(r), Outlier_Summary_Table.MAD_Mult_32Ch(r), ...
+            Outlier_Summary_Table.Max_Kept_32Ch_Drift_uV(r), Outlier_Summary_Table.Max_Kept_32Ch_MAD_Ratio(r), ...
+            cap_str, Outlier_Summary_Table.Outlier_Trial_Indices{r});
+    end
+    fprintf(out_dest, '======================================================================================================================================================\n\n');
+end
+fclose(fid_tbl);
+fprintf('Saved Outlier Summary Tables to:\n  -> %s\n  -> %s\n  -> %s\n', csv_table_path, xlsx_table_path, txt_table_path);
+
+% --- 4. SAVE 600 PPI PNG VERIFICATION FIGURES FOR ALL SUBJECTS ---
+fprintf('\nGenerating and saving 600 ppi PNG Trial Screening figures for all %d subjects...\n', num_all_subjs);
+
+for s = all_target_subjs
+    d_thresh_500 = screening_stats(s).P3_500.drift_thresh_uV;
+    mad_500      = screening_stats(s).P3_500.mad_mult;
+    d_thresh_mis = screening_stats(s).P3_missing.drift_thresh_uV;
+    mad_mis      = screening_stats(s).P3_missing.mad_mult;
+    
+    fig_verify = figure('Position', [50, 50, 1700, 900], 'Visible', 'off', ...
+        'Name', sprintf('Subject %d 32-Ch Trial Screening & ERP Cleanup', s));
+    tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    
+    erp_p1_clean = squeeze(mean(data_all_conds.Raw.P1{s}(chan_idx, :, :), 3, 'omitnan'));
+    erp_500_bef  = squeeze(mean(screening_stats(s).P3_500.X_before(chan_idx, :, :), 3, 'omitnan'));
+    erp_500_aft  = squeeze(mean(data_all_conds.Raw.P3_500{s}(chan_idx, :, :), 3, 'omitnan'));
+    erp_500_f10  = screening_stats(s).P3_500.erp_f10;
+    
+    erp_mis_bef  = squeeze(mean(screening_stats(s).P3_missing.X_before(chan_idx, :, :), 3, 'omitnan'));
+    erp_mis_aft  = squeeze(mean(data_all_conds.Raw.P3_missing{s}(chan_idx, :, :), 3, 'omitnan'));
+    erp_mis_f10  = screening_stats(s).P3_missing.erp_f10;
+
+    drift_v_500 = screening_stats(s).P3_500.trial_drift_32;
+    sat_v_500   = screening_stats(s).P3_500.trial_max_amp;
+    drift_v_mis = screening_stats(s).P3_missing.trial_drift_32;
+    sat_v_mis   = screening_stats(s).P3_missing.trial_max_amp;
+    col1_max    = max([drift_v_500(:); sat_v_500(:); drift_v_mis(:); sat_v_mis(:); sat_thresh_uV]);
+    if isempty(col1_max) || isnan(col1_max) || col1_max <= 0, col1_max = 100; end
+    ylim_col1   = [0, col1_max * 1.05];
+    
+    X_bef_500 = screening_stats(s).P3_500.X_before;
+    X_bef_mis = screening_stats(s).P3_missing.X_before;
+    tr_500_bc = squeeze(X_bef_500(chan_idx, :, :));
+    tr_mis_bc = squeeze(X_bef_mis(chan_idx, :, :));
+    
+    col2_bound = max(abs([tr_500_bc(:); tr_mis_bc(:)]));
+    if isempty(col2_bound) || isnan(col2_bound) || col2_bound <= 0, col2_bound = 100; end
+    ylim_col2  = [-col2_bound * 1.05, col2_bound * 1.05];
+    
+    v_p1 = erp_p1_clean(iErpWin);
+    v_5b = erp_500_bef(iErpWin);
+    v_5a = erp_500_aft(iErpWin);
+    v_5f = erp_500_f10(iErpWin);
+    v_mb = erp_mis_bef(iErpWin);
+    v_ma = erp_mis_aft(iErpWin);
+    v_mf = erp_mis_f10(iErpWin);
+    
+    all_erps = [v_p1(:); v_5b(:); v_5a(:); v_5f(:); v_mb(:); v_ma(:); v_mf(:)];
+    all_erps = all_erps(~isnan(all_erps));
+    
+    if isempty(all_erps)
+        ylim_col3 = [-5, 5];
+    else
+        col3_min = min(all_erps);
+        col3_max = max(all_erps);
+        pad3     = (col3_max - col3_min) * 0.15;
+        if pad3 == 0 || isnan(pad3), pad3 = 2; end
+        ylim_col3 = [col3_min - pad3, col3_max + pad3];
+    end
+    if ylim_col3(1) >= ylim_col3(2)
+        ylim_col3 = [ylim_col3(1) - 5, ylim_col3(2) + 5];
+    end
+
+    % ================= ROW 1: RAND 500 =================
+    nexttile(1); hold on; set(gca, 'FontSize', 14);
+    bad_tr_500 = screening_stats(s).P3_500.bad_trials;
+    tr_idx_500 = 1:length(bad_tr_500);
+    
+    plot(tr_idx_500, drift_v_500, 'b-o', 'LineWidth', 1.5, 'DisplayName', '|32-Ch Drift| (\muV)');
+    plot(tr_idx_500, sat_v_500, 'k-s', 'LineWidth', 1.5, 'DisplayName', '|32-Ch Peak| (\muV)');
+    if any(bad_tr_500)
+        plot(tr_idx_500(bad_tr_500), sat_v_500(bad_tr_500), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'DisplayName', 'Rejected');
+        plot(tr_idx_500(bad_tr_500), drift_v_500(bad_tr_500), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'HandleVisibility', 'off');
+    end
+    yline(d_thresh_500, 'b--', sprintf('Drift Thresh (%g \\muV)', d_thresh_500), 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(sat_thresh_uV, 'r--', sprintf('Sat Thresh (%g \\muV)', sat_thresh_uV), 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    xlabel('Trial Index (Rand 500)'); ylabel('32-Ch |Amplitude / Drift| (\muV)');
+    title(sprintf('Rand 500 32-Ch Screening (Rej: %d/%d)', sum(bad_tr_500), length(bad_tr_500)), 'FontSize', 16, 'FontWeight', 'bold');
+    legend('Location', 'best'); grid on; ylim(ylim_col1);
+    
+    nexttile(2); hold on; set(gca, 'FontSize', 14);
+    for tr = 1:size(X_bef_500, 3)
+        trace_c3 = tr_500_bc(:, tr);
+        if bad_tr_500(tr)
+            plot(time_s, trace_c3, 'Color', [0.9 0.2 0.2 0.6], 'LineWidth', 1.5, 'HandleVisibility', 'off');
+        else
+            plot(time_s, trace_c3, 'Color', [0.6 0.6 0.6 0.45], 'LineWidth', 0.9, 'HandleVisibility', 'off');
+        end
+    end
+    plot(nan, nan, 'Color', [0.6 0.6 0.6], 'LineWidth', 2, 'DisplayName', 'Kept');
+    plot(nan, nan, 'Color', [0.9 0.2 0.2], 'LineWidth', 2, 'DisplayName', 'Rejected');
+    yline(d_thresh_500, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(-d_thresh_500, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+    xlim([-0.2, 0.8]); ylim(ylim_col2);
+    xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
+    title(sprintf('Rand 500 Traces (\\pm%g \\muV Bounds, %.2f MAD)', d_thresh_500, mad_500), 'FontSize', 16, 'FontWeight', 'bold');
+    legend('Location', 'best'); grid on;
+    
+    nexttile(3); hold on; set(gca, 'FontSize', 14);
+    xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+    yline(0, 'k:', 'HandleVisibility', 'off');
+    plot(time_s, erp_500_bef, '--', 'Color', [0.9 0.6 0.1 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand 500 (Before)');
+    plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.0, 'DisplayName', 'Cued P1 (Cleaned)');
+    plot(time_s, erp_500_f10, ':', 'Color', [0.55 0.35 0.0], 'LineWidth', 2.2, 'DisplayName', 'Rand 500 (Trials 1-10 Ref)');
+    plot(time_s, erp_500_aft, '-', 'Color', [0.9 0.6 0.1], 'LineWidth', 2.5, 'DisplayName', 'Rand 500 (Cleaned)');
+    xlim([-0.2, 0.8]); ylim(ylim_col3);
+    xlabel('Time (s)'); ylabel('Voltage (\muV)');
+    title(sprintf('S%d C3 ERP: Rand 500', s), 'FontSize', 16, 'FontWeight', 'bold');
+    legend('Location', 'best'); grid on;
+
+    % ================= ROW 2: RAND NULL =================
+    nexttile(4); hold on; set(gca, 'FontSize', 14);
+    bad_tr_mis = screening_stats(s).P3_missing.bad_trials;
+    tr_idx_mis = 1:length(bad_tr_mis);
+    
+    plot(tr_idx_mis, drift_v_mis, 'b-o', 'LineWidth', 1.5, 'DisplayName', '|32-Ch Drift| (\muV)');
+    plot(tr_idx_mis, sat_v_mis, 'k-s', 'LineWidth', 1.5, 'DisplayName', '|32-Ch Peak| (\muV)');
+    if any(bad_tr_mis)
+        plot(tr_idx_mis(bad_tr_mis), sat_v_mis(bad_tr_mis), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'DisplayName', 'Rejected');
+        plot(tr_idx_mis(bad_tr_mis), drift_v_mis(bad_tr_mis), 'rx', 'MarkerSize', 10, 'LineWidth', 2.5, 'HandleVisibility', 'off');
+    end
+    yline(d_thresh_mis, 'b--', sprintf('Drift Thresh (%g \\muV)', d_thresh_mis), 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(sat_thresh_uV, 'r--', sprintf('Sat Thresh (%g \\muV)', sat_thresh_uV), 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    xlabel('Trial Index (Rand Null)'); ylabel('32-Ch |Amplitude / Drift| (\muV)');
+    title(sprintf('Rand Null 32-Ch Screening (Rej: %d/%d)', sum(bad_tr_mis), length(bad_tr_mis)), 'FontSize', 16, 'FontWeight', 'bold');
+    legend('Location', 'best'); grid on; ylim(ylim_col1);
+    
+    nexttile(5); hold on; set(gca, 'FontSize', 14);
+    for tr = 1:size(X_bef_mis, 3)
+        trace_c3 = tr_mis_bc(:, tr);
+        if bad_tr_mis(tr)
+            plot(time_s, trace_c3, 'Color', [0.9 0.2 0.2 0.6], 'LineWidth', 1.5, 'HandleVisibility', 'off');
+        else
+            plot(time_s, trace_c3, 'Color', [0.6 0.6 0.6 0.45], 'LineWidth', 0.9, 'HandleVisibility', 'off');
+        end
+    end
+    plot(nan, nan, 'Color', [0.6 0.6 0.6], 'LineWidth', 2, 'DisplayName', 'Kept');
+    plot(nan, nan, 'Color', [0.9 0.2 0.2], 'LineWidth', 2, 'DisplayName', 'Rejected');
+    yline(d_thresh_mis, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    yline(-d_thresh_mis, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+    xlim([-0.2, 0.8]); ylim(ylim_col2);
+    xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
+    title(sprintf('Rand Null Traces (\\pm%g \\muV Bounds, %.2f MAD)', d_thresh_mis, mad_mis), 'FontSize', 16, 'FontWeight', 'bold');
+    legend('Location', 'best'); grid on;
+    
+    nexttile(6); hold on; set(gca, 'FontSize', 14);
+    xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+    yline(0, 'k:', 'HandleVisibility', 'off');
+    plot(time_s, erp_mis_bef, '--', 'Color', [0.2 0.7 0.9 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand Null (Before)');
+    plot(time_s, erp_p1_clean, 'k-', 'LineWidth', 2.0, 'DisplayName', 'Cued P1 (Cleaned)');
+    plot(time_s, erp_mis_f10, ':', 'Color', [0.0 0.35 0.65], 'LineWidth', 2.2, 'DisplayName', 'Rand Null (Trials 1-10 Ref)');
+    plot(time_s, erp_mis_aft, '-', 'Color', [0.2 0.7 0.9], 'LineWidth', 2.5, 'DisplayName', 'Rand Null (Cleaned)');
+    xlim([-0.2, 0.8]); ylim(ylim_col3);
+    xlabel('Time (s)'); ylabel('Voltage (\muV)');
+    title(sprintf('S%d C3 ERP: Rand Null', s), 'FontSize', 16, 'FontWeight', 'bold');
+    legend('Location', 'best'); grid on;
+    
+    sgtitle(sprintf('Subject %d Unified 32-Ch Trial Screening | Rand 500: %g \\muV, %.2f MAD | Rand Null: %g \\muV, %.2f MAD', ...
+        s, d_thresh_500, mad_500, d_thresh_mis, mad_mis), 'FontSize', 18, 'FontWeight', 'bold');
+    
+    fig_png_path = fullfile(screening_fig_dir, sprintf('Subject_%02d_Trial_Screening_32Ch_600ppi.png', s));
+    try
+        exportgraphics(fig_verify, fig_png_path, 'Resolution', 600);
+    catch
+        print(fig_verify, fig_png_path, '-dpng', '-r600');
+    end
+    close(fig_verify);
+    fprintf('  -> Saved 600 ppi PNG: %s\n', fig_png_path);
+end
+save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening_stats', 'Outlier_Summary_Table');
 
 %% =========================================================================
 %% MASTER LOOP: PROCESS FREQUENCY BANDS (STRICTLY P1 REFERENCE)
@@ -529,17 +701,16 @@ for band_idx = 1:length(bands_to_process)
     if ~exist(group_dir, 'dir'), mkdir(group_dir); end
 
     % ------------------------------------------------------------------
-    %% CHECKPOINT 1: Group Eigenbasis Evaluation
+    %% CHECKPOINT 1: Group Eigenbasis Evaluation (Valid Non-NaN Trials)
     % ------------------------------------------------------------------
     Xi_all_subjs = nan(cfg.num_ch, cfg.m, num_subjects);
     lam_frac_all = nan(cfg.m, num_subjects);
     gap_all      = nan(cfg.m - 1, num_subjects);
     lam_full_all = nan(cfg.num_ch, num_subjects); 
     
-    % --- Inside CHECKPOINT 1 (replace lines 494-504) ---
     for s = 1:num_subjects
         raw_ref = current_data.(cfg.ref_cond){s};
-        valid_ref_idx = find(~isnan(squeeze(raw_ref(chan_idx, 1, :))));
+        valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
         
         rng(cfg.seed + s);
         perm = valid_ref_idx(randperm(length(valid_ref_idx)));
@@ -548,7 +719,6 @@ for band_idx = 1:length(bands_to_process)
         
         erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
         bA   = mean(erpA(:, iBase), 2, 'omitnan');
-        C_A_cent = covCentered(erpA(:, iWin), bA);
         C_A_cent = covCentered(erpA(:, iWin), bA);
         
         [V, D] = eig(C_A_cent, 'vector');
@@ -613,7 +783,7 @@ for band_idx = 1:length(bands_to_process)
     saveas(figC, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); close(figC);
 
     % ------------------------------------------------------------------
-    %% PROJECTIONS: Individual Component Evaluation (All Subjects/Reps)
+    %% PROJECTIONS: Individual Component Evaluation (Valid Non-NaN Trials)
     % ------------------------------------------------------------------
     G_splits     = nan(length(cfg.all_conds), cfg.nRep, num_subjects);
     log_r_splits = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
@@ -632,7 +802,7 @@ for band_idx = 1:length(bands_to_process)
             rng(cfg.seed + rep + subj*1000); 
             
             raw_ref = current_data.(cfg.ref_cond){subj};
-            valid_ref_idx = find(~isnan(squeeze(raw_ref(chan_idx, 1, :))));
+            valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
             perm = valid_ref_idx(randperm(length(valid_ref_idx)));
             n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
             iA = perm(1:n_half);
@@ -680,7 +850,7 @@ for band_idx = 1:length(bands_to_process)
                     Xk = XB; bk = bB; idx_k = iB;
                     erp_k = erpB; 
                 else
-                    valid_cond_idx = find(~isnan(squeeze(raw_cond(chan_idx, 1, :))));
+                    valid_cond_idx = find(~isnan(squeeze(raw_cond(1, 1, :))));
                     n_pick = min(cfg.nTrialMatch, length(valid_cond_idx));
                     idx_k  = valid_cond_idx(randperm(length(valid_cond_idx), n_pick));
                     erp_k  = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
@@ -992,7 +1162,7 @@ for band_idx = 1:length(bands_to_process)
         close(figChk2);
         
         % -----------------------------------------------------------------
-        % CHECKPOINT 3a: FULL SUBSPACE TRAJECTORIES 
+        % CHECKPOINT 3a: FULL SUBSPACE TRAJECTORIES (COHORT-FITTED Y-LIMITS)
         % -----------------------------------------------------------------
         grp_mean_traj = squeeze(mean(subj_mean_traj(:, :, :, curr_subjs), 4, 'omitnan')); 
         grp_sem_traj  = squeeze(std(subj_mean_traj(:, :, :, curr_subjs), 0, 4, 'omitnan')) ./ sqrt(curr_n);
@@ -1009,11 +1179,15 @@ for band_idx = 1:length(bands_to_process)
         for k_idx = 1:num_sig
             k = sig_components(k_idx);
             
-            % Compute synchronized y-limits between Group A (left) and Group B (right) for this cohort & direction k
-            row_vals_up = reshape(grp_mean_traj(:, k, time_mask_full) + grp_sem_traj(:, k, time_mask_full), [], 1);
-            row_vals_dn = reshape(grp_mean_traj(:, k, time_mask_full) - grp_sem_traj(:, k, time_mask_full), [], 1);
-            cp3a_min_y  = max(0, min(row_vals_dn) * 0.95);
-            cp3a_max_y  = max(row_vals_up) * 1.05;
+            % Fit y-limits to this cohort's own Group A + Group B trajectories for direction k
+            row_mean_k  = grp_mean_traj(:, k, time_mask_full);
+            row_sem_k   = grp_sem_traj(:, k, time_mask_full);
+            row_upper   = row_mean_k + row_sem_k;
+            row_lower   = row_mean_k - row_sem_k;
+            
+            cp3a_min_y  = max(0, min(row_lower(:)) * 0.90);
+            cp3a_max_y  = max(row_upper(:)) * 1.20; % Expanded headroom to 20% to fully display SEM patches
+            
             if isempty(cp3a_max_y) || isnan(cp3a_max_y) || cp3a_max_y <= cp3a_min_y
                 cp3a_min_y = 0; cp3a_max_y = 10;
             end
