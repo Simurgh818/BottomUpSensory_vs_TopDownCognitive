@@ -222,19 +222,33 @@ title('3. [-1.0 to -0.5 s] Baseline (500 ms)', 'FontSize', 18);
 xlabel('Time (s)', 'FontSize', 18);
 
 
+% Locate C3, C4, and F3 indices
+chan_c3 = 14; chan_c4 = 18; chan_f3 = 4;
+if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+    m_c3 = find(strcmpi({EEG.chanlocs.labels}, 'C3'), 1);
+    m_c4 = find(strcmpi({EEG.chanlocs.labels}, 'C4'), 1);
+    m_f3 = find(strcmpi({EEG.chanlocs.labels}, 'F3'), 1);
+    if ~isempty(m_c3), chan_c3 = m_c3; end
+    if ~isempty(m_c4), chan_c4 = m_c4; end
+    if ~isempty(m_f3), chan_f3 = m_f3; end
+end
+chan_idx  = chan_c3;
+roi_chans = unique([chan_c3, chan_c4, chan_f3], 'stable');
+
 %% =========================================================================
-%% 5B. 2D GRID-SEARCH OPTIMIZATION (TARGETING FIRST 10 TRIALS PER CONDITION)
+%% 5B. 2D GRID-SEARCH OPTIMIZATION ({C3, C4, F3 + 32-CH MEDIAN}, [-0.5, 2.4s])
 %% =========================================================================
-cfg = struct('win', [0 1.0], 'base', [-1.0 -0.8], 'erp_win', [-0.2 0.8], 'm', 6);
+cfg = struct('win', [0 1.0], 'base', [-1.0 -0.5], 'erp_win', [-0.2 0.8], 'm', 6);
 iWin      = time_s >= cfg.win(1)     & time_s < cfg.win(2);
 iBase     = time_s >= cfg.base(1)    & time_s < cfg.base(2);
 iErpWin   = time_s >= cfg.erp_win(1) & time_s <= cfg.erp_win(2);
-iZeroZone = time_s >= -0.200         & time_s <= 0.200; % Peristimulus baseline window [-0.2, 0.2] s
-iPreStim  = time_s >= -0.200         & time_s <= 0.000; % Expectation ERP window [-0.2, 0.0] s
+iFullWin  = time_s >= -0.500         & time_s <= 2.400; % Full post-baseline trajectory window [-0.5, 2.4 s]
+iZeroZone = time_s >= -0.200         & time_s <= 0.200;
+iPreStim  = time_s >= -0.200         & time_s <= 0.000;
 
 cond_keys     = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
-smooth_pts    = round(0.100 * 500); % 100 ms moving average for sustained drift
-sat_thresh_uV = 100;                % Hard peak-amplitude ceiling: +/- 100 uV
+smooth_pts    = round(0.100 * 500);
+sat_thresh_uV = 100;
 
 % --- 1. PRE-COMPUTE TRIAL METRICS FOR ALL TARGET SUBJECTS & CONDITIONS ---
 precomp = struct();
@@ -254,27 +268,28 @@ for t_idx = 1:length(target_subjs)
             epoch_bc = epoch - mean(epoch(:, iBase), 2);
             X_bc_all(:, :, tr) = epoch_bc;
             
-            % Bidirectional C3 Drift: Max |100ms-smoothed voltage| in [-0.2, 0.8] s
-            c3_smooth = movmean(epoch_bc(chan_idx, iErpWin), smooth_pts);
-            trial_c3_drift(tr) = max(abs(c3_smooth));
+            % Full-epoch [-0.5, 2.4s] Drift across {C3, C4, F3} + 32-Ch Median
+            ch_smooth_all = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
+            trial_c3_drift(tr) = max(max(ch_smooth_all(roi_chans)), median(ch_smooth_all));
             
-            % Peak Absolute Amplitude on C3 in [-0.2, 0.8] s
-            trial_max_amp(tr) = max(abs(epoch_bc(chan_idx, iErpWin)));
+            % Full-epoch [-0.5, 2.4s] Peak Amplitude across {C3, C4, F3} + 32-Ch Median
+            ch_peak_all = max(abs(epoch_bc(:, iFullWin)), [], 2);
+            trial_max_amp(tr) = max(max(ch_peak_all(roi_chans)), median(ch_peak_all));
         end
         
         precomp(s).(c_name).X_bc_all       = X_bc_all;
         precomp(s).(c_name).trial_c3_drift = trial_c3_drift;
         precomp(s).(c_name).trial_max_amp  = trial_max_amp;
-        precomp(s).(c_name).c3_traces      = squeeze(X_bc_all(chan_idx, :, :)); % [nTime x nTr]
+        precomp(s).(c_name).c3_traces      = squeeze(X_bc_all(chan_idx, :, :));
     end
 end
 
-% --- 2. 2D GRID SEARCH TARGETING FIRST 10 TRIALS OF EACH CONDITION ---
-opt_mode    = 'per_subject';   % 'per_subject' or 'global'
-cfg = struct('win', [0 1.0], 'base', [-1.0 -0.5], 'erp_win', [-0.2 0.8], 'm', 6);
-drift_grid  = 25 : 1 : 60;     % Raised minimum drift threshold to 25 uV
-mad_grid    = 3.5 : 0.25 : 10; % Raised minimum MAD multiplier to 3.5
-min_keep_p3 = 20;              % Require at least 20/30 (2/3) kept trials
+% --- 2. 2D GRID SEARCH PARAMETERS ---
+opt_mode    = 'per_subject';
+drift_grid  = 25 : 1 : 50;     % Updated drift threshold range: 25 to 50 uV
+mad_grid    = 3.5 : 0.25 : 10; % Updated MAD multiplier range: 3.5 to 10.0
+min_keep_p3 = 20;              % Require >= 20/30 (2/3) kept trials
+ref_idx_10  = 1:10;
 
 cost_surface   = inf(length(drift_grid), length(mad_grid), length(target_subjs));
 null_diff_f10  = nan(length(drift_grid), length(mad_grid), length(target_subjs));
@@ -620,6 +635,7 @@ for t_idx = 1:length(target_subjs)
     title(sprintf('Rand 500 Screening (Rej: %d/%d)', sum(bad_tr_500), length(bad_tr_500)), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on; ylim(ylim_col1);
     
+    % --- ROW 1, COLUMN 2: RAND 500 TRACES ---
     nexttile(2); hold on; set(gca, 'FontSize', 14);
     for tr = 1:size(X_bef_500, 3)
         trace_c3 = tr_500_bc(:, tr);
@@ -631,10 +647,11 @@ for t_idx = 1:length(target_subjs)
     end
     plot(nan, nan, 'Color', [0.6 0.6 0.6], 'LineWidth', 2, 'DisplayName', 'Kept');
     plot(nan, nan, 'Color', [0.9 0.2 0.2], 'LineWidth', 2, 'DisplayName', 'Rejected');
+    yline(0, 'k:', 'LineWidth', 1.2, 'HandleVisibility', 'off'); % 0 uV baseline reference
     yline(curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     yline(-curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-    xlim([-0.2, 0.8]); ylim(ylim_col2);
+    xlim([-0.5, 0.8]); ylim(ylim_col2); % <--- Updated to start at -0.5 s
     xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
     title(sprintf('Rand 500 Traces (\\pm%g \\muV Bounds)', curr_drift_thresh), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
@@ -668,6 +685,7 @@ for t_idx = 1:length(target_subjs)
     title(sprintf('Rand Null Screening (Rej: %d/%d)', sum(bad_tr_mis), length(bad_tr_mis)), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on; ylim(ylim_col1);
     
+    % --- ROW 2, COLUMN 2: RAND NULL TRACES ---
     nexttile(5); hold on; set(gca, 'FontSize', 14);
     for tr = 1:size(X_bef_mis, 3)
         trace_c3 = tr_mis_bc(:, tr);
@@ -679,10 +697,11 @@ for t_idx = 1:length(target_subjs)
     end
     plot(nan, nan, 'Color', [0.6 0.6 0.6], 'LineWidth', 2, 'DisplayName', 'Kept');
     plot(nan, nan, 'Color', [0.9 0.2 0.2], 'LineWidth', 2, 'DisplayName', 'Rejected');
+    yline(0, 'k:', 'LineWidth', 1.2, 'HandleVisibility', 'off'); % 0 uV baseline reference
     yline(curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     yline(-curr_drift_thresh, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-    xlim([-0.2, 0.8]); ylim(ylim_col2);
+    xlim([-0.5, 0.8]); ylim(ylim_col2); % <--- Updated to start at -0.5 s
     xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
     title(sprintf('Rand Null Traces (\\pm%g \\muV Bounds)', curr_drift_thresh), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
@@ -796,7 +815,7 @@ slide14_out_path = 'C:\Users\sdabiri\OneDrive - Georgia Institute of Technology\
 if exist(csv_table_path, 'file')
     Outlier_Summary_Table = readtable(csv_table_path);
     
-    fig_slide14 = figure('Position', [50, 50, 1800, 700], 'Name', 'Slide 14: Outlier Table', ...
+    fig_slide14 = figure('Position', [50, 50, 1700, 700], 'Name', 'Slide 14: Outlier Table', ...
         'Color', 'w', 'MenuBar', 'none', 'ToolBar', 'none');
 
     % Select essential display columns
