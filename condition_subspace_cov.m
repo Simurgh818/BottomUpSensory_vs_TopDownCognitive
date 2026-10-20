@@ -577,7 +577,7 @@ for s = all_target_subjs
     yline(d_thresh_500, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     yline(-d_thresh_500, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-    xlim([-0.5, 0.8]); ylim(ylim_col2); % Starts at -0.5 s post-baseline
+    xlim([-0.5, 0.8]); ylim(ylim_col2);
     xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
     title(sprintf('Rand 500 Traces (\\pm%g \\muV Bounds, %.2f MAD)', d_thresh_500, mad_500), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
@@ -625,7 +625,7 @@ for s = all_target_subjs
     yline(d_thresh_mis, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     yline(-d_thresh_mis, 'b--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-    xlim([-0.5, 0.8]); ylim(ylim_col2); % Starts at -0.5 s post-baseline
+    xlim([-0.5, 0.8]); ylim(ylim_col2);
     xlabel('Time (s)'); ylabel('C3 Voltage (\muV)');
     title(sprintf('Rand Null Traces (\\pm%g \\muV Bounds, %.2f MAD)', d_thresh_mis, mad_mis), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
@@ -658,7 +658,7 @@ end
 save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening_stats', 'Outlier_Summary_Table', 'subj_excluded_2_3');
 
 %% =========================================================================
-%% MASTER LOOP: PROCESS FREQUENCY BANDS (WITH FULL SUMMARY TABLE PRINTOUTS)
+%% MASTER LOOP: PROCESS FREQUENCY BANDS (CHECKPOINTS 1, 2, 3a, 3b + TABLES)
 %% =========================================================================
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
@@ -989,7 +989,7 @@ for band_idx = 1:length(bands_to_process)
     close(figC);
 
     % ------------------------------------------------------------------
-    %% CHECKPOINT 2 & 3: COHORT DEFINITIONS, SUMMARY TABLES & TRAJECTORIES
+    %% CHECKPOINT 2, 3a & 3b: COHORT DEFINITIONS, TABLES & FIGURES
     % ------------------------------------------------------------------
     subj_mean_log_r = squeeze(mean(log_r_splits, 3, 'omitnan')); 
     subj_mean_traj  = squeeze(mean(traj_splits, 4, 'omitnan'));  
@@ -1004,13 +1004,41 @@ for band_idx = 1:length(bands_to_process)
                     sprintf('Other Subjs, n=%d', length(g2_subjs))};
     num_groups   = length(subj_groups);
     
-    % FIXED: Evaluate y-limits across the FULL trajectory window (including the -0.35s auditory peak)
-    time_mask_full = true(size(t_centers));
+    time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
+    time_mask_full = true(size(t_centers)); % Full trajectory including -0.35s auditory ERP peak
+    
+    global_clims = zeros(cfg.m, 1);
+    all_log_r    = [];
+    for k = 1:cfg.m
+        max_c = 0;
+        for g_idx = 1:num_groups
+            grp_s = subj_groups{g_idx};
+            if isempty(grp_s), continue; end
+            Xi_grp_c = mean(Xi_aligned(:, :, grp_s), 3, 'omitnan');
+            Xi_grp_c = Xi_grp_c ./ (vecnorm(Xi_grp_c) + eps);
+            for c_idx = 1:length(cfg.all_conds)
+                cond = cfg.all_conds{c_idx};
+                erp_grp = mean(cat(3, current_data.(cond){grp_s}), 3, 'omitnan');
+                max_c = max(max_c, max(abs(Xi_grp_c(:, k)' * erp_grp)) * 0.5);
+                if k == 1
+                    g_lr_m = mean(subj_mean_log_r(c_idx, :, grp_s), 3, 'omitnan');
+                    g_lr_s = std(subj_mean_log_r(c_idx, :, grp_s), 0, 3, 'omitnan') ./ sqrt(length(grp_s));
+                    all_log_r = [all_log_r; g_lr_m(:) + g_lr_s(:); g_lr_m(:) - g_lr_s(:)];
+                end
+            end
+        end
+        if max_c <= 0 || isnan(max_c), max_c = 10; end
+        global_clims(k) = max_c;
+    end
+    if isempty(all_log_r), all_log_r = [-1.5, 1.5]; end
+    cp2_y_min = min(-1.5, floor(min(all_log_r) * 1.15));
+    cp2_y_max = max( 1.5, ceil(max(all_log_r) * 1.15));
 
     for g = 1:num_groups
         curr_subjs = subj_groups{g};
         curr_n = length(curr_subjs);
         g_name = subj_group_names{g};
+        cohort_disp = strrep(g_name, '_', ' ');
         if curr_n == 0, continue; end
         
         grp_mean_log_r = mean(subj_mean_log_r(:, :, curr_subjs), 3, 'omitnan');      
@@ -1073,7 +1101,53 @@ for band_idx = 1:length(bands_to_process)
             end
         end
         
-        % CHECKPOINT 3a TRAJECTORIES (FULL-WINDOW Y-LIMITS WITH 15% HEADROOM ABOVE AUDITORY PEAK)
+        % -----------------------------------------------------------------
+        % CHECKPOINT 2: SUBSPACE REDISTRIBUTION PER BAND & COHORT
+        % -----------------------------------------------------------------
+        figChk2 = figure('Position', [100, 100, 1400, 600], 'Visible', 'off');
+        tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
+        
+        nexttile; hold on; set(gca, 'FontSize', 18);
+        yline(0, 'k--', 'LineWidth', 1.8, 'DisplayName', sprintf('Ceiling (%s B)', cfg.ref_cond));
+        colors_A = {[0.850 0.325 0.098], [0.929 0.694 0.125], [0.494 0.184 0.556]};
+        for i = 1:length(cfg.group_A)
+            c_idx = find(strcmp(cfg.all_conds, cfg.group_A{i}));
+            if isempty(c_idx), continue; end
+            col_idx = mod(i-1, length(colors_A)) + 1;
+            errorbar(1:cfg.m, grp_mean_log_r(c_idx, :), grp_se_log_r(c_idx, :), '-s', ...
+                'Color', colors_A{col_idx}, 'MarkerFaceColor', colors_A{col_idx}, ...
+                'LineWidth', 2.5, 'MarkerSize', 8, 'DisplayName', clean_name(cfg.group_A{i}));
+        end
+        grid on; xlim([0.8, cfg.m + 0.2]); xticks(1:cfg.m); ylim([cp2_y_min, cp2_y_max]);
+        xlabel('Spatial Direction Index', 'FontSize', 20); ylabel('log(r_i) \pm SEM', 'FontSize', 20);
+        title(sprintf('Group A: Stimulus Delivered (%s)', cohort_disp), 'FontSize', 20, 'FontWeight', 'bold');
+        legend('Location', 'best', 'FontSize', 14);
+        
+        nexttile; hold on; set(gca, 'FontSize', 18);
+        yline(0, 'k--', 'LineWidth', 1.8, 'DisplayName', sprintf('Ceiling (%s B)', cfg.ref_cond));
+        colors_B = {[0.466 0.674 0.188], [0.301 0.745 0.933], [0.494 0.184 0.556]};
+        grpB_sub = intersect({'P2_2000', 'P3_missing'}, cfg.group_B, 'stable');
+        for i = 1:length(grpB_sub)
+            c_idx = find(strcmp(cfg.all_conds, grpB_sub{i}));
+            if isempty(c_idx), continue; end
+            col_idx = mod(i-1, length(colors_B)) + 1;
+            errorbar(1:cfg.m, grp_mean_log_r(c_idx, :), grp_se_log_r(c_idx, :), '-s', ...
+                'Color', colors_B{col_idx}, 'MarkerFaceColor', colors_B{col_idx}, ...
+                'LineWidth', 2.5, 'MarkerSize', 8, 'DisplayName', clean_name(grpB_sub{i}));
+        end
+        grid on; xlim([0.8, cfg.m + 0.2]); xticks(1:cfg.m); ylim([cp2_y_min, cp2_y_max]);
+        xlabel('Spatial Direction Index', 'FontSize', 20); ylabel('log(r_i) \pm SEM', 'FontSize', 20);
+        title(sprintf('Group B: Omission (%s)', cohort_disp), 'FontSize', 20, 'FontWeight', 'bold');
+        legend('Location', 'best', 'FontSize', 14);
+        sgtitle(sprintf('Subspace Redistribution: %s %s', band_name, cfg.ref_cond), 'FontSize', 24, 'FontWeight', 'bold');
+        
+        save_base_chk2 = fullfile(group_dir, sprintf('Checkpoint2_Redistribution_%s', g_name));
+        try saveas(figChk2, [save_base_chk2, '.svg']); saveas(figChk2, [save_base_chk2, '.png']); catch, end
+        close(figChk2);
+
+        % -----------------------------------------------------------------
+        % CHECKPOINT 3a: TRAJECTORIES (FULL-WINDOW Y-LIMITS + 15% HEADROOM)
+        % -----------------------------------------------------------------
         grp_mean_traj = squeeze(mean(subj_mean_traj(:, :, :, curr_subjs), 4, 'omitnan')); 
         grp_sem_traj  = squeeze(std(subj_mean_traj(:, :, :, curr_subjs), 0, 4, 'omitnan')) ./ sqrt(curr_n);
         
@@ -1090,7 +1164,7 @@ for band_idx = 1:length(bands_to_process)
             row_lower  = row_mean_k - row_sem_k;
             
             cp3a_min_y = max(0, min(row_lower(:)) * 0.90);
-            cp3a_max_y = max(row_upper(:)) * 1.15; % 15% headroom above highest peak (including -0.35 s auditory ERP)
+            cp3a_max_y = max(row_upper(:)) * 1.15; % 15% headroom above highest peak (including -0.35s auditory ERP)
             if isempty(cp3a_max_y) || isnan(cp3a_max_y) || cp3a_max_y <= cp3a_min_y
                 cp3a_min_y = 0; cp3a_max_y = 10;
             end
@@ -1105,7 +1179,6 @@ for band_idx = 1:length(bands_to_process)
                 plot(t_centers, y_val_ref, 'k-', 'LineWidth', 2, 'DisplayName', sprintf('Reference (%s)', clean_name(cfg.ref_cond)));
             end
             
-            colors_A = {[0.850 0.325 0.098], [0.929 0.694 0.125], [0.494 0.184 0.556]};
             for i = 1:length(cfg.group_A)
                 c_idx = find(strcmp(cfg.all_conds, cfg.group_A{i}));
                 if isempty(c_idx), continue; end
@@ -1128,7 +1201,6 @@ for band_idx = 1:length(bands_to_process)
                 plot(t_centers, y_val_ref, 'k-', 'LineWidth', 2, 'DisplayName', sprintf('Reference (%s)', clean_name(cfg.ref_cond)));
             end
             
-            colors_B = {[0.466 0.674 0.188], [0.301 0.745 0.933], [0.494 0.184 0.556]};
             for i = 1:length(cfg.group_B)
                 c_idx = find(strcmp(cfg.all_conds, cfg.group_B{i}));
                 if isempty(c_idx), continue; end
@@ -1142,11 +1214,134 @@ for band_idx = 1:length(bands_to_process)
             if k_idx == 1, lgdB = legend('Location', 'best'); lgdB.FontSize = 18; end
             xlim([t_centers(1), t_centers(end)]); ylim([cp3a_min_y, cp3a_max_y]);
         end
-        sgtitle(sprintf('Subspace Trajectories: %s (%s, n=%d)', band_name, strrep(g_name, '_', ' '), curr_n), 'FontSize', 24, 'FontWeight', 'bold');
+        sgtitle(sprintf('Subspace Trajectories: %s (%s, n=%d)', band_name, cohort_disp, curr_n), 'FontSize', 24, 'FontWeight', 'bold');
         
         save_base_chk3 = fullfile(group_dir, sprintf('Checkpoint3a_Trajectories_%s', g_name));
         try saveas(figChk3, [save_base_chk3, '.svg']); saveas(figChk3, [save_base_chk3, '.png']); catch, end
         close(figChk3);
+
+        % -----------------------------------------------------------------
+        % CHECKPOINT 3b: SPATIAL RECONFIGURATION (TOPOPLOT + ZOOMED TRACE)
+        % -----------------------------------------------------------------
+        iTopo   = time_s >= 0.400 & time_s <= 0.600;
+        Xi_grp  = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
+        Xi_grp  = Xi_grp ./ (vecnorm(Xi_grp) + eps);
+        
+        conds_3b_A  = [{cfg.ref_cond}, cfg.group_A];
+        colors_3b_A = {[0 0 0], [0.850 0.325 0.098], [0.929 0.694 0.125]};
+        
+        conds_3b_B  = [{cfg.ref_cond}, intersect({'P2_2000', 'P3_missing'}, cfg.group_B, 'stable')];
+        colors_3b_B = {[0 0 0], [0.466 0.674 0.188], [0.301 0.745 0.933]};
+        
+        for k_idx = 1:num_sig
+            k = sig_components(k_idx);
+            
+            z_mean = grp_mean_traj(:, k, time_mask_zoom);
+            z_sem  = grp_sem_traj(:, k, time_mask_zoom);
+            z_ymax = max(z_mean(:) + z_sem(:)) * 1.15;
+            if isempty(z_ymax) || isnan(z_ymax) || z_ymax <= 0, z_ymax = 10; end
+            ylim_3b = [0, z_ymax];
+            
+            % --- 1. GROUP A SPATIAL RECONFIGURATION ---
+            fig3bA = figure('Position', [100, 100, 1200, 900], 'Visible', 'off');
+            nRowsA = length(conds_3b_A);
+            for r_i = 1:nRowsA
+                c_name = conds_3b_A{r_i};
+                c_idx  = find(strcmp(cfg.all_conds, c_name));
+                col_r  = colors_3b_A{min(r_i, length(colors_3b_A))};
+                
+                subplot(nRowsA, 4, (r_i - 1) * 4 + 1);
+                erp_c = mean(cat(3, current_data.(c_name){curr_subjs}), 3, 'omitnan');
+                b_c   = mean(erp_c(:, iBase), 2, 'omitnan');
+                proj_amp = mean(Xi_grp(:, k)' * (erp_c(:, iTopo) - b_c), 2, 'omitnan');
+                topo_vec = Xi_grp(:, k) * proj_amp;
+                
+                if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+                    topoplot(topo_vec, EEG.chanlocs, 'maplimits', [-global_clims(k), global_clims(k)], ...
+                        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+                    colormap(gca, 'jet');
+                    cb = colorbar; cb.Label.String = 'Proj. Amp'; cb.FontSize = 12;
+                end
+                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(c_name)), 'FontSize', 16, 'FontWeight', 'bold');
+                
+                subplot(nRowsA, 4, (r_i - 1) * 4 + (2:4)); hold on; set(gca, 'FontSize', 16);
+                patch([0 1.0 1.0 0], [ylim_3b(1) ylim_3b(1) ylim_3b(2) ylim_3b(2)], ...
+                    [0.9 0.9 0.9], 'FaceAlpha', 0.5, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                xline(0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+                
+                y_v = reshape(grp_mean_traj(c_idx, k, time_mask_zoom), 1, []);
+                y_s = reshape(grp_sem_traj(c_idx, k, time_mask_zoom), 1, []);
+                t_z = t_centers(time_mask_zoom);
+                
+                fill([t_z, fliplr(t_z)], max(0, [y_v + y_s, fliplr(y_v - y_s)]), ...
+                    col_r, 'FaceAlpha', 0.25, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                plot(t_z, y_v, '-', 'Color', col_r, 'LineWidth', 2.5);
+                
+                xlim([-0.1, 1.0]); ylim(ylim_3b); grid on;
+                ylabel('Proj. Var', 'FontSize', 14, 'FontWeight', 'bold');
+                if r_i == nRowsA
+                    xlabel('Time (s)', 'FontSize', 16, 'FontWeight', 'bold');
+                else
+                    xticklabels({});
+                end
+            end
+            sgtitle(sprintf('Group A: Spatial Reconfiguration (\\xi_%d) [%s]', k, cohort_disp), ...
+                'FontSize', 20, 'FontWeight', 'bold');
+            
+            save_3bA = fullfile(group_dir, sprintf('Checkpoint3b_GroupA_Xi%d_%s', k, g_name));
+            try saveas(fig3bA, [save_3bA, '.svg']); saveas(fig3bA, [save_3bA, '.png']); catch, end
+            close(fig3bA);
+            
+            % --- 2. GROUP B SPATIAL RECONFIGURATION ---
+            fig3bB = figure('Position', [100, 100, 1200, 900], 'Visible', 'off');
+            nRowsB = length(conds_3b_B);
+            for r_i = 1:nRowsB
+                c_name = conds_3b_B{r_i};
+                c_idx  = find(strcmp(cfg.all_conds, c_name));
+                col_r  = colors_3b_B{min(r_i, length(colors_3b_B))};
+                
+                subplot(nRowsB, 4, (r_i - 1) * 4 + 1);
+                erp_c = mean(cat(3, current_data.(c_name){curr_subjs}), 3, 'omitnan');
+                b_c   = mean(erp_c(:, iBase), 2, 'omitnan');
+                proj_amp = mean(Xi_grp(:, k)' * (erp_c(:, iTopo) - b_c), 2, 'omitnan');
+                topo_vec = Xi_grp(:, k) * proj_amp;
+                
+                if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+                    topoplot(topo_vec, EEG.chanlocs, 'maplimits', [-global_clims(k), global_clims(k)], ...
+                        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+                    colormap(gca, 'jet');
+                    cb = colorbar; cb.Label.String = 'Proj. Amp'; cb.FontSize = 12;
+                end
+                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(c_name)), 'FontSize', 16, 'FontWeight', 'bold');
+                
+                subplot(nRowsB, 4, (r_i - 1) * 4 + (2:4)); hold on; set(gca, 'FontSize', 16);
+                patch([0 1.0 1.0 0], [ylim_3b(1) ylim_3b(1) ylim_3b(2) ylim_3b(2)], ...
+                    [0.9 0.9 0.9], 'FaceAlpha', 0.5, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                xline(0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+                
+                y_v = reshape(grp_mean_traj(c_idx, k, time_mask_zoom), 1, []);
+                y_s = reshape(grp_sem_traj(c_idx, k, time_mask_zoom), 1, []);
+                t_z = t_centers(time_mask_zoom);
+                
+                fill([t_z, fliplr(t_z)], max(0, [y_v + y_s, fliplr(y_v - y_s)]), ...
+                    col_r, 'FaceAlpha', 0.25, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                plot(t_z, y_v, '-', 'Color', col_r, 'LineWidth', 2.5);
+                
+                xlim([-0.1, 1.0]); ylim(ylim_3b); grid on;
+                ylabel('Proj. Var', 'FontSize', 14, 'FontWeight', 'bold');
+                if r_i == nRowsB
+                    xlabel('Time (s)', 'FontSize', 16, 'FontWeight', 'bold');
+                else
+                    xticklabels({});
+                end
+            end
+            sgtitle(sprintf('Group B: Spatial Reconfiguration (\\xi_%d) [%s]', k, cohort_disp), ...
+                'FontSize', 20, 'FontWeight', 'bold');
+            
+            save_3bB = fullfile(group_dir, sprintf('Checkpoint3b_GroupB_Xi%d_%s', k, g_name));
+            try saveas(fig3bB, [save_3bB, '.svg']); saveas(fig3bB, [save_3bB, '.png']); catch, end
+            close(fig3bB);
+        end
     end 
 end
 
