@@ -171,6 +171,58 @@ time_s = -1.000 + (0:(nPnts - 1)) / 500;
 data_before_screen = data_all_conds.Raw;
 
 %% =========================================================================
+%% 5A. QUICK DIAGNOSTIC: BASELINE COMPARISON (SUBJECT 14)
+%% =========================================================================
+% Quick diagnostic: Compare No Baseline vs [-1.0, -0.8s] vs [-1.0, -0.5s] on Subject 14 P3
+s_diag = 14;
+in_dir_diag = fullfile(input_path, 'P3');
+set_files_diag = dir(fullfile(in_dir_diag, '*.set'));
+names_sorted_diag = sort(cellstr({set_files_diag.name})');
+EEG_test = pop_loadset('filename', names_sorted_diag{s_diag}, 'filepath', in_dir_diag);
+
+% Check what filter history is stored in the .set file
+fprintf('\n--- EEG.history for Subject 14 P3 ---\n');
+disp(EEG_test.history);
+
+X_mis = double(EEG_test.data(:, :, epoch_trials_p3_mis)); % Rand Null (30 trials)
+time_s_diag = -1.000 + (0:(size(X_mis, 2) - 1)) / EEG_test.srate;
+c3_raw = squeeze(X_mis(chan_idx, :, :)); % [nTime x 30]
+
+iBase_200 = time_s_diag >= -1.0 & time_s_diag < -0.8;
+iBase_500 = time_s_diag >= -1.0 & time_s_diag < -0.5;
+
+c3_bc200 = c3_raw - mean(c3_raw(iBase_200, :), 1);
+c3_bc500 = c3_raw - mean(c3_raw(iBase_500, :), 1);
+
+fig_diag2 = figure('Position', [100, 100, 1600, 500], 'Name', 'Baseline Comparison: Subject 14 Rand Null');
+tiledlayout(1, 3, 'TileSpacing', 'compact');
+
+nexttile; 
+plot(time_s_diag, c3_raw, 'Color', [0.5 0.5 0.5 0.5]); hold on;
+plot(time_s_diag, mean(c3_raw, 2), 'k-', 'LineWidth', 2.5);
+xlim([-1.0, 1.0]); grid on; 
+set(gca, 'FontSize', 18); % Increased by 8 pts
+title('1. NO Baseline Subtraction (As-Is in .set)', 'FontSize', 18);
+xlabel('Time (s)', 'FontSize', 18); ylabel('C3 Voltage (\muV)', 'FontSize', 18);
+
+nexttile; 
+plot(time_s_diag, c3_bc200, 'Color', [0.8 0.3 0.3 0.5]); hold on;
+plot(time_s_diag, mean(c3_bc200, 2), 'r-', 'LineWidth', 2.5);
+xlim([-1.0, 1.0]); grid on; 
+set(gca, 'FontSize', 18);
+title('2. [-1.0 to -0.8 s] Baseline (200 ms)', 'FontSize', 18);
+xlabel('Time (s)', 'FontSize', 18);
+
+nexttile; 
+plot(time_s_diag, c3_bc500, 'Color', [0.2 0.5 0.8 0.5]); hold on;
+plot(time_s_diag, mean(c3_bc500, 2), 'b-', 'LineWidth', 2.5);
+xlim([-1.0, 1.0]); grid on; 
+set(gca, 'FontSize', 18);
+title('3. [-1.0 to -0.5 s] Baseline (500 ms)', 'FontSize', 18);
+xlabel('Time (s)', 'FontSize', 18);
+
+
+%% =========================================================================
 %% 5B. 2D GRID-SEARCH OPTIMIZATION (TARGETING FIRST 10 TRIALS PER CONDITION)
 %% =========================================================================
 cfg = struct('win', [0 1.0], 'base', [-1.0 -0.8], 'erp_win', [-0.2 0.8], 'm', 6);
@@ -219,10 +271,10 @@ end
 
 % --- 2. 2D GRID SEARCH TARGETING FIRST 10 TRIALS OF EACH CONDITION ---
 opt_mode    = 'per_subject';   % 'per_subject' or 'global'
-drift_grid  = 16 : 1 : 50;     % Candidate drift thresholds: 16 to 50 uV
-mad_grid    = 2.5 : 0.25 : 10; % Candidate MAD multipliers: 2.5 to 10.0
-min_keep_p3 = 14;              % Minimum kept trials out of 30
-ref_idx_10  = 1:10;            % First 10 trials as condition-specific expectation baseline
+cfg = struct('win', [0 1.0], 'base', [-1.0 -0.5], 'erp_win', [-0.2 0.8], 'm', 6);
+drift_grid  = 25 : 1 : 60;     % Raised minimum drift threshold to 25 uV
+mad_grid    = 3.5 : 0.25 : 10; % Raised minimum MAD multiplier to 3.5
+min_keep_p3 = 20;              % Require at least 20/30 (2/3) kept trials
 
 cost_surface   = inf(length(drift_grid), length(mad_grid), length(target_subjs));
 null_diff_f10  = nan(length(drift_grid), length(mad_grid), length(target_subjs));
@@ -248,6 +300,7 @@ for t_idx = 1:length(target_subjs)
     tr_500 = precomp(s).P3_500.c3_traces;
     
     % Compute condition-specific First-10-Trials Reference ERPs (excluding any >35 uV spike in 1:10)
+    ref_idx_10 = 1:10; % Define first 10 trials as reference
     valid_10_mis = ref_idx_10(d_mis(ref_idx_10) <= 35 & a_mis(ref_idx_10) <= sat_thresh_uV);
     if isempty(valid_10_mis), valid_10_mis = ref_idx_10; end
     erp_mis_f10 = mean(tr_mis(:, valid_10_mis), 2, 'omitnan');
@@ -423,8 +476,6 @@ for t_idx = 1:length(target_subjs)
         EEG_p1.data(:, :, 1:2:EEG_p1.trials) = single(data_all_conds.Raw.P1{s});
         out_p1 = fullfile(input_path, 'P1_cleaned');
         if ~exist(out_p1, 'dir'), mkdir(out_p1); end
-        EEG_p1.icaact = []; % Clear mismatched activity matrix
-        EEG_p1 = eeg_checkset(EEG_p1); % Recalculate internal consistency checks
         pop_saveset(EEG_p1, 'filename', EEG_p1.filename_orig, 'filepath', out_p1);
         
         EEG_p2 = EEG_templates.P2{s};
@@ -432,8 +483,6 @@ for t_idx = 1:length(target_subjs)
         EEG_p2.data(:, :, epoch_trials_p2_2000) = single(data_all_conds.Raw.P2_2000{s});
         out_p2 = fullfile(input_path, 'P2_cleaned');
         if ~exist(out_p2, 'dir'), mkdir(out_p2); end
-        EEG_p2.icaact = []; % Clear mismatched activity matrix
-        EEG_p2 = eeg_checkset(EEG_p2); % Recalculate internal consistency checks
         pop_saveset(EEG_p2, 'filename', EEG_p2.filename_orig, 'filepath', out_p2);
         
         EEG_p3 = EEG_templates.P3{s};
@@ -441,8 +490,6 @@ for t_idx = 1:length(target_subjs)
         EEG_p3.data(:, :, epoch_trials_p3_mis) = single(data_all_conds.Raw.P3_missing{s});
         out_p3 = fullfile(input_path, 'P3_cleaned');
         if ~exist(out_p3, 'dir'), mkdir(out_p3); end
-        EEG_p3.icaact = []; % Clear mismatched activity matrix
-        EEG_p3 = eeg_checkset(EEG_p3); % Recalculate internal consistency checks
         pop_saveset(EEG_p3, 'filename', EEG_p3.filename_orig, 'filepath', out_p3);
     end
 end
@@ -532,13 +579,13 @@ for t_idx = 1:length(target_subjs)
     ylim_col2  = [-col2_bound * 1.05, col2_bound * 1.05];
     
     % Force all sliced erp arrays into strictly 1D column vectors before concatenating
-    v_p1  = erp_p1_clean(iErpWin);
-    v_5b  = erp_500_bef(iErpWin);
-    v_5a  = erp_500_aft(iErpWin);
-    v_5f  = erp_500_f10(iErpWin);
-    v_mb  = erp_mis_bef(iErpWin);
-    v_ma  = erp_mis_aft(iErpWin);
-    v_mf  = erp_mis_f10(iErpWin);
+    v_p1 = erp_p1_clean(iErpWin);
+    v_5b = erp_500_bef(iErpWin);
+    v_5a = erp_500_aft(iErpWin);
+    v_5f = erp_500_f10(iErpWin);
+    v_mb = erp_mis_bef(iErpWin);
+    v_ma = erp_mis_aft(iErpWin);
+    v_mf = erp_mis_f10(iErpWin);
     
     all_erps = [v_p1(:); v_5b(:); v_5a(:); v_5f(:); v_mb(:); v_ma(:); v_mf(:)];
     all_erps = all_erps(~isnan(all_erps));
@@ -654,4 +701,151 @@ for t_idx = 1:length(target_subjs)
     
     sgtitle(sprintf('Subject %d Trial Screening (Drift Thresh = %g \\muV, MAD Mult = %.2f)', ...
         s, curr_drift_thresh, curr_mad_mult), 'FontSize', 18, 'FontWeight', 'bold');
+end
+%% =========================================================================
+%% 8. GENERATE PRESENTATION VISUALS (SLIDES 12, 13, 14)
+%% =========================================================================
+fprintf('\nGenerating High-Resolution Presentation Visuals for Slides 12, 13, and 14...\n');
+
+% 1. Define the output folder for the figures to fix the 'Unrecognized variable' error
+screening_fig_dir = fullfile(base_output_path, 'ch-ch_cov', 'Trial_Screening_Figures');
+if ~exist(screening_fig_dir, 'dir')
+    mkdir(screening_fig_dir);
+end
+
+% -------------------------------------------------------------------------
+% VISUAL 1 (SLIDE 12): 32-Channel Montage & Full-Epoch Evaluation Bracket
+% -------------------------------------------------------------------------
+fig_slide12 = figure('Position', [100, 100, 1400, 550], 'Name', 'Slide 12: Montage & Timeline', 'Color', 'w');
+
+% Use subplot instead of tiledlayout to prevent topoplot Position constraint warnings
+subplot(1, 2, 1);
+if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+    % Draw EEGLAB topoplot showing only electrode locations/labels
+    topoplot([], EEG.chanlocs, 'style', 'blank', 'electrodes', 'labelpoint', 'chaninfo', EEG.chaninfo);
+    title('32-Channel Full-Scalp Guard', 'FontSize', 22, 'FontWeight', 'bold');
+else
+    text(0.5, 0.5, 'EEG.chanlocs missing', 'HorizontalAlignment', 'center', 'FontSize', 18);
+end
+
+% Right Panel: Timeline Bracket
+subplot(1, 2, 2); hold on;
+% Base timeline
+plot([-1.0, 3.0], [0 0], 'k-', 'LineWidth', 2.5);
+% Events
+xline(0, 'k--', 'Tactile Stimulus (0 s)', 'LabelOrientation', 'horizontal', 'FontSize', 18, 'LineWidth', 2, 'LabelVerticalAlignment', 'bottom');
+xline(-0.5, 'r--', 'Auditory Cue (-0.5 s)', 'LabelOrientation', 'horizontal', 'FontSize', 18, 'LineWidth', 2, 'LabelVerticalAlignment', 'bottom');
+% Shaded window for active screening [-0.5 s to +2.4 s]
+patch([-0.5 2.4 2.4 -0.5], [-0.4 -0.4 0.4 0.4], [0.2 0.6 0.8], 'FaceAlpha', 0.25, 'EdgeColor', [0.1 0.4 0.6], 'LineWidth', 2);
+text(0.95, 0.55, 'Full-Epoch Evaluation Window [-0.5 s, +2.4 s]', 'FontSize', 20, 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'Color', [0.1 0.4 0.6]);
+
+ylim([-1, 1]); xlim([-1.0, 2.8]);
+yticks([]); % Hide y-axis since it's just a timeline
+xlabel('Time (s)', 'FontSize', 22, 'FontWeight', 'bold');
+set(gca, 'FontSize', 18, 'YColor', 'none'); box off;
+title('Trial Screening Temporal Coverage', 'FontSize', 22, 'FontWeight', 'bold');
+
+exportgraphics(fig_slide12, fullfile(screening_fig_dir, 'Slide12_Montage_Timeline_600ppi.png'), 'Resolution', 600);
+fprintf('  -> Saved Slide 12 Visual: Slide12_Montage_Timeline_600ppi.png\n');
+
+% -------------------------------------------------------------------------
+% VISUAL 2 (SLIDE 13): 2D Grid Search Surface/Contour Plot (Subject 14)
+% -------------------------------------------------------------------------
+% Find Subject 14 in target_subjs
+t_idx_plot = find(target_subjs == 14, 1);
+if isempty(t_idx_plot), t_idx_plot = 1; end % Fallback to first target
+s_plot = target_subjs(t_idx_plot);
+
+% Extract cost surface for Subject 14 and transpose so X=Drift, Y=MAD
+Z_cost = cost_surface(:, :, t_idx_plot)'; 
+[~, min_idx] = min(Z_cost(:));
+[im_opt, id_opt] = ind2sub(size(Z_cost), min_idx);
+opt_drift = drift_grid(id_opt);
+opt_mad   = mad_grid(im_opt);
+
+fig_slide13 = figure('Position', [100, 100, 900, 700], 'Name', 'Slide 13: 2D Grid Search Contour', 'Color', 'w');
+[X_mesh, Y_mesh] = meshgrid(drift_grid, mad_grid);
+
+% Draw filled contour plot
+contourf(X_mesh, Y_mesh, Z_cost, 40, 'LineColor', 'none'); hold on;
+colormap('turbo'); 
+c = colorbar; 
+c.Label.String = 'Cost Objective (Baseline Offset + Penalty)'; 
+c.Label.FontSize = 18; c.FontSize = 16;
+
+% Mark the Optimum
+plot(opt_drift, opt_mad, 'w*', 'MarkerSize', 18, 'LineWidth', 2);
+plot(opt_drift, opt_mad, 'ko', 'MarkerSize', 18, 'LineWidth', 2);
+text(opt_drift + 1.5, opt_mad + 0.35, sprintf('Global Optimum\n(%d \\muV, %.2f MAD)', opt_drift, opt_mad), ...
+    'Color', 'w', 'FontSize', 18, 'FontWeight', 'bold');
+
+xlabel('32-Channel Drift Threshold (\muV)', 'FontSize', 22, 'FontWeight', 'bold');
+ylabel('32-Channel MAD Multiplier', 'FontSize', 22, 'FontWeight', 'bold');
+title(sprintf('Subject %d: 2D Grid Search Cost Surface', s_plot), 'FontSize', 24, 'FontWeight', 'bold');
+set(gca, 'FontSize', 18);
+
+exportgraphics(fig_slide13, fullfile(screening_fig_dir, 'Slide13_GridSearch_Contour_600ppi.png'), 'Resolution', 600);
+fprintf('  -> Saved Slide 13 Visual: Slide13_GridSearch_Contour_600ppi.png\n');
+
+% -------------------------------------------------------------------------
+% VISUAL 3 (SLIDE 14): High-Resolution Cropped Outlier Summary Table
+% -------------------------------------------------------------------------
+csv_table_path = 'C:\Users\sdabiri\OneDrive - Georgia Institute of Technology\Dr. Sederberg MaTRIX Lab\Research Paper\ch-ch_cov\Trial_Screening_Figures\Trial_Outlier_Summary_Table.csv';
+slide14_out_path = 'C:\Users\sdabiri\OneDrive - Georgia Institute of Technology\Dr. Sederberg MaTRIX Lab\Research Paper\ch-ch_cov\Trial_Screening_Figures\Slide14_Outlier_Table_600ppi.png';
+
+if exist(csv_table_path, 'file')
+    Outlier_Summary_Table = readtable(csv_table_path);
+    
+    fig_slide14 = figure('Position', [50, 50, 1800, 700], 'Name', 'Slide 14: Outlier Table', ...
+        'Color', 'w', 'MenuBar', 'none', 'ToolBar', 'none');
+
+    % Select essential display columns
+    disp_vars = {'Subject', 'Condition', 'Total_Trials', 'Kept_Trials', 'Rejected_Trials', ...
+                 'Drift_Thresh_32Ch_uV', 'MAD_Mult_32Ch', 'Max_Kept_32Ch_MAD_Ratio', 'Outlier_Trial_Indices'};
+    tbl_subset = Outlier_Summary_Table(:, disp_vars);
+
+    % Clean presentation headers
+    plot_headers = {'Subj', 'Condition', 'Total', 'Kept', 'Rejected', ...
+                    'Drift Thresh (\muV)', 'MAD Mult', 'Max Kept Ratio', 'Outlier Indices'};
+
+    cell_data = table2cell(tbl_subset);
+    
+    % Format Columns 1, 3, 4, 5, and 6 as whole numbers (integers)
+    cols_to_int = [1, 3, 4, 5, 6];
+    for c = cols_to_int
+        for r = 1:size(cell_data, 1)
+            if isnumeric(cell_data{r, c}) && ~isnan(cell_data{r, c})
+                cell_data{r, c} = sprintf('%d', round(cell_data{r, c}));
+            end
+        end
+    end
+    
+    % Format Columns 7 and 8 strictly with ONE decimal point (%.1f)
+    cols_to_float = [7, 8];
+    for c = cols_to_float
+        for r = 1:size(cell_data, 1)
+            if isnumeric(cell_data{r, c}) && ~isnan(cell_data{r, c})
+                cell_data{r, c} = sprintf('%.1f', cell_data{r, c});
+            end
+        end
+    end
+
+    % Render table graphical object
+    t_ui = uitable(fig_slide14, 'Data', cell_data, ...
+        'ColumnName', plot_headers, ...
+        'Units', 'normalized', 'Position', [0.02 0.02 0.96 0.9], ...
+        'RowName', [], 'FontSize', 16);
+
+    % Column widths (ensuring wide display for Outlier Indices)
+    t_ui.ColumnWidth = {60, 120, 70, 70, 90, 160, 100, 140, 850};
+
+    % Title placement
+    ax_tab = axes('Visible', 'off', 'Position', [0 0 1 1]);
+    text(ax_tab, 0.5, 0.96, 'Systematic Quality Audit: Condition-Level Outlier Summary', ...
+        'FontSize', 24, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+
+    exportgraphics(fig_slide14, slide14_out_path, 'Resolution', 600);
+    fprintf('  -> Saved Slide 14 Visual: %s\n', slide14_out_path);
+else
+    fprintf('  -> Skipping Slide 14 Visual: Could not find CSV at %s\n', csv_table_path);
 end
