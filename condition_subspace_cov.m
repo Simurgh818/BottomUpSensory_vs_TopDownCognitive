@@ -199,14 +199,14 @@ num_windows = length(t_starts);
 covCentered = @(X, b) (( (X - b) - mean(X - b, 2) ) * ( (X - b) - mean(X - b, 2) )') / size(X, 2);
 
 %% =========================================================================
-%% SECTION 3B: FULL-EPOCH [-0.5, 2.4s] SCREENING ({C3, C4, F3, T7, T8 + 32-CH MEDIAN})
+%% SECTION 3B: FULL-EPOCH [-0.5, 2.4s] SCREENING ({C3, C4, F3, T7, T8 + NON-OCULAR 85TH PRCTILE})
 %% =========================================================================
 num_all_subjs    = length(data_all_conds.Raw.P1);
 all_target_subjs = 1:num_all_subjs;
 
 % Locate C3, C4, F3, T7, and T8 indices from EEG.chanlocs
-% (Also checks T3/T4 aliases in case an older 10-20 montage naming is used)
 chan_c3 = 14; chan_c4 = 18; chan_f3 = 4; chan_t7 = 7; chan_t8 = 24;
+non_ocular_chans = 1:cfg.num_ch;
 if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
     all_labels = {EEG.chanlocs.labels};
     m_c3 = find(strcmpi(all_labels, 'C3'), 1);
@@ -219,31 +219,35 @@ if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
     if ~isempty(m_f3), chan_f3 = m_f3; end
     if ~isempty(m_t7), chan_t7 = m_t7; end
     if ~isempty(m_t8), chan_t8 = m_t8; end
+    
+    ocular_mask = ismember(upper(all_labels), {'FP1', 'FP2', 'FPZ', 'AF3', 'AF4', 'F7', 'F8'});
+    if any(~ocular_mask), non_ocular_chans = find(~ocular_mask); end
 end
-chan_idx  = chan_c3; % Primary channel for C3 waveform verification plots
-roi_chans = unique([chan_c3, chan_c4, chan_f3, chan_t7, chan_t8], 'stable');
+chan_idx  = chan_c3; 
+core_roi  = unique([chan_c3, chan_c4, chan_f3, chan_t7, chan_t8], 'stable');
 
-fprintf('\nExecuting Full-Epoch [-0.5, 2.4s] Screening on {C3(%d), C4(%d), F3(%d), T7(%d), T8(%d) + 32-Ch Median} (25:50 uV, >=2/3 Keep Rule)...\n', ...
-    chan_c3, chan_c4, chan_f3, chan_t7, chan_t8);
+fprintf('\nExecuting Full-Epoch [-0.5, 2.4s] Screening on {{C3, C4, F3, T7, T8} + Non-Ocular 85th Prctile} (Conservative Grid)...\n');
 
-iErpWin   = time_s >= -0.200 & time_s <= 0.800; % ERP display window for Column 3 verification plots
-iFullWin  = time_s >= -0.500 & time_s <= 2.400; % Full post-baseline evaluation window [-0.5, 2.4 s]
+iErpWin   = time_s >= -0.200 & time_s <= 0.800; 
+iCritWin  = time_s >= -0.500 & time_s <= 1.000; % Active task window [-0.5, 1.0 s]
+iFullWin  = time_s >= -0.500 & time_s <= 2.400; % Full epoch [-0.5, 2.4 s]
 iZeroZone = time_s >= -0.200 & time_s <= 0.200;
 iPreStim  = time_s >= -0.200 & time_s <= 0.000;
 
 cond_keys_screen = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA', 'BLT'};
 cond_keys_screen = cond_keys_screen(isfield(data_all_conds.Raw, cond_keys_screen));
 
-smooth_pts    = round(0.100 * cfg.fs); % 100 ms moving average
-sat_thresh_uV = 100;                   % Peak saturation ceiling (uV)
+smooth_pts     = round(0.100 * cfg.fs); 
+sat_thresh_uV  = 100;                   
+ext_roi        = core_roi;
 
-% --- GRID SEARCH & 2/3 RETENTION PARAMETERS ---
-drift_grid  = 35 : 1 : 60;       % Conservative drift floor: 35 to 60 uV (Luck Ch. 6)
-mad_grid    = 4.5 : 0.25 : 10.0; % Conservative MAD floor: 4.5 to 10.0
+% --- CONSERVATIVE GRID SEARCH & 2/3 RETENTION PARAMETERS ---
+drift_grid  = 35 : 1 : 60;       % Conservative drift floor: 35 to 60 uV
+mad_grid    = 4.5 : 0.25 : 10.0; % Conservative MAD floor: 4.5 to 10.0 MAD
 min_keep_30 = 20;                % Guarantee >= 20/30 (66.7%) kept trials
 min_keep_60 = 40;                % Guarantee >= 40/60 (66.7%) kept trials
 
-% --- 1. PRE-COMPUTE TRIAL METRICS OVER [-0.5, 2.4s] ON {C3, C4, F3, T7, T8 + 32-CH MEDIAN} ---
+% --- 1. PRE-COMPUTE TRIAL METRICS OVER [-0.5, 2.4s] ---
 precomp = struct();
 for s = all_target_subjs
     for c = 1:length(cond_keys_screen)
@@ -260,17 +264,18 @@ for s = all_target_subjs
             epoch_bc = epoch - mean(epoch(:, iBase), 2);
             X_bc_all(:, :, tr) = epoch_bc;
             
-            % Full-epoch [-0.5, 2.4s] smoothed drift on {C3, C4, F3, T7, T8} + 32-Ch Median
-            ch_smooth_all = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
-            roi_smooth    = max(ch_smooth_all(roi_chans));
-            med_32_smooth = median(ch_smooth_all);
-            trial_drift_32(tr) = max(roi_smooth, med_32_smooth);
+            ch_smooth_crit = max(abs(movmean(epoch_bc(:, iCritWin), smooth_pts, 2)), [], 2);
+            crit_drift     = max(max(ch_smooth_crit(core_roi)), prctile(ch_smooth_crit(non_ocular_chans), 85));
             
-            % Full-epoch [-0.5, 2.4s] peak amplitude on {C3, C4, F3, T7, T8} + 32-Ch Median
-            ch_peak_all = max(abs(epoch_bc(:, iFullWin)), [], 2);
-            roi_peak    = max(ch_peak_all(roi_chans));
-            med_32_peak = median(ch_peak_all);
-            trial_peak_32(tr) = max(roi_peak, med_32_peak);
+            ch_smooth_full = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
+            late_med_drift = 0.75 * max(max(ch_smooth_full(core_roi)), prctile(ch_smooth_full(non_ocular_chans), 85));
+            trial_drift_32(tr) = max(crit_drift, late_med_drift);
+            
+            ch_peak_crit = max(abs(epoch_bc(:, iCritWin)), [], 2);
+            ch_peak_full = max(abs(epoch_bc(:, iFullWin)), [], 2);
+            crit_peak    = max(max(ch_peak_crit(core_roi)), prctile(ch_peak_crit(non_ocular_chans), 85));
+            crap_peak    = 0.5 * max(ch_peak_full(ext_roi)); 
+            trial_peak_32(tr) = max(crit_peak, crap_peak);
         end
         
         precomp(s).(c_name).X_bc_all       = X_bc_all;
@@ -280,7 +285,7 @@ for s = all_target_subjs
     end
 end
 
-% --- 2. PER-SUBJECT, PER-CONDITION 2D GRID SEARCH (FIXED TRIAL CRITERION) ---
+% --- 2. PER-SUBJECT, PER-CONDITION 2D GRID SEARCH ---
 screening_stats = struct();
 subj_excluded_2_3 = false(num_all_subjs, 1);
 
@@ -307,16 +312,15 @@ for s = all_target_subjs
         a_32     = precomp(s).(c_name).trial_peak_32;
         nTr      = length(d_32);
         
-        % Consolidated retention floor (same drift_grid and mad_grid used for all conditions)
         if nTr >= 50
-            min_keep = min_keep_60; % 40/60 for P1, BLA, BLT
+            min_keep = min_keep_60; 
         else
-            min_keep = min_keep_30; % 20/30 for P2 and P3 conditions
+            min_keep = min_keep_30; 
         end
         
         best_cost  = inf;
         best_drift = max(drift_grid);
-        best_mad   = 3.5;
+        best_mad   = min(mad_grid);
         
         for id = 1:length(drift_grid)
             d_lim = drift_grid(id);
@@ -335,19 +339,12 @@ for s = all_target_subjs
                 
                 erp_32_cand = mean(X_bc_all(:, :, ~bad_cand), 3, 'omitnan');
                 
-                % Target 0 uV baseline & full-window stability across {C3, C4, F3, T7, T8} and 32-Ch median
-                err_pre  = mean(abs(mean(erp_32_cand(roi_chans, iPreStim), 2)));
-                err_zero = mean(abs(mean(erp_32_cand(roi_chans, iZeroZone), 2)));
-                err_full = mean(abs(mean(erp_32_cand(roi_chans, iFullWin), 2))) + ...
-                           median(abs(mean(erp_32_cand(:, iFullWin), 2)));
-                
-                max_kept_d   = max(d_32(~bad_cand));
-                
-                % Penalize unnecessary trial rejections (0.15 per rejected trial)
                 err_pre  = mean(abs(mean(erp_32_cand(core_roi, iPreStim), 2)));
                 err_zero = mean(abs(mean(erp_32_cand(core_roi, iZeroZone), 2)));
                 err_full = median(abs(mean(erp_32_cand(:, iCritWin), 2)));
-                cost_val = 1.2 * err_pre + 1.0 * err_zero + 0.5 * err_full + 0.15 * sum(bad_cand);
+                rej_penalty = 0.15 * sum(bad_cand);
+                
+                cost_val = 1.2 * err_pre + 1.0 * err_zero + 0.5 * err_full + rej_penalty;
                        
                 if cost_val < best_cost
                     best_cost  = cost_val;
@@ -458,7 +455,7 @@ for s = all_target_subjs
     end
 end
 
-% --- 3. EXPORT OUTLIER TRIAL SUMMARY TABLE (.XLSX, .CSV, .TXT) ---
+% --- 3. EXPORT OUTLIER TRIAL SUMMARY TABLE ---
 Outlier_Summary_Table = table(tbl_Subj, tbl_Cond, tbl_TotalTr, tbl_KeptTr, tbl_RejTr, ...
     tbl_DriftThresh_32, tbl_MAD_Mult_32, tbl_MaxKept_Drift, tbl_MaxKept_MADR, ...
     tbl_Rej_By_Sat, tbl_Rej_By_Drift, tbl_MinKeep_Capped, tbl_Subj_Excluded, tbl_Outlier_Trials, ...
@@ -476,7 +473,7 @@ try writetable(Outlier_Summary_Table, xlsx_table_path); catch, end
 fid_tbl = fopen(txt_table_path, 'w');
 for out_dest = [1, fid_tbl]
     fprintf(out_dest, '\n==================================================================================================================================================================\n');
-    fprintf(out_dest, ' FULL-EPOCH [-0.5, 2.4s] TRIAL OUTLIER REPORT ({C3, C4, F3, T7, T8 + 32-CH MEDIAN}, 25:50 uV, >=2/3 KEEP RULE)\n');
+    fprintf(out_dest, ' FULL-EPOCH [-0.5, 2.4s] TRIAL OUTLIER REPORT (CONSERVATIVE GRID, >=2/3 KEEP RULE)\n');
     fprintf(out_dest, '==================================================================================================================================================================\n');
     fprintf(out_dest, '%-4s | %-10s | %-7s | %-7s | %-18s | %-13s | %-13s | %-7s | %-8s | %s\n', ...
         'Subj', 'Condition', 'Kept/Tr', 'Rej (n)', 'Thresh / MAD', 'MaxKeptDrift', 'MaxKeptMADR', 'Capped?', 'Excluded', 'Rejected Trial Indices');
@@ -508,7 +505,6 @@ for s = all_target_subjs
     fig_verify = figure('Position', [50, 50, 1700, 950], 'Visible', 'off', 'Color', 'w', ...
         'Name', sprintf('Subject %d Trial Screening & ERP Cleanup', s));
     
-    % Use t_verify handle so title(t_verify, ...) is never cropped by exportgraphics
     t_verify = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
     
     erp_p1_clean = squeeze(mean(data_all_conds.Raw.P1{s}(chan_idx, :, :), 3, 'omitnan'));
@@ -676,7 +672,7 @@ save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
 cfg.group_A = {'P2_500', 'P3_500'};
-cfg.group_B = {'P2_2000', 'P3_missing'}; % , 'BLA'
+cfg.group_B = {'P2_2000', 'P3_missing'}; % BLA excluded from Group B
 cfg.all_conds = [{cfg.ref_cond}, cfg.group_A, cfg.group_B];
 
 aggregate_spectra = struct();
@@ -763,6 +759,58 @@ for band_idx = 1:length(bands_to_process)
     errorbar(1:cfg.m-1, mean(gap_all(:, valid_retained_subjs), 2, 'omitnan'), std(gap_all(:, valid_retained_subjs), 0, 2, 'omitnan'), 'k.', 'LineWidth', 1.2);
     grid on; xlabel('Gap Index'); ylabel('Relative Gap'); title('Mean Subspace Gaps');
     saveas(figA, fullfile(group_dir, 'Deliverable_A_Spectra.png')); close(figA);
+    
+    % ------------------------------------------------------------------
+    %% CHECKPOINT 1 (A): Deliverable B - Spatial Eigenvector Topographies
+    % ------------------------------------------------------------------
+    subjs_topo = valid_retained_subjs(1:min(4, length(valid_retained_subjs))); % First 4 retained subjects
+    n_rows_B   = length(subjs_topo);
+    
+    figB = figure('Position', [100, 100, 220 * cfg.m + 120, 210 * n_rows_B], 'Visible', 'off');
+    for r_idx = 1:n_rows_B
+        s = subjs_topo(r_idx);
+        for k = 1:cfg.m
+            ax_b = subplot(n_rows_B, cfg.m, (r_idx - 1) * cfg.m + k);
+            
+            % Adjust subplot width slightly to leave room on the right for the shared colorbar
+            pos_b = get(ax_b, 'Position');
+            pos_b(1) = pos_b(1) * 0.92;
+            pos_b(3) = pos_b(3) * 0.92;
+            set(ax_b, 'Position', pos_b);
+            
+            if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+                topoplot(Xi_aligned(:, k, s), EEG.chanlocs, 'maplimits', [-0.4, 0.4], ...
+                    'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+                colormap(ax_b, 'jet');
+                clim(ax_b, [-0.4, 0.4]);
+            end
+            
+            % Column header (\xi_1 ... \xi_6) on the top row
+            if r_idx == 1
+                title(sprintf('\\xi_%d', k), 'FontSize', 18, 'FontWeight', 'bold');
+            end
+            
+            % Row label (Subj 1 ... Subj 4) on the first column (kept visible after topoplot turns axis off)
+            if k == 1
+                text(-0.75, 0, sprintf('Subj %d', s), 'Rotation', 90, ...
+                    'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
+                    'FontSize', 14, 'FontWeight', 'bold');
+            end
+        end
+    end
+    
+    % Shared colorbar on the right matching [-0.4, 0.4] Spatial Weight (a.u.)
+    cb_B = colorbar('Position', [0.90, 0.15, 0.02, 0.72]);
+    cb_B.Limits = [-0.4, 0.4];
+    cb_B.Ticks  = -0.4 : 0.2 : 0.4;
+    cb_B.Label.String   = 'Spatial Weight (a.u.)';
+    cb_B.Label.FontSize = 14;
+    cb_B.Label.FontWeight = 'bold';
+    cb_B.FontSize = 12;
+    
+    save_file_B = fullfile(group_dir, 'Deliverable_B_Topos');
+    try saveas(figB, [save_file_B, '.png']); saveas(figB, [save_file_B, '.svg']); catch, end
+    close(figB);
 
     figC = figure('Position', [100, 100, 300 * cfg.m, 350], 'Visible', 'off');
     tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
@@ -1018,7 +1066,7 @@ for band_idx = 1:length(bands_to_process)
     num_groups   = length(subj_groups);
     
     time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
-    time_mask_full = true(size(t_centers)); % Full trajectory including -0.35s auditory ERP peak
+    time_mask_full = true(size(t_centers)); 
     
     global_clims = zeros(cfg.m, 1);
     all_log_r    = [];
@@ -1177,7 +1225,7 @@ for band_idx = 1:length(bands_to_process)
             row_lower  = row_mean_k - row_sem_k;
             
             cp3a_min_y = max(0, min(row_lower(:)) * 0.90);
-            cp3a_max_y = max(row_upper(:)) * 1.15; % 15% headroom above highest peak (including -0.35s auditory ERP)
+            cp3a_max_y = max(row_upper(:)) * 1.15; 
             if isempty(cp3a_max_y) || isnan(cp3a_max_y) || cp3a_max_y <= cp3a_min_y
                 cp3a_min_y = 0; cp3a_max_y = 10;
             end
@@ -1234,11 +1282,12 @@ for band_idx = 1:length(bands_to_process)
         close(figChk3);
 
         % -----------------------------------------------------------------
-        % CHECKPOINT 3b: SPATIAL RECONFIGURATION (TOPOPLOT + ZOOMED TRACE)
+        % CHECKPOINT 3b: SPATIAL RECONFIGURATION (TRAJECTORY LEFT, TOPOPLOT RIGHT)
         % -----------------------------------------------------------------
-        iTopo   = time_s >= 0.400 & time_s <= 0.600;
-        Xi_grp  = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
-        Xi_grp  = Xi_grp ./ (vecnorm(Xi_grp) + eps);
+        iTopo      = time_s >= 0.200 & time_s <= 0.800; % Updated window: 0.2 to 0.8 s
+        topo_clim  = [-0.4, 0.4];                       % Fixed [-0.4, 0.4] range to resolve differences
+        Xi_grp     = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
+        Xi_grp     = Xi_grp ./ (vecnorm(Xi_grp) + eps);
         
         conds_3b_A  = [{cfg.ref_cond}, cfg.group_A];
         colors_3b_A = {[0 0 0], [0.850 0.325 0.098], [0.929 0.694 0.125]};
@@ -1256,28 +1305,15 @@ for band_idx = 1:length(bands_to_process)
             ylim_3b = [0, z_ymax];
             
             % --- 1. GROUP A SPATIAL RECONFIGURATION ---
-            fig3bA = figure('Position', [100, 100, 1200, 900], 'Visible', 'off');
+            fig3bA = figure('Position', [100, 100, 1350, 900], 'Visible', 'off');
             nRowsA = length(conds_3b_A);
             for r_i = 1:nRowsA
                 c_name = conds_3b_A{r_i};
                 c_idx  = find(strcmp(cfg.all_conds, c_name));
                 col_r  = colors_3b_A{min(r_i, length(colors_3b_A))};
                 
-                subplot(nRowsA, 4, (r_i - 1) * 4 + 1);
-                erp_c = mean(cat(3, current_data.(c_name){curr_subjs}), 3, 'omitnan');
-                b_c   = mean(erp_c(:, iBase), 2, 'omitnan');
-                proj_amp = mean(Xi_grp(:, k)' * (erp_c(:, iTopo) - b_c), 2, 'omitnan');
-                topo_vec = Xi_grp(:, k) * proj_amp;
-                
-                if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
-                    topoplot(topo_vec, EEG.chanlocs, 'maplimits', [-global_clims(k), global_clims(k)], ...
-                        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-                    colormap(gca, 'jet');
-                    cb = colorbar; cb.Label.String = 'Proj. Amp'; cb.FontSize = 12;
-                end
-                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(c_name)), 'FontSize', 16, 'FontWeight', 'bold');
-                
-                subplot(nRowsA, 4, (r_i - 1) * 4 + (2:4)); hold on; set(gca, 'FontSize', 16);
+                % Left 3 Columns (1:3): Zoomed Trajectory [-0.1, 1.0 s]
+                subplot(nRowsA, 4, (r_i - 1) * 4 + (1:3)); hold on; set(gca, 'FontSize', 16);
                 patch([0 1.0 1.0 0], [ylim_3b(1) ylim_3b(1) ylim_3b(2) ylim_3b(2)], ...
                     [0.9 0.9 0.9], 'FaceAlpha', 0.5, 'EdgeColor', 'none', 'HandleVisibility', 'off');
                 xline(0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -1297,6 +1333,21 @@ for band_idx = 1:length(bands_to_process)
                 else
                     xticklabels({});
                 end
+                
+                % Right Column (4): Topoplot + Colorbar (0.2 - 0.8 s)
+                subplot(nRowsA, 4, (r_i - 1) * 4 + 4);
+                erp_c = mean(cat(3, current_data.(c_name){curr_subjs}), 3, 'omitnan');
+                b_c   = mean(erp_c(:, iBase), 2, 'omitnan');
+                proj_amp = mean(Xi_grp(:, k)' * (erp_c(:, iTopo) - b_c), 2, 'omitnan');
+                topo_vec = Xi_grp(:, k) * proj_amp;
+                
+                if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+                    topoplot(topo_vec, EEG.chanlocs, 'maplimits', topo_clim, ...
+                        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+                    colormap(gca, 'jet');
+                    cb = colorbar; cb.Label.String = 'Proj. Amp'; cb.FontSize = 12;
+                end
+                title(sprintf('%s\n(0.2 - 0.8s)', clean_name(c_name)), 'FontSize', 16, 'FontWeight', 'bold');
             end
             sgtitle(sprintf('Group A: Spatial Reconfiguration (\\xi_%d) [%s]', k, cohort_disp), ...
                 'FontSize', 20, 'FontWeight', 'bold');
@@ -1306,28 +1357,15 @@ for band_idx = 1:length(bands_to_process)
             close(fig3bA);
             
             % --- 2. GROUP B SPATIAL RECONFIGURATION ---
-            fig3bB = figure('Position', [100, 100, 1200, 900], 'Visible', 'off');
+            fig3bB = figure('Position', [100, 100, 1350, 900], 'Visible', 'off');
             nRowsB = length(conds_3b_B);
             for r_i = 1:nRowsB
                 c_name = conds_3b_B{r_i};
                 c_idx  = find(strcmp(cfg.all_conds, c_name));
                 col_r  = colors_3b_B{min(r_i, length(colors_3b_B))};
                 
-                subplot(nRowsB, 4, (r_i - 1) * 4 + 1);
-                erp_c = mean(cat(3, current_data.(c_name){curr_subjs}), 3, 'omitnan');
-                b_c   = mean(erp_c(:, iBase), 2, 'omitnan');
-                proj_amp = mean(Xi_grp(:, k)' * (erp_c(:, iTopo) - b_c), 2, 'omitnan');
-                topo_vec = Xi_grp(:, k) * proj_amp;
-                
-                if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
-                    topoplot(topo_vec, EEG.chanlocs, 'maplimits', [-global_clims(k), global_clims(k)], ...
-                        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-                    colormap(gca, 'jet');
-                    cb = colorbar; cb.Label.String = 'Proj. Amp'; cb.FontSize = 12;
-                end
-                title(sprintf('%s\n(0.4 - 0.6s)', clean_name(c_name)), 'FontSize', 16, 'FontWeight', 'bold');
-                
-                subplot(nRowsB, 4, (r_i - 1) * 4 + (2:4)); hold on; set(gca, 'FontSize', 16);
+                % Left 3 Columns (1:3): Zoomed Trajectory [-0.1, 1.0 s]
+                subplot(nRowsB, 4, (r_i - 1) * 4 + (1:3)); hold on; set(gca, 'FontSize', 16);
                 patch([0 1.0 1.0 0], [ylim_3b(1) ylim_3b(1) ylim_3b(2) ylim_3b(2)], ...
                     [0.9 0.9 0.9], 'FaceAlpha', 0.5, 'EdgeColor', 'none', 'HandleVisibility', 'off');
                 xline(0, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -1347,6 +1385,21 @@ for band_idx = 1:length(bands_to_process)
                 else
                     xticklabels({});
                 end
+                
+                % Right Column (4): Topoplot + Colorbar (0.2 - 0.8 s)
+                subplot(nRowsB, 4, (r_i - 1) * 4 + 4);
+                erp_c = mean(cat(3, current_data.(c_name){curr_subjs}), 3, 'omitnan');
+                b_c   = mean(erp_c(:, iBase), 2, 'omitnan');
+                proj_amp = mean(Xi_grp(:, k)' * (erp_c(:, iTopo) - b_c), 2, 'omitnan');
+                topo_vec = Xi_grp(:, k) * proj_amp;
+                
+                if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+                    topoplot(topo_vec, EEG.chanlocs, 'maplimits', topo_clim, ...
+                        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+                    colormap(gca, 'jet');
+                    cb = colorbar; cb.Label.String = 'Proj. Amp'; cb.FontSize = 12;
+                end
+                title(sprintf('%s\n(0.2 - 0.8s)', clean_name(c_name)), 'FontSize', 16, 'FontWeight', 'bold');
             end
             sgtitle(sprintf('Group B: Spatial Reconfiguration (\\xi_%d) [%s]', k, cohort_disp), ...
                 'FontSize', 20, 'FontWeight', 'bold');
@@ -1707,7 +1760,6 @@ c_map('P2_500')     = [0.850 0.325 0.098];
 c_map('P3_500')     = [0.929 0.694 0.125];
 c_map('P2_2000')    = [0.466 0.674 0.188];
 c_map('P3_missing') = [0.301 0.745 0.933];
-c_map('BLA')        = [0.494 0.184 0.556];
 
 conds_plot_A = [{'P1'}, cfg.group_A];                  
 conds_plot_B = [{'P1'}, intersect(cfg.group_B, cfg.all_conds, 'stable')]; 
@@ -2024,13 +2076,12 @@ for g = 1:length(subj_group_names)
     lgd.FontSize = 18;
     grid on;
     
-    max_y = max(max(Y_mean + Y_se));
-    ylim([0, max(max_y, 75) + 15]); 
+    ylim([0, 60]); % <--- Shortened y-limit to 70 for clear zoom on Alpha and Beta
     
-    plot([1.6, 3.4], [10, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    plot([1.6, 1.6], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    plot([3.4, 3.4], [8, 10], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    text(2.5, 13, 'Purely Phasic (< 3%)', 'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
+    plot([1.6, 3.4], [3.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot([1.6, 1.6], [2.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot([3.4, 3.4], [2.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    text(2.5, 5.0, 'Purely Phasic (< 3%)', 'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
         'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
     
     % 1. Raw Band (b=1): Cued vs Rand 500 & Cued vs Rand Missing
@@ -2076,7 +2127,7 @@ for g = 1:length(subj_group_names)
         if isfield(aggregate_sust, b_name) && length(aggregate_sust.(b_name).cohort) >= g && ~isempty(idx_P1)
             sust_data = aggregate_sust.(b_name).cohort(g).subj_data;
             if size(sust_data, 2) > 1 
-                y_shift = 17; 
+                y_shift = 8; 
                 
                 if ~isempty(idx_P3_500)
                     p_rab1 = signrank(sust_data(idx_P1, :), sust_data(idx_P3_500, :), 'tail', 'right');
@@ -2086,24 +2137,9 @@ for g = 1:length(subj_group_names)
                     if ~isnan(p_ab1) && p_ab1 < 0.05
                         x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_500);
                         y = max(Y_mean(b_idx, [idx_P1, idx_P3_500]) + Y_se(b_idx, [idx_P1, idx_P3_500])) + y_shift;
-                        plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                        plot([x1, x1, x2, x2], [y, y+1, y+1, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
                         star = '*'; if p_ab1 < 0.01, star = '**'; end; if p_ab1 < 0.001, star = '***'; end
-                        text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-                        y_shift = y_shift + 6; 
-                    end
-                end
-                
-                if ~isempty(idx_P3_mis)
-                    p_rab2 = signrank(sust_data(idx_P1, :), sust_data(idx_P3_mis, :), 'tail', 'right');
-                    p_lab2 = signrank(sust_data(idx_P1, :), sust_data(idx_P3_mis, :), 'tail', 'left');
-                    p_ab2  = min(p_rab2, p_lab2);
-                    
-                    if ~isnan(p_ab2) && p_ab2 < 0.05
-                        x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_mis);
-                        y = max(Y_mean(b_idx, [idx_P1, idx_P3_mis]) + Y_se(b_idx, [idx_P1, idx_P3_mis])) + y_shift;
-                        plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-                        star = '*'; if p_ab2 < 0.01, star = '**'; end; if p_ab2 < 0.001, star = '***'; end
-                        text(mean([x1, x2]), y+3, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                        text(mean([x1, x2]), y+2, star, 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
                     end
                 end
             end
