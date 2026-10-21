@@ -199,26 +199,32 @@ num_windows = length(t_starts);
 covCentered = @(X, b) (( (X - b) - mean(X - b, 2) ) * ( (X - b) - mean(X - b, 2) )') / size(X, 2);
 
 %% =========================================================================
-%% SECTION 3B: FULL-EPOCH [-0.5, 2.4s] SCREENING (C3, C4, F3 + 32-CH MEDIAN)
+%% SECTION 3B: FULL-EPOCH [-0.5, 2.4s] SCREENING ({C3, C4, F3, T7, T8 + 32-CH MEDIAN})
 %% =========================================================================
 num_all_subjs    = length(data_all_conds.Raw.P1);
 all_target_subjs = 1:num_all_subjs;
 
-% Locate C3, C4, and F3 indices from EEG.chanlocs
-chan_c3 = 14; chan_c4 = 18; chan_f3 = 4;
+% Locate C3, C4, F3, T7, and T8 indices from EEG.chanlocs
+% (Also checks T3/T4 aliases in case an older 10-20 montage naming is used)
+chan_c3 = 14; chan_c4 = 18; chan_f3 = 4; chan_t7 = 7; chan_t8 = 24;
 if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
-    m_c3 = find(strcmpi({EEG.chanlocs.labels}, 'C3'), 1);
-    m_c4 = find(strcmpi({EEG.chanlocs.labels}, 'C4'), 1);
-    m_f3 = find(strcmpi({EEG.chanlocs.labels}, 'F3'), 1);
+    all_labels = {EEG.chanlocs.labels};
+    m_c3 = find(strcmpi(all_labels, 'C3'), 1);
+    m_c4 = find(strcmpi(all_labels, 'C4'), 1);
+    m_f3 = find(strcmpi(all_labels, 'F3'), 1);
+    m_t7 = find(ismember(upper(all_labels), {'T7', 'T3'}), 1);
+    m_t8 = find(ismember(upper(all_labels), {'T8', 'T4'}), 1);
     if ~isempty(m_c3), chan_c3 = m_c3; end
     if ~isempty(m_c4), chan_c4 = m_c4; end
     if ~isempty(m_f3), chan_f3 = m_f3; end
+    if ~isempty(m_t7), chan_t7 = m_t7; end
+    if ~isempty(m_t8), chan_t8 = m_t8; end
 end
 chan_idx  = chan_c3; % Primary channel for C3 waveform verification plots
-roi_chans = unique([chan_c3, chan_c4, chan_f3], 'stable');
+roi_chans = unique([chan_c3, chan_c4, chan_f3, chan_t7, chan_t8], 'stable');
 
-fprintf('\nExecuting Full-Epoch [-0.5, 2.4s] Screening on {C3(%d), C4(%d), F3(%d) + 32-Ch Median} (25:50 uV, >=2/3 Keep Rule)...\n', ...
-    chan_c3, chan_c4, chan_f3);
+fprintf('\nExecuting Full-Epoch [-0.5, 2.4s] Screening on {C3(%d), C4(%d), F3(%d), T7(%d), T8(%d) + 32-Ch Median} (25:50 uV, >=2/3 Keep Rule)...\n', ...
+    chan_c3, chan_c4, chan_f3, chan_t7, chan_t8);
 
 iErpWin   = time_s >= -0.200 & time_s <= 0.800; % ERP display window for Column 3 verification plots
 iFullWin  = time_s >= -0.500 & time_s <= 2.400; % Full post-baseline evaluation window [-0.5, 2.4 s]
@@ -231,13 +237,13 @@ cond_keys_screen = cond_keys_screen(isfield(data_all_conds.Raw, cond_keys_screen
 smooth_pts    = round(0.100 * cfg.fs); % 100 ms moving average
 sat_thresh_uV = 100;                   % Peak saturation ceiling (uV)
 
-% --- UPDATED GRID SEARCH & 2/3 RETENTION PARAMETERS ---
-drift_grid  = 25 : 1 : 50;       % Drift grid: 25 to 50 uV
-mad_grid    = 3.5 : 0.25 : 10.0; % MAD multiplier grid: 3.5 to 10.0
+% --- GRID SEARCH & 2/3 RETENTION PARAMETERS ---
+drift_grid  = 35 : 1 : 60;       % Conservative drift floor: 35 to 60 uV (Luck Ch. 6)
+mad_grid    = 4.5 : 0.25 : 10.0; % Conservative MAD floor: 4.5 to 10.0
 min_keep_30 = 20;                % Guarantee >= 20/30 (66.7%) kept trials
 min_keep_60 = 40;                % Guarantee >= 40/60 (66.7%) kept trials
 
-% --- 1. PRE-COMPUTE TRIAL METRICS OVER [-0.5, 2.4s] ON {C3, C4, F3 + 32-CH MEDIAN} ---
+% --- 1. PRE-COMPUTE TRIAL METRICS OVER [-0.5, 2.4s] ON {C3, C4, F3, T7, T8 + 32-CH MEDIAN} ---
 precomp = struct();
 for s = all_target_subjs
     for c = 1:length(cond_keys_screen)
@@ -254,13 +260,13 @@ for s = all_target_subjs
             epoch_bc = epoch - mean(epoch(:, iBase), 2);
             X_bc_all(:, :, tr) = epoch_bc;
             
-            % Full-epoch [-0.5, 2.4s] smoothed drift on C3, C4, F3 + 32-Ch Median
+            % Full-epoch [-0.5, 2.4s] smoothed drift on {C3, C4, F3, T7, T8} + 32-Ch Median
             ch_smooth_all = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
             roi_smooth    = max(ch_smooth_all(roi_chans));
             med_32_smooth = median(ch_smooth_all);
             trial_drift_32(tr) = max(roi_smooth, med_32_smooth);
             
-            % Full-epoch [-0.5, 2.4s] peak amplitude on C3, C4, F3 + 32-Ch Median
+            % Full-epoch [-0.5, 2.4s] peak amplitude on {C3, C4, F3, T7, T8} + 32-Ch Median
             ch_peak_all = max(abs(epoch_bc(:, iFullWin)), [], 2);
             roi_peak    = max(ch_peak_all(roi_chans));
             med_32_peak = median(ch_peak_all);
@@ -301,10 +307,11 @@ for s = all_target_subjs
         a_32     = precomp(s).(c_name).trial_peak_32;
         nTr      = length(d_32);
         
+        % Consolidated retention floor (same drift_grid and mad_grid used for all conditions)
         if nTr >= 50
-            min_keep = min_keep_60; % 40/60 (2/3)
+            min_keep = min_keep_60; % 40/60 for P1, BLA, BLT
         else
-            min_keep = min(min_keep_30, ceil((2/3) * nTr)); % 20/30 (2/3)
+            min_keep = min_keep_30; % 20/30 for P2 and P3 conditions
         end
         
         best_cost  = inf;
@@ -328,16 +335,19 @@ for s = all_target_subjs
                 
                 erp_32_cand = mean(X_bc_all(:, :, ~bad_cand), 3, 'omitnan');
                 
-                % Target 0 uV baseline & full-window stability across {C3, C4, F3} and 32-Ch median
+                % Target 0 uV baseline & full-window stability across {C3, C4, F3, T7, T8} and 32-Ch median
                 err_pre  = mean(abs(mean(erp_32_cand(roi_chans, iPreStim), 2)));
                 err_zero = mean(abs(mean(erp_32_cand(roi_chans, iZeroZone), 2)));
                 err_full = mean(abs(mean(erp_32_cand(roi_chans, iFullWin), 2))) + ...
                            median(abs(mean(erp_32_cand(:, iFullWin), 2)));
                 
                 max_kept_d   = max(d_32(~bad_cand));
-                leak_penalty = 0.15 * max(0, max_kept_d - 28) + 0.03 * sum(bad_cand);
                 
-                cost_val = 1.2 * err_pre + 1.0 * err_zero + 0.5 * err_full + leak_penalty;
+                % Penalize unnecessary trial rejections (0.15 per rejected trial)
+                err_pre  = mean(abs(mean(erp_32_cand(core_roi, iPreStim), 2)));
+                err_zero = mean(abs(mean(erp_32_cand(core_roi, iZeroZone), 2)));
+                err_full = median(abs(mean(erp_32_cand(:, iCritWin), 2)));
+                cost_val = 1.2 * err_pre + 1.0 * err_zero + 0.5 * err_full + 0.15 * sum(bad_cand);
                        
                 if cost_val < best_cost
                     best_cost  = cost_val;
@@ -361,7 +371,7 @@ for s = all_target_subjs
         was_capped = false;
         if isinf(best_cost) || sum(~bad_trials) < min_keep
             was_capped = true;
-            if ismember(c_name, {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'})
+            if ismember(c_name, {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA'})
                 subj_excluded_2_3(s) = true;
             end
             
@@ -466,7 +476,7 @@ try writetable(Outlier_Summary_Table, xlsx_table_path); catch, end
 fid_tbl = fopen(txt_table_path, 'w');
 for out_dest = [1, fid_tbl]
     fprintf(out_dest, '\n==================================================================================================================================================================\n');
-    fprintf(out_dest, ' FULL-EPOCH [-0.5, 2.4s] TRIAL OUTLIER REPORT ({C3, C4, F3 + 32-CH MEDIAN}, 25:50 uV, >=2/3 KEEP RULE)\n');
+    fprintf(out_dest, ' FULL-EPOCH [-0.5, 2.4s] TRIAL OUTLIER REPORT ({C3, C4, F3, T7, T8 + 32-CH MEDIAN}, 25:50 uV, >=2/3 KEEP RULE)\n');
     fprintf(out_dest, '==================================================================================================================================================================\n');
     fprintf(out_dest, '%-4s | %-10s | %-7s | %-7s | %-18s | %-13s | %-13s | %-7s | %-8s | %s\n', ...
         'Subj', 'Condition', 'Kept/Tr', 'Rej (n)', 'Thresh / MAD', 'MaxKeptDrift', 'MaxKeptMADR', 'Capped?', 'Excluded', 'Rejected Trial Indices');
@@ -486,7 +496,7 @@ for out_dest = [1, fid_tbl]
 end
 fclose(fid_tbl);
 
-% --- 4. SAVE 600 PPI PNG VERIFICATION FIGURES FOR ALL SUBJECTS ---
+% --- 4. SAVE 600 PPI PNG VERIFICATION FIGURES (WITH TOP TITLE INSIDE TILEDLAYOUT) ---
 fprintf('\nGenerating and saving 600 ppi PNG Trial Screening figures for all %d subjects...\n', num_all_subjs);
 
 for s = all_target_subjs
@@ -495,9 +505,11 @@ for s = all_target_subjs
     d_thresh_mis = screening_stats(s).P3_missing.drift_thresh_uV;
     mad_mis      = screening_stats(s).P3_missing.mad_mult;
     
-    fig_verify = figure('Position', [50, 50, 1700, 900], 'Visible', 'off', ...
+    fig_verify = figure('Position', [50, 50, 1700, 950], 'Visible', 'off', 'Color', 'w', ...
         'Name', sprintf('Subject %d Trial Screening & ERP Cleanup', s));
-    tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    
+    % Use t_verify handle so title(t_verify, ...) is never cropped by exportgraphics
+    t_verify = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
     
     erp_p1_clean = squeeze(mean(data_all_conds.Raw.P1{s}(chan_idx, :, :), 3, 'omitnan'));
     erp_500_bef  = squeeze(mean(screening_stats(s).P3_500.X_before(chan_idx, :, :), 3, 'omitnan'));
@@ -546,7 +558,7 @@ for s = all_target_subjs
     end
 
     % ================= ROW 1: RAND 500 =================
-    nexttile(1); hold on; set(gca, 'FontSize', 14);
+    nexttile(t_verify, 1); hold on; set(gca, 'FontSize', 14);
     bad_tr_500 = screening_stats(s).P3_500.bad_trials;
     tr_idx_500 = 1:length(bad_tr_500);
     
@@ -562,7 +574,7 @@ for s = all_target_subjs
     title(sprintf('Rand 500 Screening (Rej: %d/%d)', sum(bad_tr_500), length(bad_tr_500)), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on; ylim(ylim_col1);
     
-    nexttile(2); hold on; set(gca, 'FontSize', 14);
+    nexttile(t_verify, 2); hold on; set(gca, 'FontSize', 14);
     for tr = 1:size(X_bef_500, 3)
         trace_c3 = tr_500_bc(:, tr);
         if bad_tr_500(tr)
@@ -582,7 +594,7 @@ for s = all_target_subjs
     title(sprintf('Rand 500 Traces (\\pm%g \\muV Bounds, %.2f MAD)', d_thresh_500, mad_500), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
     
-    nexttile(3); hold on; set(gca, 'FontSize', 14);
+    nexttile(t_verify, 3); hold on; set(gca, 'FontSize', 14);
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     yline(0, 'k:', 'HandleVisibility', 'off');
     plot(time_s, erp_500_bef, '--', 'Color', [0.9 0.6 0.1 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand 500 (Before)');
@@ -594,7 +606,7 @@ for s = all_target_subjs
     legend('Location', 'best'); grid on;
 
     % ================= ROW 2: RAND NULL =================
-    nexttile(4); hold on; set(gca, 'FontSize', 14);
+    nexttile(t_verify, 4); hold on; set(gca, 'FontSize', 14);
     bad_tr_mis = screening_stats(s).P3_missing.bad_trials;
     tr_idx_mis = 1:length(bad_tr_mis);
     
@@ -610,7 +622,7 @@ for s = all_target_subjs
     title(sprintf('Rand Null Screening (Rej: %d/%d)', sum(bad_tr_mis), length(bad_tr_mis)), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on; ylim(ylim_col1);
     
-    nexttile(5); hold on; set(gca, 'FontSize', 14);
+    nexttile(t_verify, 5); hold on; set(gca, 'FontSize', 14);
     for tr = 1:size(X_bef_mis, 3)
         trace_c3 = tr_mis_bc(:, tr);
         if bad_tr_mis(tr)
@@ -630,7 +642,7 @@ for s = all_target_subjs
     title(sprintf('Rand Null Traces (\\pm%g \\muV Bounds, %.2f MAD)', d_thresh_mis, mad_mis), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
     
-    nexttile(6); hold on; set(gca, 'FontSize', 14);
+    nexttile(t_verify, 6); hold on; set(gca, 'FontSize', 14);
     xline(0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     yline(0, 'k:', 'HandleVisibility', 'off');
     plot(time_s, erp_mis_bef, '--', 'Color', [0.2 0.7 0.9 0.4], 'LineWidth', 1.8, 'DisplayName', 'Rand Null (Before)');
@@ -641,10 +653,11 @@ for s = all_target_subjs
     title(sprintf('S%d C3 ERP: Rand Null', s), 'FontSize', 16, 'FontWeight', 'bold');
     legend('Location', 'best'); grid on;
     
+    % Attach top title directly to t_verify so exportgraphics NEVER crops it out
     excl_tag = '';
     if subj_excluded_2_3(s), excl_tag = ' [EXCLUDED: <2/3 CLEAN TRIALS]'; end
-    sgtitle(sprintf('Subject %d Screening ({C3,C4,F3+Med}, [-0.5,2.4s])%s | Rand 500: %g \\muV, %.2f MAD | Rand Null: %g \\muV, %.2f MAD', ...
-        s, excl_tag, d_thresh_500, mad_500, d_thresh_mis, mad_mis), 'FontSize', 18, 'FontWeight', 'bold');
+    title(t_verify, sprintf('Subject %d Trial Screening%s (Rand 500: %g \\muV, %.2f MAD | Rand Null: %g \\muV, %.2f MAD)', ...
+        s, excl_tag, d_thresh_500, mad_500, d_thresh_mis, mad_mis), 'FontSize', 20, 'FontWeight', 'bold');
     
     fig_png_path = fullfile(screening_fig_dir, sprintf('Subject_%02d_Trial_Screening_32Ch_600ppi.png', s));
     try
@@ -663,7 +676,7 @@ save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
 cfg.group_A = {'P2_500', 'P3_500'};
-cfg.group_B = {'P2_2000', 'P3_missing', 'BLA'};
+cfg.group_B = {'P2_2000', 'P3_missing'}; % , 'BLA'
 cfg.all_conds = [{cfg.ref_cond}, cfg.group_A, cfg.group_B];
 
 aggregate_spectra = struct();
