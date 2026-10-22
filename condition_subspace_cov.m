@@ -681,8 +681,8 @@ aggregate_G       = struct();
 aggregate_lat     = struct();
 aggregate_sust    = struct();
 
-subj_group_names = {'All_Subjects', 'Cluster_1', 'Cluster_2'};
-fig_tags         = {'All_Subjects', 'Cluster1', 'Cluster2'};
+subj_group_names = {'All_Subjects', 'Cluster_2', 'Cluster_1'};
+fig_tags         = {'All_Subjects', 'Cluster2', 'Cluster1'};
 cluster1_subjs   = [];
 cluster2_subjs   = [];
 
@@ -1149,8 +1149,8 @@ for band_idx = 1:length(bands_to_process)
     
     subj_groups  = {all_subjs, g1_subjs, g2_subjs};
     cohort_Vital = {sprintf('Average over %d subjects', length(all_subjs)), ...
-                    sprintf('Cluster 1 (k-means, n=%d: %s)', length(g1_subjs), mat2str(g1_subjs)), ...
-                    sprintf('Cluster 2 (k-means, n=%d: %s)', length(g2_subjs), mat2str(g2_subjs))};
+                sprintf('Cluster 2, n=%d', length(g1_subjs)), ...
+                sprintf('Cluster 1, n=%d', length(g2_subjs))};
     num_groups   = length(subj_groups);
     
     time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
@@ -2202,7 +2202,12 @@ close(fig3B);
 %% =========================================================================
 %% AGGREGATE FIGURE 5A: MULTI-BAND LOG(R) REDISTRIBUTION (3x2 GRID + STATS)
 %% =========================================================================
-disp('Generating Figure 5A: Multi-Band log(r) Subspace Redistribution (All Subjects & Split Cohorts)...');
+disp('Generating Figure 5A: Multi-Band log(r) Subspace Redistribution (All Subjects, Cluster 2 & Cluster 1)...');
+
+% Map g = 1 -> All Subjects, g = 2 (Subjs 4-11) -> Cluster 2, g = 3 (Other Subjs) -> Cluster 1
+subj_group_names = {'All_Subjects', 'Cluster_2', 'Cluster_1'};
+fig_tags         = {'All_Subjects', 'Cluster2', 'Cluster1'};
+
 plot_bands_filt = {'Alpha', 'Beta'};
 band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
     {[0 0.4470 0.7410], [0.8500 0.3250 0.0980]});
@@ -2914,4 +2919,4 @@ for g = 1:length(subj_group_names)
     try pause(0.5); saveas(fig5D, [save_file_5d, '.svg']); saveas(fig5D, [save_file_5d, '.png']); catch, end
     close(fig5D);
 end
-disp('All analyses completed successfully (All Subjects + Cohort 1 & Cohort 2).');
+disp('All analyses completed successfully (All Subjects + Cluster 2 & Cluster 1).');
