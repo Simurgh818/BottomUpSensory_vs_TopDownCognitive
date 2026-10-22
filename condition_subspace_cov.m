@@ -681,8 +681,10 @@ aggregate_G       = struct();
 aggregate_lat     = struct();
 aggregate_sust    = struct();
 
-subj_group_names = {'All_Subjects', 'Subjs_4_to_11', 'Other_Subjects'};
-fig_tags         = {'All_Subjects', 'Cohort1', 'Cohort2'};
+subj_group_names = {'All_Subjects', 'Cluster_1', 'Cluster_2'};
+fig_tags         = {'All_Subjects', 'Cluster1', 'Cluster2'};
+cluster1_subjs   = [];
+cluster2_subjs   = [];
 
 valid_retained_subjs = find(~subj_excluded_2_3(:))';
 fprintf('\n======================================================\n');
@@ -1050,19 +1052,105 @@ for band_idx = 1:length(bands_to_process)
     close(figC);
 
     % ------------------------------------------------------------------
+    % PRINCIPLED K-MEANS CLUSTERING ON FIG 3C SIMILARITY MATRIX (RAW Xi_1)
+    % ------------------------------------------------------------------
+    if band_idx == 1 % Define participant clusters from Raw P1 (Figure 3c)
+        rng(cfg.seed); % Fixed seed for reproducible k-means
+        sim_mat_xi1 = subj_subj_sim(:, :, 1); % [n_ret x n_ret] cosine similarity for \xi_1
+        
+        % Replace self-similarity diagonal (1.0) with each subject's mean off-diagonal
+        % similarity so Euclidean distance reflects shared topography rather than identity
+        sim_features = sim_mat_xi1;
+        for ii = 1:n_ret
+            off_diag = sim_mat_xi1(ii, [1:ii-1, ii+1:n_ret]);
+            sim_features(ii, ii) = mean(off_diag, 'omitnan');
+        end
+        
+        % Run k-means with k = 2 clusters
+        [km_idx, ~] = kmeans(sim_features, 2, 'Replicates', 100, 'Distance', 'sqeuclidean');
+        
+        % Order clusters so Cluster 1 is ALWAYS the high-similarity (coherent) group
+        c1_mask = (km_idx == 1);
+        c2_mask = (km_idx == 2);
+        mean_sim_1 = mean(sim_mat_xi1(c1_mask, c1_mask), 'all', 'omitnan');
+        mean_sim_2 = mean(sim_mat_xi1(c2_mask, c2_mask), 'all', 'omitnan');
+        if mean_sim_2 > mean_sim_1
+            km_idx = 3 - km_idx; % Swap labels 1 and 2
+            c1_mask = (km_idx == 1);
+            c2_mask = (km_idx == 2);
+        end
+        
+        cluster1_subjs = valid_retained_subjs(c1_mask);
+        cluster2_subjs = valid_retained_subjs(c2_mask);
+        
+        sil_vals = silhouette(sim_features, km_idx, 'sqeuclidean');
+        mean_sil = mean(sil_vals, 'omitnan');
+        
+        for dest = [1, fid_sum]
+            fprintf(dest, '\n--- Principled k-Means Clustering on Fig 3c Similarity Matrix (Raw Xi_1, k=2) ---\n');
+            fprintf(dest, 'Cluster 1 (High-Sim, n=%d): Subjects %s (Mean Within-Sim = %.3f)\n', ...
+                length(cluster1_subjs), mat2str(cluster1_subjs), ...
+                mean(sim_mat_xi1(c1_mask, c1_mask), 'all', 'omitnan'));
+            fprintf(dest, 'Cluster 2 (Low-Sim,  n=%d): Subjects %s (Mean Within-Sim = %.3f)\n', ...
+                length(cluster2_subjs), mat2str(cluster2_subjs), ...
+                mean(sim_mat_xi1(c2_mask, c2_mask), 'all', 'omitnan'));
+            fprintf(dest, 'Mean Silhouette Score: %.3f\n', mean_sil);
+            fprintf(dest, '---------------------------------------------------------------------------------\n');
+        end
+        
+        % Save Cluster-Sorted Similarity Matrix for Figure 3c / Figure 5
+        [~, sort_ord] = sort(km_idx, 'ascend');
+        n_c1 = sum(km_idx == 1);
+        sorted_subj_labels = arrayfun(@(x) sprintf('S%d', x), valid_retained_subjs(sort_ord), 'UniformOutput', false);
+        
+        figC_clust = figure('Position', [100, 100, 300 * cfg.m, 360], 'Visible', 'off', 'Color', 'w');
+        tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
+        for k = 1:cfg.m
+            nexttile; hold on;
+            imagesc(subj_subj_sim(sort_ord, sort_ord, k));
+            colormap('jet'); clim([0 1]); axis square; axis ij;
+            xlim([0.5, n_ret + 0.5]); ylim([0.5, n_ret + 0.5]);
+            
+            % Draw white dashed boundary around Cluster 1
+            plot([0.5, n_c1+0.5, n_c1+0.5, 0.5, 0.5], [0.5, 0.5, n_c1+0.5, n_c1+0.5, 0.5], ...
+                'w--', 'LineWidth', 2.0);
+            
+            title(sprintf('\\xi_%d', k), 'FontSize', 18, 'FontWeight', 'bold');
+            xticks(1:n_ret); xticklabels(sorted_subj_labels); xtickangle(90);
+            yticks(1:n_ret);
+            if k == 1
+                yticklabels(sorted_subj_labels);
+                ylabel('Cluster-Sorted Subjects', 'FontSize', 12, 'FontWeight', 'bold');
+            else
+                yticklabels({});
+            end
+            set(gca, 'FontSize', 9);
+        end
+        cb_c = colorbar; cb_c.Layout.Tile = 'east';
+        cb_c.Label.String = 'Absolute Cosine Similarity'; cb_c.Label.FontSize = 14;
+        sgtitle(sprintf('k-Means Sorted Component Consistency (Cluster 1: n=%d, Cluster 2: n=%d)', ...
+            length(cluster1_subjs), length(cluster2_subjs)), 'FontSize', 18, 'FontWeight', 'bold');
+        
+        save(fullfile(group_dir, 'kmeans_clusters.mat'), ...
+            'km_idx', 'cluster1_subjs', 'cluster2_subjs', 'mean_sil', 'sort_ord');
+        saveas(figC_clust, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim_Clustered.png'));
+        close(figC_clust);
+    end
+
+    % ------------------------------------------------------------------
     %% CHECKPOINT 2, 3a & 3b: COHORT DEFINITIONS, TABLES & FIGURES
     % ------------------------------------------------------------------
     subj_mean_log_r = squeeze(mean(log_r_splits, 3, 'omitnan')); 
     subj_mean_traj  = squeeze(mean(traj_splits, 4, 'omitnan'));  
     
     all_subjs = valid_retained_subjs;                     
-    g1_subjs  = intersect(4:11, valid_retained_subjs);    
-    g2_subjs  = setdiff(valid_retained_subjs, g1_subjs);  
+    g1_subjs  = cluster1_subjs;    
+    g2_subjs  = cluster2_subjs;  
     
     subj_groups  = {all_subjs, g1_subjs, g2_subjs};
     cohort_Vital = {sprintf('Average over %d subjects', length(all_subjs)), ...
-                    sprintf('Subjs 4 to 11, n=%d', length(g1_subjs)), ...
-                    sprintf('Other Subjs, n=%d', length(g2_subjs))};
+                    sprintf('Cluster 1 (k-means, n=%d: %s)', length(g1_subjs), mat2str(g1_subjs)), ...
+                    sprintf('Cluster 2 (k-means, n=%d: %s)', length(g2_subjs), mat2str(g2_subjs))};
     num_groups   = length(subj_groups);
     
     time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
@@ -1453,7 +1541,7 @@ for band_idx = 1:length(bands_to_process)
             end
 
             sgtitle( ...
-                sprintf('Stimulus Delivered: Spatial Reconfiguration (\\xi_%d) [%s | %s]', ...
+                sprintf('Stimulus Delivered: Direction (\\xi_%d) [%s | %s]', ...
                 k, band_name, cohort_disp), ...
                 'FontSize', 18, ...
                 'FontWeight', 'bold');
@@ -1559,7 +1647,7 @@ for band_idx = 1:length(bands_to_process)
             end
 
             sgtitle( ...
-                sprintf('Stimulus Omitted / Delayed: Spatial Reconfiguration (\\xi_%d) [%s | %s]', ...
+                sprintf('Stimulus Omitted / Delayed: Direction (\\xi_%d) [%s | %s]', ...
                 k, band_name, cohort_disp), ...
                 'FontSize', 18, ...
                 'FontWeight', 'bold');
@@ -1797,7 +1885,7 @@ try
 catch
     print(fig1B, fig1B_out_png, '-dpng', '-r600');
 end
-
+close(fig1B);
 %% =========================================================================
 %% FIGURE 1C: MULTI-CHANNEL STACKED ERPs (1x5 LAYOUT, [-0.6, 1.0 s] WINDOW)
 %% =========================================================================
@@ -1998,7 +2086,7 @@ try
 catch
     print(fig1C, fig1C_out_png, '-dpng', '-r600');
 end
-
+close(fig1C);
 %% =========================================================================
 %% FIGURE 2: 4-ROW TOPOPLOTS (RAW, ALPHA, BETA, BETA/ALPHA) OVER [-0.2, 1.0 s]
 %% =========================================================================
