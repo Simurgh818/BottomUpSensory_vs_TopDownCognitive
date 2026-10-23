@@ -338,7 +338,7 @@ end
 opt_mode    = 'per_subject';
 drift_grid  = 35 : 1 : 60;       % Conservative drift floor: 35 to 60 uV (avoids rejecting clean ERPs <35 uV)
 mad_grid    = 4.5 : 0.25 : 10.0; % Conservative MAD floor: 4.5 to 10.0
-min_keep_p3 = 20;                % Require >= 20/30 (2/3) kept trials
+min_keep_p3 = 24;                % Require >= 75% (3/$) kept trials
 
 cost_surface   = inf(length(drift_grid), length(mad_grid), length(target_subjs));
 null_abs_val   = nan(length(drift_grid), length(mad_grid), length(target_subjs));

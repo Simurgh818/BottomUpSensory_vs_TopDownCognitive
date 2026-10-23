@@ -169,7 +169,7 @@ cfg.fs            = fs;
 cfg.tStart        = -1.000;            
 cfg.win           = [0.000, 1.000];    
 cfg.base          = [-1.000, -0.500];  % 500 ms pre-cue baseline [-1.0, -0.5 s]
-cfg.nTrialMatch   = 20;                % Matched to 2/3 clean trial floor (20 trials)
+cfg.nTrialMatch   = 20;                % Matched clean trial subsampling floor
 cfg.nRep          = 50;                
 cfg.m             = 6;                 
 cfg.seed          = 20260910;
@@ -241,11 +241,11 @@ smooth_pts     = round(0.100 * cfg.fs);
 sat_thresh_uV  = 100;                   
 ext_roi        = core_roi;
 
-% --- CONSERVATIVE GRID SEARCH & 2/3 RETENTION PARAMETERS ---
+% --- CONSERVATIVE GRID SEARCH & >=80% RETENTION PARAMETERS ---
 drift_grid  = 35 : 1 : 60;       % Conservative drift floor: 35 to 60 uV
 mad_grid    = 4.5 : 0.25 : 10.0; % Conservative MAD floor: 4.5 to 10.0 MAD
-min_keep_30 = 20;                % Guarantee >= 20/30 (66.7%) kept trials
-min_keep_60 = 40;                % Guarantee >= 40/60 (66.7%) kept trials
+min_keep_30 = 24;                % Guarantee >= 24/30 (80.0%) kept trials (excludes Subj 3 & Subj 14)
+min_keep_60 = 48;                % Guarantee >= 48/60 (80.0%) kept trials (excludes Subj 3 & Subj 14)
 
 % --- 1. PRE-COMPUTE TRIAL METRICS OVER [-0.5, 2.4s] ---
 precomp = struct();
@@ -426,7 +426,7 @@ for s = all_target_subjs
     
     if subj_excluded_2_3(s)
         tbl_Subj_Excluded(tbl_Subj == s) = true;
-        fprintf('  >>> WARNING: Subject %02d FAILED the >=2/3 clean trial retention rule and will be EXCLUDED from group analyses.\n', s);
+        fprintf('  >>> WARNING: Subject %02d FAILED the >=80%% clean trial retention rule and will be EXCLUDED from group analyses.\n', s);
     end
     
     if save_trial_cleaned_sets
@@ -473,7 +473,7 @@ try writetable(Outlier_Summary_Table, xlsx_table_path); catch, end
 fid_tbl = fopen(txt_table_path, 'w');
 for out_dest = [1, fid_tbl]
     fprintf(out_dest, '\n==================================================================================================================================================================\n');
-    fprintf(out_dest, ' FULL-EPOCH [-0.5, 2.4s] TRIAL OUTLIER REPORT (CONSERVATIVE GRID, >=2/3 KEEP RULE)\n');
+    fprintf(out_dest, ' FULL-EPOCH [-0.5, 2.4s] TRIAL OUTLIER REPORT (CONSERVATIVE GRID, >=80%% KEEP RULE)\n');
     fprintf(out_dest, '==================================================================================================================================================================\n');
     fprintf(out_dest, '%-4s | %-10s | %-7s | %-7s | %-18s | %-13s | %-13s | %-7s | %-8s | %s\n', ...
         'Subj', 'Condition', 'Kept/Tr', 'Rej (n)', 'Thresh / MAD', 'MaxKeptDrift', 'MaxKeptMADR', 'Capped?', 'Excluded', 'Rejected Trial Indices');
@@ -651,7 +651,7 @@ for s = all_target_subjs
     
     % Attach top title directly to t_verify so exportgraphics NEVER crops it out
     excl_tag = '';
-    if subj_excluded_2_3(s), excl_tag = ' [EXCLUDED: <2/3 CLEAN TRIALS]'; end
+    if subj_excluded_2_3(s), excl_tag = ' [EXCLUDED: <80% CLEAN TRIALS]'; end
     title(t_verify, sprintf('Subject %d Trial Screening%s (Rand 500: %g \\muV, %.2f MAD | Rand Null: %g \\muV, %.2f MAD)', ...
         s, excl_tag, d_thresh_500, mad_500, d_thresh_mis, mad_mis), 'FontSize', 20, 'FontWeight', 'bold');
     
@@ -667,7 +667,7 @@ end
 save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening_stats', 'Outlier_Summary_Table', 'subj_excluded_2_3');
 
 %% =========================================================================
-%% MASTER LOOP: PROCESS FREQUENCY BANDS (CHECKPOINTS 1, 2, 3a, 3b + TABLES)
+%% MASTER LOOP: PROCESS FREQUENCY BANDS (ALL RETAINED SUBJECTS ONLY, EX. S3 & S14)
 %% =========================================================================
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
@@ -681,17 +681,18 @@ aggregate_G       = struct();
 aggregate_lat     = struct();
 aggregate_sust    = struct();
 
-subj_group_names = {'All_Subjects', 'Cluster_2', 'Cluster_1'};
-fig_tags         = {'All_Subjects', 'Cluster2', 'Cluster1'};
-cluster1_subjs   = [];
-cluster2_subjs   = [];
+% Single pooled cohort (All Retained Subjects, excluding S3 and S14)
+subj_group_names = {'All_Subjects'};
+fig_tags         = {'All_Subjects'};
 
+subj_excluded_2_3(intersect([3, 14], 1:num_all_subjs)) = true;
 valid_retained_subjs = find(~subj_excluded_2_3(:))';
+
 fprintf('\n======================================================\n');
 fprintf(' RETAINED SUBJECTS FOR GROUP ANALYSIS (n=%d/%d): %s\n', ...
     length(valid_retained_subjs), num_all_subjs, mat2str(valid_retained_subjs));
 if any(subj_excluded_2_3)
-    fprintf(' EXCLUDED SUBJECTS (<2/3 Clean Trials): %s\n', mat2str(find(subj_excluded_2_3(:))'));
+    fprintf(' EXCLUDED SUBJECTS (<80%% Clean Trials): %s\n', mat2str(find(subj_excluded_2_3(:))'));
 end
 fprintf('======================================================\n');
 
@@ -774,7 +775,6 @@ for band_idx = 1:length(bands_to_process)
         for k = 1:cfg.m
             ax_b = subplot(n_rows_B, cfg.m, (r_idx - 1) * cfg.m + k);
             
-            % Adjust subplot width slightly to leave room on the right for the shared colorbar
             pos_b = get(ax_b, 'Position');
             pos_b(1) = pos_b(1) * 0.92;
             pos_b(3) = pos_b(3) * 0.92;
@@ -787,12 +787,10 @@ for band_idx = 1:length(bands_to_process)
                 clim(ax_b, [-0.4, 0.4]);
             end
             
-            % Column header (\xi_1 ... \xi_6) on the top row
             if r_idx == 1
                 title(sprintf('\\xi_%d', k), 'FontSize', 18, 'FontWeight', 'bold');
             end
             
-            % Row label (Subj 1 ... Subj 4) on the first column (kept visible after topoplot turns axis off)
             if k == 1
                 text(-0.75, 0, sprintf('Subj %d', s), 'Rotation', 90, ...
                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
@@ -801,7 +799,6 @@ for band_idx = 1:length(bands_to_process)
         end
     end
     
-    % Shared colorbar on the right matching [-0.4, 0.4] Spatial Weight (a.u.)
     cb_B = colorbar('Position', [0.90, 0.15, 0.02, 0.72]);
     cb_B.Limits = [-0.4, 0.4];
     cb_B.Ticks  = -0.4 : 0.2 : 0.4;
@@ -1052,106 +1049,15 @@ for band_idx = 1:length(bands_to_process)
     close(figC);
 
     % ------------------------------------------------------------------
-    % PRINCIPLED K-MEANS CLUSTERING ON FIG 3C SIMILARITY MATRIX (RAW Xi_1)
-    % ------------------------------------------------------------------
-    if band_idx == 1 % Define participant clusters from Raw P1 (Figure 3c)
-        rng(cfg.seed); % Fixed seed for reproducible k-means
-        sim_mat_xi1 = subj_subj_sim(:, :, 1); % [n_ret x n_ret] cosine similarity for \xi_1
-        
-        % Replace self-similarity diagonal (1.0) with each subject's mean off-diagonal
-        % similarity so Euclidean distance reflects shared topography rather than identity
-        sim_features = sim_mat_xi1;
-        for ii = 1:n_ret
-            off_diag = sim_mat_xi1(ii, [1:ii-1, ii+1:n_ret]);
-            sim_features(ii, ii) = mean(off_diag, 'omitnan');
-        end
-        
-        % Run k-means with k = 2 clusters
-        [km_idx, ~] = kmeans(sim_features, 2, 'Replicates', 100, 'Distance', 'sqeuclidean');
-        
-        % Order clusters so Cluster 1 is ALWAYS the high-similarity (coherent) group
-        c1_mask = (km_idx == 1);
-        c2_mask = (km_idx == 2);
-        mean_sim_1 = mean(sim_mat_xi1(c1_mask, c1_mask), 'all', 'omitnan');
-        mean_sim_2 = mean(sim_mat_xi1(c2_mask, c2_mask), 'all', 'omitnan');
-        if mean_sim_2 > mean_sim_1
-            km_idx = 3 - km_idx; % Swap labels 1 and 2
-            c1_mask = (km_idx == 1);
-            c2_mask = (km_idx == 2);
-        end
-        
-        cluster1_subjs = valid_retained_subjs(c1_mask);
-        cluster2_subjs = valid_retained_subjs(c2_mask);
-        
-        sil_vals = silhouette(sim_features, km_idx, 'sqeuclidean');
-        mean_sil = mean(sil_vals, 'omitnan');
-        
-        for dest = [1, fid_sum]
-            fprintf(dest, '\n--- Principled k-Means Clustering on Fig 3c Similarity Matrix (Raw Xi_1, k=2) ---\n');
-            fprintf(dest, 'Cluster 1 (High-Sim, n=%d): Subjects %s (Mean Within-Sim = %.3f)\n', ...
-                length(cluster1_subjs), mat2str(cluster1_subjs), ...
-                mean(sim_mat_xi1(c1_mask, c1_mask), 'all', 'omitnan'));
-            fprintf(dest, 'Cluster 2 (Low-Sim,  n=%d): Subjects %s (Mean Within-Sim = %.3f)\n', ...
-                length(cluster2_subjs), mat2str(cluster2_subjs), ...
-                mean(sim_mat_xi1(c2_mask, c2_mask), 'all', 'omitnan'));
-            fprintf(dest, 'Mean Silhouette Score: %.3f\n', mean_sil);
-            fprintf(dest, '---------------------------------------------------------------------------------\n');
-        end
-        
-        % Save Cluster-Sorted Similarity Matrix for Figure 3c / Figure 5
-        [~, sort_ord] = sort(km_idx, 'ascend');
-        n_c1 = sum(km_idx == 1);
-        sorted_subj_labels = arrayfun(@(x) sprintf('S%d', x), valid_retained_subjs(sort_ord), 'UniformOutput', false);
-        
-        figC_clust = figure('Position', [100, 100, 300 * cfg.m, 360], 'Visible', 'off', 'Color', 'w');
-        tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
-        for k = 1:cfg.m
-            nexttile; hold on;
-            imagesc(subj_subj_sim(sort_ord, sort_ord, k));
-            colormap('jet'); clim([0 1]); axis square; axis ij;
-            xlim([0.5, n_ret + 0.5]); ylim([0.5, n_ret + 0.5]);
-            
-            % Draw white dashed boundary around Cluster 1
-            plot([0.5, n_c1+0.5, n_c1+0.5, 0.5, 0.5], [0.5, 0.5, n_c1+0.5, n_c1+0.5, 0.5], ...
-                'w--', 'LineWidth', 2.0);
-            
-            title(sprintf('\\xi_%d', k), 'FontSize', 18, 'FontWeight', 'bold');
-            xticks(1:n_ret); xticklabels(sorted_subj_labels); xtickangle(90);
-            yticks(1:n_ret);
-            if k == 1
-                yticklabels(sorted_subj_labels);
-                ylabel('Cluster-Sorted Subjects', 'FontSize', 12, 'FontWeight', 'bold');
-            else
-                yticklabels({});
-            end
-            set(gca, 'FontSize', 9);
-        end
-        cb_c = colorbar; cb_c.Layout.Tile = 'east';
-        cb_c.Label.String = 'Absolute Cosine Similarity'; cb_c.Label.FontSize = 14;
-        sgtitle(sprintf('k-Means Sorted Component Consistency (Cluster 1: n=%d, Cluster 2: n=%d)', ...
-            length(cluster1_subjs), length(cluster2_subjs)), 'FontSize', 18, 'FontWeight', 'bold');
-        
-        save(fullfile(group_dir, 'kmeans_clusters.mat'), ...
-            'km_idx', 'cluster1_subjs', 'cluster2_subjs', 'mean_sil', 'sort_ord');
-        saveas(figC_clust, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim_Clustered.png'));
-        close(figC_clust);
-    end
-
-    % ------------------------------------------------------------------
-    %% CHECKPOINT 2, 3a & 3b: COHORT DEFINITIONS, TABLES & FIGURES
+    %% CHECKPOINT 2, 3a & 3b: ALL RETAINED SUBJECTS TABLES & FIGURES
     % ------------------------------------------------------------------
     subj_mean_log_r = squeeze(mean(log_r_splits, 3, 'omitnan')); 
     subj_mean_traj  = squeeze(mean(traj_splits, 4, 'omitnan'));  
     
-    all_subjs = valid_retained_subjs;                     
-    g1_subjs  = cluster1_subjs;    
-    g2_subjs  = cluster2_subjs;  
-    
-    subj_groups  = {all_subjs, g1_subjs, g2_subjs};
-    cohort_Vital = {sprintf('Average over %d subjects', length(all_subjs)), ...
-                sprintf('Cluster 2, n=%d', length(g1_subjs)), ...
-                sprintf('Cluster 1, n=%d', length(g2_subjs))};
-    num_groups   = length(subj_groups);
+    all_subjs    = valid_retained_subjs;                     
+    subj_groups  = {all_subjs};
+    cohort_Vital = {sprintf('Average over %d retained subjects (ex. S3, S14)', length(all_subjs))};
+    num_groups   = 1;
     
     time_mask_zoom = (t_centers >= -0.1) & (t_centers <= 1.0);
     time_mask_full = true(size(t_centers)); 
@@ -1251,7 +1157,7 @@ for band_idx = 1:length(bands_to_process)
         end
         
         % -----------------------------------------------------------------
-        % CHECKPOINT 2: SUBSPACE REDISTRIBUTION PER BAND & COHORT
+        % CHECKPOINT 2: SUBSPACE REDISTRIBUTION PER BAND
         % -----------------------------------------------------------------
         figChk2 = figure('Position', [100, 100, 1400, 600], 'Visible', 'off');
         tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
@@ -1269,7 +1175,7 @@ for band_idx = 1:length(bands_to_process)
         end
         grid on; xlim([0.8, cfg.m + 0.2]); xticks(1:cfg.m); ylim([cp2_y_min, cp2_y_max]);
         xlabel('Spatial Direction Index', 'FontSize', 20); ylabel('log(r_i) \pm SEM', 'FontSize', 20);
-        title(sprintf('Group A: Stimulus Delivered (%s)', cohort_disp), 'FontSize', 20, 'FontWeight', 'bold');
+        title(sprintf('Stimulus Delivered (%s)', cohort_disp), 'FontSize', 20, 'FontWeight', 'bold');
         legend('Location', 'best', 'FontSize', 14);
         
         nexttile; hold on; set(gca, 'FontSize', 18);
@@ -1286,7 +1192,7 @@ for band_idx = 1:length(bands_to_process)
         end
         grid on; xlim([0.8, cfg.m + 0.2]); xticks(1:cfg.m); ylim([cp2_y_min, cp2_y_max]);
         xlabel('Spatial Direction Index', 'FontSize', 20); ylabel('log(r_i) \pm SEM', 'FontSize', 20);
-        title(sprintf('Group B: Omission (%s)', cohort_disp), 'FontSize', 20, 'FontWeight', 'bold');
+        title(sprintf('Stimulus Omitted / Delayed (%s)', cohort_disp), 'FontSize', 20, 'FontWeight', 'bold');
         legend('Location', 'best', 'FontSize', 14);
         sgtitle(sprintf('Subspace Redistribution: %s %s', band_name, cfg.ref_cond), 'FontSize', 24, 'FontWeight', 'bold');
         
@@ -1374,18 +1280,14 @@ for band_idx = 1:length(bands_to_process)
         % =========================================================================
         % CHECKPOINT 3b: SINGLE TOPOPLOT + TRAJECTORY FILMSTRIPS (ALL 6 DIRECTIONS)
         % =========================================================================
-        % Suppress TiledChartLayout position warnings triggered internally by EEGLAB's topoplot
         orig_warn_state = warning('off', 'all'); 
 
-        % 1. Calculate the Cohort-Specific Spatial Direction (Xi_bar) using curr_subjs
         Xi_bar = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
-        Xi_bar = Xi_bar ./ vecnorm(Xi_bar);   % Normalize to unit length
+        Xi_bar = Xi_bar ./ vecnorm(Xi_bar);
 
-        % Define the 0.2s to 0.8s window indices for the single topoplot
         topo_win_s = [0.2, 0.8];
         topo_idx = find(time_s >= topo_win_s(1) & time_s <= topo_win_s(2));
 
-        % Define conditions and colors
         groupA_conds = {'P1', 'P2_500', 'P3_500'};
         groupB_conds = {'P1', 'P2_2000', 'P3_missing'};
         colors_A = {
@@ -1400,13 +1302,9 @@ for band_idx = 1:length(bands_to_process)
             [0.494 0.184 0.556]
         };
 
-        % Loop through all spatial directions
         for k = 1:cfg.m
             xi = Xi_bar(:, k);
 
-            % -----------------------------------------------------------------
-            % PRE-COMPUTE Y-LIMITS FOR THIS DIRECTION & COHORT
-            % -----------------------------------------------------------------
             time_mask_zoom = (t_centers >= -0.1 & t_centers <= 1.0);
             zoom_vals_up = reshape( ...
                 grp_mean_traj(:, k, time_mask_zoom) + ...
@@ -1422,9 +1320,6 @@ for band_idx = 1:length(bands_to_process)
                 max_y = 10;
             end
 
-            % -----------------------------------------------------------------
-            % COLOR LIMITS FROM THE CUED (P1) TOPOGRAPHY FOR THIS COHORT & DIRECTION
-            % -----------------------------------------------------------------
             if isfield(current_data, cfg.ref_cond) && ...
                     ~isempty(current_data.(cfg.ref_cond))
                 erp_cued = cat(3, current_data.(cfg.ref_cond){curr_subjs});
@@ -1439,15 +1334,11 @@ for band_idx = 1:length(bands_to_process)
                 c_lim = [-1, 1];
             end
 
-            % Avoid invalid or degenerate color limits
-            if any(~isfinite(c_lim)) || ...
-                    diff(c_lim) <= eps(max(abs(c_lim)))
-                c_mid = mean(c_lim(isfinite(c_lim)));
-                if isempty(c_mid) || ~isfinite(c_mid)
-                    c_mid = 0;
-                end
-                c_lim = c_mid + ...
-                    [-1, 1] * max(abs(c_mid) * 0.05, 1e-6);
+            if any(~isfinite(c_lim)) || diff(c_lim) <= eps(max(abs(c_lim)))
+                c_lim = [-1, 1];
+            else
+                max_abs_c = max(abs(c_lim));
+                c_lim = [-max_abs_c, max_abs_c];
             end
 
             % -----------------------------------------------------------------
@@ -1455,36 +1346,32 @@ for band_idx = 1:length(bands_to_process)
             % -----------------------------------------------------------------
             n_conds_A = length(groupA_conds);
             figA = figure( ...
-                'Position', [50, 50, 850, 250 * n_conds_A], ...
+                'Position', [50, 50, 900, 260 * n_conds_A], ...
                 'Color', 'w', ...
                 'Name', sprintf('Dir %d - Stimulus Delivered (%s)', k, cohort_disp), ...
                 'Visible', 'off');
-            % 3-column grid: Col 1 for Topoplot, Cols 2-3 for Trajectory
-            tiledlayout(n_conds_A, 3, ...
+            tA = tiledlayout(n_conds_A, 3, ...
                 'TileSpacing', 'compact', ...
-                'Padding', 'tight');
+                'Padding', 'normal');
 
             for c = 1:n_conds_A
                 cond = groupA_conds{c};
                 col = colors_A{c};
                 c_name_clean = clean_name(cond);
 
-                % Cohort-specific ERP for the topography (using curr_subjs)
                 erp_all = cat(3, current_data.(cond){curr_subjs});
                 avg_data = mean(erp_all, 3, 'omitnan');
                 topo_vector = xi * mean( ...
                     xi' * avg_data(:, topo_idx), 2, 'omitnan');
                 topo_vector = topo_vector(:);
 
-                % COL 1 (1 tile wide): Topoplot
-                ax_topo = nexttile([1, 1]);
+                ax_topo = nexttile(tA, [1, 1]);
                 topoplot(topo_vector, EEG.chanlocs, ...
                     'maplimits', c_lim, ...
                     'electrodes', 'on', ...
                     'style', 'map', ...
                     'shading', 'interp');
                 
-                % Trim excess horizontal whitespace around the head cartoon
                 xlim(ax_topo, [-0.58, 0.58]);
                 ylim(ax_topo, [-0.58, 0.62]);
                 colormap(ax_topo, 'jet');
@@ -1492,13 +1379,11 @@ for band_idx = 1:length(bands_to_process)
                 title(ax_topo, sprintf('%s (0.2-0.8s)', c_name_clean), ...
                     'FontSize', 12, 'FontWeight', 'bold');
 
-                % Attach colorbar without manually overriding .Position
                 cb = colorbar(ax_topo, 'eastoutside');
                 cb.Label.String = 'Amp (a.u.)';
                 cb.Label.FontSize = 10;
 
-                % COLS 2-3 (2 tiles wide): Trajectory
-                ax_traj = nexttile([1, 2]);
+                ax_traj = nexttile(tA, [1, 2]);
                 hold(ax_traj, 'on');
                 patch(ax_traj, ...
                     [cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], ...
@@ -1540,13 +1425,12 @@ for band_idx = 1:length(bands_to_process)
                 end
             end
 
-            sgtitle( ...
+            title(tA, ...
                 sprintf('Stimulus Delivered: Direction (\\xi_%d) [%s | %s]', ...
                 k, band_name, cohort_disp), ...
-                'FontSize', 18, ...
+                'FontSize', 16, ...
                 'FontWeight', 'bold');
 
-            % Include g_name so All_Subjects, Subjs_4_to_11, and Other_Subjects save separately
             save_file_A = fullfile(group_dir, ...
                 sprintf('Checkpoint3b_GroupA_Summary_Xi%d_%s.png', k, g_name));
             try
@@ -1561,36 +1445,32 @@ for band_idx = 1:length(bands_to_process)
             % -----------------------------------------------------------------
             n_conds_B = length(groupB_conds);
             figB = figure( ...
-                'Position', [100, 100, 850, 250 * n_conds_B], ...
+                'Position', [100, 100, 900, 260 * n_conds_B], ...
                 'Color', 'w', ...
                 'Name', sprintf('Dir %d - Stimulus Omitted or Delayed (%s)', k, cohort_disp), ...
                 'Visible', 'off');
-            % 3-column grid: Col 1 for Topoplot, Cols 2-3 for Trajectory
-            tiledlayout(n_conds_B, 3, ...
+            tB = tiledlayout(n_conds_B, 3, ...
                 'TileSpacing', 'compact', ...
-                'Padding', 'tight');
+                'Padding', 'normal');
 
             for c = 1:n_conds_B
                 cond = groupB_conds{c};
                 col = colors_B{c};
                 c_name_clean = clean_name(cond);
 
-                % Cohort-specific ERP for the topography (using curr_subjs)
                 erp_all = cat(3, current_data.(cond){curr_subjs});
                 avg_data = mean(erp_all, 3, 'omitnan');
                 topo_vector = xi * mean( ...
                     xi' * avg_data(:, topo_idx), 2, 'omitnan');
                 topo_vector = topo_vector(:);
 
-                % COL 1 (1 tile wide): Topoplot
-                ax_topo = nexttile([1, 1]);
+                ax_topo = nexttile(tB, [1, 1]);
                 topoplot(topo_vector, EEG.chanlocs, ...
                     'maplimits', c_lim, ...
                     'electrodes', 'on', ...
                     'style', 'map', ...
                     'shading', 'interp');
                 
-                % Trim excess horizontal whitespace around the head cartoon
                 xlim(ax_topo, [-0.58, 0.58]);
                 ylim(ax_topo, [-0.58, 0.62]);
                 colormap(ax_topo, 'jet');
@@ -1598,13 +1478,11 @@ for band_idx = 1:length(bands_to_process)
                 title(ax_topo, sprintf('%s (0.2-0.8s)', c_name_clean), ...
                     'FontSize', 12, 'FontWeight', 'bold');
 
-                % Attach colorbar without manually overriding .Position
                 cb = colorbar(ax_topo, 'eastoutside');
                 cb.Label.String = 'Amp (a.u.)';
                 cb.Label.FontSize = 10;
 
-                % COLS 2-3 (2 tiles wide): Trajectory
-                ax_traj = nexttile([1, 2]);
+                ax_traj = nexttile(tB, [1, 2]);
                 hold(ax_traj, 'on');
                 patch(ax_traj, ...
                     [cfg.win(1) cfg.win(2) cfg.win(2) cfg.win(1)], ...
@@ -1646,13 +1524,12 @@ for band_idx = 1:length(bands_to_process)
                 end
             end
 
-            sgtitle( ...
+            title(tB, ...
                 sprintf('Stimulus Omitted / Delayed: Direction (\\xi_%d) [%s | %s]', ...
                 k, band_name, cohort_disp), ...
-                'FontSize', 18, ...
+                'FontSize', 16, ...
                 'FontWeight', 'bold');
 
-            % Include g_name so All_Subjects, Subjs_4_to_11, and Other_Subjects save separately
             save_file_B = fullfile(group_dir, ...
                 sprintf('Checkpoint3b_GroupB_Summary_Xi%d_%s.png', k, g_name));
             try
@@ -1661,9 +1538,8 @@ for band_idx = 1:length(bands_to_process)
                 try saveas(figB, save_file_B); catch, warning('Could not save %s.', save_file_B); end
             end
             close(figB);
-        end % End loop through spatial directions
+        end
 
-        % Restore original warning state
         warning(orig_warn_state);
     end
 end
@@ -1676,58 +1552,36 @@ fprintf('\nAll Summary Tables printed and saved to: %s\n', summary_log_file);
 %% =========================================================================
 fprintf('\nGenerating Figure 1B: Channel C3 ERP Waveforms (Mean +/- STD)...\n');
 
-% -------------------------------------------------------------------------
-% 1. USER CONFIGURATION & PLOT PARAMETERS
-% -------------------------------------------------------------------------
-time_win = [-0.200, 1.000]; % Window of interest in seconds [-0.2 s to 1.0 s]
-use_sem  = false;           % Set false for Mean +/- STD (as requested); true for Mean +/- SEM
-norm_au  = false;           % Set true to normalize peak of P1 to 1.0 (Amplitude a.u.); false for Voltage (\muV)
+time_win = [-0.200, 1.000];
+use_sem  = false;
+norm_au  = false;
 
-% Identify Channel C3 index dynamically if not already assigned
 if ~exist('chan_c3', 'var') || isempty(chan_c3)
-    chan_c3 = 14; % Fallback default
+    chan_c3 = 14;
     if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
         match_idx = find(strcmpi({EEG.chanlocs.labels}, 'C3'), 1);
         if ~isempty(match_idx), chan_c3 = match_idx; end
     end
 end
 
-% Identify subjects to include (retained pool excluding S14)
-if exist('valid_retained_subjs', 'var') && ~isempty(valid_retained_subjs)
-    subjs_plot = valid_retained_subjs;
-else
-    subjs_plot = 1:length(data_all_conds.Raw.P1);
-    if isfield(data_all_conds.Raw.P1, 'subj_excluded_2_3')
-        subjs_plot = find(~subj_excluded_2_3(:))';
-    end
-end
+subjs_plot = valid_retained_subjs;
 n_subjs_plot = length(subjs_plot);
 
-% Time masking
 time_mask = (time_s >= time_win(1)) & (time_s <= time_win(2));
-t_eval    = time_s(time_mask); % 1D time vector in seconds
+t_eval    = time_s(time_mask);
 
-% -------------------------------------------------------------------------
-% 2. COLOR PALETTE (EXTRACTED DIRECTLY FROM CARTOON FIGURE)
-% -------------------------------------------------------------------------
-% Group A Colors
-c_P1     = [0.07, 0.35, 0.37]; % Dark Teal
-c_P2_500 = [0.47, 0.12, 0.08]; % Dark Maroon / Brown
-c_P3_500 = [0.88, 0.57, 0.10]; % Amber / Gold
+c_P1     = [0.07, 0.35, 0.37];
+c_P2_500 = [0.47, 0.12, 0.08];
+c_P3_500 = [0.88, 0.57, 0.10];
 
-% Group B Colors
-c_P2_2000 = [0.90, 0.59, 0.51]; % Light Coral / Salmon
-c_P3_null = [0.94, 0.75, 0.47]; % Light Gold / Sand
+c_P2_2000 = [0.90, 0.59, 0.51];
+c_P3_null = [0.94, 0.75, 0.47];
 
-% Top Banner Phase Colors
-c_banner_pre  = [0.10, 0.63, 0.63]; % Teal: Pre-stimulus [-0.2, 0.0] s
-c_banner_stim = [0.91, 0.54, 0.40]; % Coral: 500 ms Tactile Window [0.0, 0.5] s
-c_banner_post = [0.50, 0.50, 0.50]; % Gray: Post-stimulus Window [0.5, 1.0] s
+c_banner_pre  = [0.10, 0.63, 0.63];
+c_banner_stim = [0.91, 0.54, 0.40];
+c_banner_post = [0.50, 0.50, 0.50];
 
-% -------------------------------------------------------------------------
-% 3. EXTRACT SINGLE-SUBJECT MEAN C3 TRACES & COMPUTE GROUP STATS
-% -------------------------------------------------------------------------
-cond_list = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'}; % BLA removed
+cond_list = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
 erp_stats = struct();
 
 for c_i = 1:length(cond_list)
@@ -1736,9 +1590,7 @@ for c_i = 1:length(cond_list)
     
     for s_i = 1:n_subjs_plot
         s = subjs_plot(s_i);
-        raw_mat = data_all_conds.Raw.(c_name){s}; % [channels x time x trials]
-        
-        % Mean C3 trace across clean trials for subject s
+        raw_mat = data_all_conds.Raw.(c_name){s};
         c3_epoch = squeeze(raw_mat(chan_c3, time_mask, :));
         subj_traces(:, s_i) = mean(c3_epoch, 2, 'omitnan');
     end
@@ -1753,7 +1605,6 @@ for c_i = 1:length(cond_list)
     erp_stats.(c_name).std  = s_trace;
 end
 
-% Optional amplitude normalization to P1 peak (0 to 1.0 a.u.)
 if norm_au
     p1_peak = max(erp_stats.P1.mean);
     if p1_peak <= 0, p1_peak = 1; end
@@ -1767,9 +1618,6 @@ else
     y_label_str = 'Amplitude (\muV)';
 end
 
-% -------------------------------------------------------------------------
-% 4. COMPUTE COORDINATED Y-LIMITS
-% -------------------------------------------------------------------------
 all_max = []; all_min = [];
 for c_i = 1:length(cond_list)
     c_name = cond_list{c_i};
@@ -1787,44 +1635,35 @@ else
     ylim_shared = [floor((min_val - y_pad/2)*2)/2, ceil((max_val + y_pad)*2)/2];
 end
 
-% -------------------------------------------------------------------------
-% 5. RENDER CARTOON-STYLE PUBLICATION FIGURE
-% -------------------------------------------------------------------------
 fig1B = figure('Position', [100, 100, 1200, 480], 'Color', 'w', ...
     'Name', 'Figure 1B: Channel C3 Across Conditions');
 tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
 
-% ==================== SUBPLOT 1: GROUP A ====================
+% ==================== SUBPLOT 1: STIMULUS DELIVERED ====================
 ax1 = nexttile; hold on; set(gca, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.8);
 box off;
 
-% Horizontal zero line & vertical stimulus onset line
 yline(0, 'Color', [0.85 0.85 0.85], 'LineWidth', 1.2, 'HandleVisibility', 'off');
 xline(0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
 t_fill = [t_eval(:)', fliplr(t_eval(:)')];
 
-% P1
 fill(t_fill, [erp_stats.P1.mean' + erp_stats.P1.std', fliplr(erp_stats.P1.mean' - erp_stats.P1.std')], ...
     c_P1, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 plot(t_eval, erp_stats.P1.mean, 'Color', c_P1, 'LineWidth', 2.5);
 
-% P2-500
 fill(t_fill, [erp_stats.P2_500.mean' + erp_stats.P2_500.std', fliplr(erp_stats.P2_500.mean' - erp_stats.P2_500.std')], ...
     c_P2_500, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 plot(t_eval, erp_stats.P2_500.mean, 'Color', c_P2_500, 'LineWidth', 2.5);
 
-% P3-500
 fill(t_fill, [erp_stats.P3_500.mean' + erp_stats.P3_500.std', fliplr(erp_stats.P3_500.mean' - erp_stats.P3_500.std')], ...
     c_P3_500, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 plot(t_eval, erp_stats.P3_500.mean, 'Color', c_P3_500, 'LineWidth', 2.5);
 
-% In-Plot Condition Text Labels
 text(0.55, ylim_shared(2)*0.88, 'P1',     'Color', c_P1,     'FontSize', 18, 'FontWeight', 'bold');
 text(0.55, ylim_shared(2)*0.74, 'P2-500', 'Color', c_P2_500, 'FontSize', 18, 'FontWeight', 'bold');
 text(0.55, ylim_shared(2)*0.60, 'P3-500', 'Color', c_P3_500, 'FontSize', 18, 'FontWeight', 'bold');
 
-% Top Timeline Banner (Clipping off to sit cleanly on top axis line)
 b_height = (ylim_shared(2) - ylim_shared(1)) * 0.08;
 b_bot    = ylim_shared(2);
 b_top    = b_bot + b_height;
@@ -1836,34 +1675,29 @@ xlim([-0.2, 1.0]); ylim(ylim_shared);
 xlabel('Time (s)', 'FontSize', 20, 'FontWeight', 'bold');
 ylabel(y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
-% ==================== SUBPLOT 2: GROUP B ====================
+% ==================== SUBPLOT 2: STIMULUS OMITTED / DELAYED ====================
 ax2 = nexttile; hold on; set(gca, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.8);
 box off;
 
 yline(0, 'Color', [0.85 0.85 0.85], 'LineWidth', 1.2, 'HandleVisibility', 'off');
 xline(0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
-% P1 (Added to Group B comparison)
 fill(t_fill, [erp_stats.P1.mean' + erp_stats.P1.std', fliplr(erp_stats.P1.mean' - erp_stats.P1.std')], ...
     c_P1, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 plot(t_eval, erp_stats.P1.mean, 'Color', c_P1, 'LineWidth', 2.5);
 
-% P2-2000
 fill(t_fill, [erp_stats.P2_2000.mean' + erp_stats.P2_2000.std', fliplr(erp_stats.P2_2000.mean' - erp_stats.P2_2000.std')], ...
     c_P2_2000, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 plot(t_eval, erp_stats.P2_2000.mean, 'Color', c_P2_2000, 'LineWidth', 2.5);
 
-% P3-null (P3_missing)
 fill(t_fill, [erp_stats.P3_missing.mean' + erp_stats.P3_missing.std', fliplr(erp_stats.P3_missing.mean' - erp_stats.P3_missing.std')], ...
     c_P3_null, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
 plot(t_eval, erp_stats.P3_missing.mean, 'Color', c_P3_null, 'LineWidth', 2.5);
 
-% In-Plot Condition Text Labels
 text(0.55, ylim_shared(2)*0.88, 'P1',      'Color', c_P1,      'FontSize', 18, 'FontWeight', 'bold');
 text(0.55, ylim_shared(2)*0.74, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 18, 'FontWeight', 'bold');
 text(0.55, ylim_shared(2)*0.60, 'P3-null', 'Color', c_P3_null, 'FontSize', 18, 'FontWeight', 'bold');
 
-% Top Timeline Banner
 patch([-0.2, 0.0, 0.0, -0.2], [b_bot, b_bot, b_top, b_top], c_banner_pre,  'EdgeColor', 'none', 'Clipping', 'off');
 patch([ 0.0, 0.5, 0.5,  0.0], [b_bot, b_bot, b_top, b_top], c_banner_stim, 'EdgeColor', 'none', 'Clipping', 'off');
 patch([ 0.5, 1.0, 1.0,  0.5], [b_bot, b_bot, b_top, b_top], c_banner_post, 'EdgeColor', 'none', 'Clipping', 'off');
@@ -1872,9 +1706,6 @@ xlim([-0.2, 1.0]); ylim(ylim_shared);
 xlabel('Time (s)', 'FontSize', 20, 'FontWeight', 'bold');
 ylabel(y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
-% -------------------------------------------------------------------------
-% 6. EXPORT 600 PPI PUBLICATION IMAGE
-% -------------------------------------------------------------------------
 fig1B_out_png = fullfile(screening_fig_dir, 'Figure_1B_Channel_C3_Dynamics_600ppi.png');
 fig1B_out_svg = fullfile(screening_fig_dir, 'Figure_1B_Channel_C3_Dynamics.svg');
 try
@@ -1886,30 +1717,20 @@ catch
     print(fig1B, fig1B_out_png, '-dpng', '-r600');
 end
 close(fig1B);
+
 %% =========================================================================
 %% FIGURE 1C: MULTI-CHANNEL STACKED ERPs (1x5 LAYOUT, [-0.6, 1.0 s] WINDOW)
 %% =========================================================================
 fprintf('\nGenerating Figure 1C: Multi-Channel Stacked ERPs ([-0.6, 1.0 s], Trial Average +/- 1 SD)...\n');
 
-% -------------------------------------------------------------------------
-% 1. USER CONFIGURATION & CHANNEL SELECTION
-% -------------------------------------------------------------------------
-% Select subject to display:
-%   subj_to_plot = 1;       % Single subject (e.g., 1, 6, 11)
-%   subj_to_plot = 'grand'; % Grand Average across all retained subjects (cleanest SNR!)
 subj_to_plot = 1; 
 
-% 18 channels stacked from top to bottom (matching image_dd2ebb.jpg)
 plot_chan_labels = {'AF3', 'F3', 'FZ', 'FC5', 'FC1', 'T7', 'C3', 'Cz', ...
                     'C4', 'T8', 'TP7', 'CP3', 'CP1', 'P5', 'P1', 'O1', 'Oz', 'O2'};
 n_plot_chans = length(plot_chan_labels);
 
-% Expanded time window [-0.6 s to 1.0 s]:
-%   t = -0.5 s : Auditory Cue onset (black dashed line) -> Auditory ERP at [-0.45, -0.20 s]
-%   t =  0.0 s : Tactile Stimulus onset (green dashed line) -> Tactile ERP at [+0.10, +0.55 s]
 time_win_sec = [-0.600, 1.000];
 
-% Map channel labels to indices in your EEG dataset
 chan_indices = zeros(n_plot_chans, 1);
 if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
     eeg_labels = upper({EEG.chanlocs.labels});
@@ -1925,29 +1746,21 @@ else
     chan_indices = 1:min(n_plot_chans, cfg.num_ch);
 end
 
-% Extract [-0.6, 1.0 s] tactile-aligned time vector from time_s
 time_mask = (time_s >= time_win_sec(1)) & (time_s <= time_win_sec(2));
 t_plot    = time_s(time_mask);
 
-% Local pre-cue baseline mask [-0.6, -0.5 s] to ensure each stacked channel sits dead-center on its tick
 iLocalBase = (t_plot >= -0.600) & (t_plot <= -0.500);
 
-% -------------------------------------------------------------------------
-% 2. CONDITIONS & COLOR PALETTE (PANEL B COLORS, BLA EXCLUDED)
-% -------------------------------------------------------------------------
-c_P1      = [0.07, 0.35, 0.37]; % Dark Teal
-c_P2_500  = [0.47, 0.12, 0.08]; % Dark Maroon
-c_P3_500  = [0.88, 0.57, 0.10]; % Amber / Gold
-c_P2_2000 = [0.90, 0.59, 0.51]; % Coral / Salmon
-c_P3_null = [0.94, 0.75, 0.47]; % Sand / Light Gold
+c_P1      = [0.07, 0.35, 0.37];
+c_P2_500  = [0.47, 0.12, 0.08];
+c_P3_500  = [0.88, 0.57, 0.10];
+c_P2_2000 = [0.90, 0.59, 0.51];
+c_P3_null = [0.94, 0.75, 0.47];
 
 all_conds_1c = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
 names_1c     = {'Cued (P1)', 'Unpred 500 (P2-500)', 'Rand 500 (P3-500)', 'Unpred 2000 (P2-2000)', 'Rand Null (P3-null)'};
 colors_1c    = {c_P1, c_P2_500, c_P3_500, c_P2_2000, c_P3_null};
 
-% -------------------------------------------------------------------------
-% 3. EXTRACT TRIAL MEAN & STANDARD DEVIATION ACROSS CHANNELS
-% -------------------------------------------------------------------------
 data_1c  = struct();
 all_stds = [];
 all_p2p  = [];
@@ -1956,13 +1769,11 @@ for col = 1:length(all_conds_1c)
     c_name = all_conds_1c{col};
     
     if isnumeric(subj_to_plot)
-        % Single-subject trial-level statistics across clean trials
-        raw_mat   = data_all_conds.Raw.(c_name){subj_to_plot}; % [chan x time x trials]
+        raw_mat   = data_all_conds.Raw.(c_name){subj_to_plot};
         sub_chans = raw_mat(chan_indices, time_mask, :);
         m_stack   = mean(sub_chans, 3, 'omitnan');
         s_stack   = std(sub_chans, 0, 3, 'omitnan');
     else
-        % Grand Average across retained subjects
         subjs_valid = valid_retained_subjs;
         subj_means  = zeros(n_plot_chans, length(t_plot), length(subjs_valid));
         for s_idx = 1:length(subjs_valid)
@@ -1974,7 +1785,6 @@ for col = 1:length(all_conds_1c)
         s_stack = std(subj_means, 0, 3, 'omitnan');
     end
     
-    % Center each channel trace on [-0.6, -0.5 s] pre-cue baseline so it aligns with its y-tick
     if any(iLocalBase)
         m_stack = m_stack - mean(m_stack(:, iLocalBase), 2, 'omitnan');
     end
@@ -1986,22 +1796,14 @@ for col = 1:length(all_conds_1c)
     all_p2p  = [all_p2p; max(m_stack, [], 2) - min(m_stack, [], 2)];
 end
 
-% -------------------------------------------------------------------------
-% 4. ROBUST CHANNEL VERTICAL SPACING (PREVENTS NOISY CHANNELS FROM FLATTENING ERPs)
-% -------------------------------------------------------------------------
-% Use median SD and 90th-percentile mean peak-to-peak (matching image_dd2ebb.jpg spacing)
 med_sd  = median(all_stds(~isnan(all_stds)));
 p90_erp = prctile(all_p2p(~isnan(all_p2p)), 90);
 if isempty(med_sd) || isnan(med_sd) || med_sd <= 0, med_sd = 8; end
 if isempty(p90_erp) || isnan(p90_erp) || p90_erp <= 0, p90_erp = 8; end
 
-% Tighter channel step (~2.5-3x taller waveforms than max_span)
 chan_step = max(1.35 * med_sd, 1.40 * p90_erp); 
-y_offsets = (n_plot_chans:-1:1)' * chan_step; % AF3 at top, O2 at bottom
+y_offsets = (n_plot_chans:-1:1)' * chan_step;
 
-% -------------------------------------------------------------------------
-% 5. RENDER PUBLICATION FIGURE (1 ROW x 5 COLUMNS)
-% -------------------------------------------------------------------------
 fig1C = figure('Position', [50, 50, 2200, 750], 'Color', 'w', ...
     'Name', 'Figure 1C: Multi-Channel Stacked ERPs');
 t_layout = tiledlayout(1, 5, 'TileSpacing', 'compact', 'Padding', 'normal');
@@ -2014,26 +1816,22 @@ for col = 1:5
     ax = nexttile(col); hold on; set(gca, 'FontSize', 14, 'LineWidth', 1.5);
     box off;
     
-    % 1. Auditory Cue onset at t = -0.5 s (Black dashed line, matching image_dd2ebb.jpg)
     xline(-0.5, 'k--', 'LineWidth', 1.4, 'Alpha', 0.75, 'HandleVisibility', 'off');
     
-    % 2. Tactile Stimulus onset at t = 0.0 s (Green dashed line for 500 ms tactile conditions)
     if ismember(c_name, {'P1', 'P2_500', 'P3_500'})
         xline(0.0, 'Color', [0.15 0.65 0.25], 'LineStyle', '--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
     else
-        % Gray dotted marker at t = 0.0 s for omission / delayed conditions (P2_2000 & P3_missing)
         xline(0.0, 'Color', [0.45 0.45 0.45], 'LineStyle', ':', 'LineWidth', 1.4, 'HandleVisibility', 'off');
     end
     
     m_mat = data_1c.(c_name).mean;
     s_mat = data_1c.(c_name).std;
     
-    % Plot stacked channels (2-pass: shaded SD envelopes first, then crisp mean lines on top)
     t_fill = [t_plot, fliplr(t_plot)];
     for ch = 1:n_plot_chans
         base_y = y_offsets(ch);
         y_m    = m_mat(ch, :) + base_y;
-        y_s    = min(s_mat(ch, :), 1.15 * chan_step); % Cap extreme SD spikes so ribbons don't bury neighbors
+        y_s    = min(s_mat(ch, :), 1.15 * chan_step);
         
         fill(t_fill, [y_m + y_s, fliplr(y_m - y_s)], c_color, ...
             'FaceAlpha', 0.18, 'EdgeColor', 'none', 'HandleVisibility', 'off');
@@ -2061,7 +1859,6 @@ for col = 1:5
     grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
 end
 
-% Top title
 if isnumeric(subj_to_plot)
     title(t_layout, sprintf('Subject %d: Multi-Channel ERP Dynamics (Trial Average \\pm 1 SD)', subj_to_plot), ...
         'FontSize', 22, 'FontWeight', 'bold');
@@ -2072,9 +1869,6 @@ else
     out_tag = 'GrandAvg';
 end
 
-% -------------------------------------------------------------------------
-% 6. EXPORT 600 PPI PUBLICATION IMAGES (PNG + VECTOR SVG)
-% -------------------------------------------------------------------------
 fig1C_out_png = fullfile(screening_fig_dir, sprintf('Figure_1C_Stacked_Channels_%s_600ppi.png', out_tag));
 fig1C_out_svg = fullfile(screening_fig_dir, sprintf('Figure_1C_Stacked_Channels_%s.svg', out_tag));
 
@@ -2087,13 +1881,12 @@ catch
     print(fig1C, fig1C_out_png, '-dpng', '-r600');
 end
 close(fig1C);
+
 %% =========================================================================
 %% FIGURE 2: 4-ROW TOPOPLOTS (RAW, ALPHA, BETA, BETA/ALPHA) OVER [-0.2, 1.0 s]
 %% =========================================================================
 fprintf('\nGenerating Figure 2: 4-Row Spectral Power & Ratio Index Topoplots [-0.2 to 1.0 s]...\n');
 
-% 6 non-overlapping 200-ms windows over [-0.2, 1.0 s] (t = 0 as tactile onset):
-%   -0.20s, 0.00s, 0.20s, 0.40s, 0.60s, 0.80s
 step_fig2    = 0.20; 
 win_starts_2 = -0.200 : step_fig2 : (1.000 - step_fig2);
 t_centers_2  = win_starts_2 + step_fig2 / 2;
@@ -2107,7 +1900,7 @@ pow_groups   = struct();
 
 for c_i = 1:length(conds_fig2)
     c_name = conds_fig2{c_i};
-    pow_cell = cell(n_subjs_2, 3); % Col 1 = Raw, Col 2 = Alpha, Col 3 = Beta
+    pow_cell = cell(n_subjs_2, 3);
     
     for s_i = 1:n_subjs_2
         s = subjs_fig2(s_i);
@@ -2125,10 +1918,9 @@ for c_i = 1:length(conds_fig2)
         for tr_i = 1:length(valid_tr)
             tr = valid_tr(tr_i);
             
-            % Instantaneous power (envelope squared)
-            env_raw_sq = abs(hilbert(double(X_raw(:, :, tr))')).^2; % [time x ch]
-            env_a_sq   = abs(hilbert(double(X_a(:, :, tr))')).^2;   % [time x ch]
-            env_b_sq   = abs(hilbert(double(X_b(:, :, tr))')).^2;   % [time x ch]
+            env_raw_sq = abs(hilbert(double(X_raw(:, :, tr))')).^2;
+            env_a_sq   = abs(hilbert(double(X_a(:, :, tr))')).^2;
+            env_b_sq   = abs(hilbert(double(X_b(:, :, tr))')).^2;
             
             for w = 1:n_win_2
                 w_mask = (time_s >= win_starts_2(w)) & (time_s < win_starts_2(w) + step_fig2);
@@ -2138,19 +1930,17 @@ for c_i = 1:length(conds_fig2)
             end
         end
         
-        pow_cell{s_i, 1} = P_raw_win; % Col 1 = Raw power
-        pow_cell{s_i, 2} = P_a_win;   % Col 2 = Alpha power
-        pow_cell{s_i, 3} = P_b_win;   % Col 3 = Beta power
+        pow_cell{s_i, 1} = P_raw_win;
+        pow_cell{s_i, 2} = P_a_win;
+        pow_cell{s_i, 3} = P_b_win;
     end
     pow_groups.(c_name) = pow_cell;
 end
 
-% 1. Figure 2A: (Cued - Rand Null) / Cued (4 Rows)
 plot_group_power_index_v2(pow_groups.P1, pow_groups.P3_missing, t_centers_2, ...
     'Cued', 'Rand Null', 'Cued vs Rand Null (-0.2 to 1.0s)', ...
     EEG.chanlocs, 1000, 0.05, screening_fig_dir);
 
-% 2. Figure 2B: (Cued - Unpred 2000) / Cued (4 Rows)
 plot_group_power_index_v2(pow_groups.P1, pow_groups.P2_2000, t_centers_2, ...
     'Cued', 'Unpred 2000', 'Cued vs Unpred 2000 (-0.2 to 1.0s)', ...
     EEG.chanlocs, 1000, 0.05, screening_fig_dir);
@@ -2202,11 +1992,7 @@ close(fig3B);
 %% =========================================================================
 %% AGGREGATE FIGURE 5A: MULTI-BAND LOG(R) REDISTRIBUTION (3x2 GRID + STATS)
 %% =========================================================================
-disp('Generating Figure 5A: Multi-Band log(r) Subspace Redistribution (All Subjects, Cluster 2 & Cluster 1)...');
-
-% Map g = 1 -> All Subjects, g = 2 (Subjs 4-11) -> Cluster 2, g = 3 (Other Subjs) -> Cluster 1
-subj_group_names = {'All_Subjects', 'Cluster_2', 'Cluster_1'};
-fig_tags         = {'All_Subjects', 'Cluster2', 'Cluster1'};
+disp('Generating Figure 5A: Multi-Band log(r) Subspace Redistribution (All Retained Subjects)...');
 
 plot_bands_filt = {'Alpha', 'Beta'};
 band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
@@ -2804,7 +2590,7 @@ for g = 1:length(subj_group_names)
     ylabel('Sustained Variance (%)', 'FontSize', 24, 'FontWeight', 'bold');
     title(sprintf('Tonic vs. Phasic Stability (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
     
-    lgd = legend('Location', 'northwest');
+    lgd = legend('Location', 'north');
     lgd.FontSize = 18;
     grid on;
     
@@ -2919,4 +2705,4 @@ for g = 1:length(subj_group_names)
     try pause(0.5); saveas(fig5D, [save_file_5d, '.svg']); saveas(fig5D, [save_file_5d, '.png']); catch, end
     close(fig5D);
 end
-disp('All analyses completed successfully (All Subjects + Cluster 2 & Cluster 1).');
+disp('All analyses completed successfully (All Retained Subjects, excluding S3 & S14).');
