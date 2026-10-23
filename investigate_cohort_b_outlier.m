@@ -270,7 +270,7 @@ chan_idx  = chan_c3;
 roi_chans = unique([chan_c3, chan_c4, chan_f3, chan_t7, chan_t8], 'stable');
 
 %% =========================================================================
-%% 5B. CONSERVATIVE 2D GRID-SEARCH OPTIMIZATION (LUCK CH. 6 GUIDELINES)
+%% 5B. CONSERVATIVE 2D GRID-SEARCH OPTIMIZATION (LUCK CH. 6 + PASER STEP 2.2)
 %% =========================================================================
 num_ch    = 32;
 cfg       = struct('win', [0 1.0], 'base', [-1.0 -0.5], 'erp_win', [-0.2 0.8], 'm', 6, 'num_ch', num_ch);
@@ -282,15 +282,25 @@ iFullWin  = time_s >= -0.500         & time_s <= 2.400; % Full epoch scanned for
 iZeroZone = time_s >= -0.200         & time_s <= 0.200; 
 iPreStim  = time_s >= -0.200         & time_s <= 0.000; 
 
-% Primary sensorimotor/frontal ROI for drift: {C3, C4, F3}
-core_roi = unique([chan_c3, chan_c4, chan_f3], 'stable');
-% Extended ROI including bilateral temporal {T7, T8} for gross C.R.A.P. check
-ext_roi  = unique([chan_c3, chan_c4, chan_f3, chan_t7, chan_t8], 'stable');
+% Exclude prefrontal eye-blink channels from global scalp guard
+non_ocular_chans = 1:num_ch;
+if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
+    all_labels = {EEG.chanlocs.labels};
+    ocular_mask = ismember(upper(all_labels), {'FP1', 'FP2', 'FPZ', 'AF3', 'AF4', 'F7', 'F8'});
+    if any(~ocular_mask), non_ocular_chans = find(~ocular_mask); end
+end
 
-cond_keys      = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
-smooth_pts     = round(0.100 * 500);
-sat_thresh_uV  = 100; % Active window [-0.5, 1.0s] peak saturation ceiling on core ROI (Luck p.199)
-crap_thresh_uV = 200; % Full-epoch [-0.5, 2.4s] C.R.A.P. ceiling across extended channels (Luck p.208)
+% Synchronized 5-channel ROI: {C3, C4, F3, T7, T8}
+core_roi = unique([chan_c3, chan_c4, chan_f3, chan_t7, chan_t8], 'stable');
+ext_roi  = core_roi;
+
+cond_keys       = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
+smooth_pts      = round(0.100 * 500);        % 100 ms moving-average window (50 samples)
+deriv_pts       = max(1, round(0.006 * 500));% PASER Step 2.2: 6 ms derivative step (3 samples at 500 Hz)
+sat_thresh_uV   = 100;                       % Active window [-0.5, 1.0s] peak saturation ceiling (Luck p.199)
+crap_thresh_uV  = 200;                       % Full-epoch [-0.5, 2.4s] C.R.A.P. ceiling (Luck p.208)
+deriv_thresh_uV = 60;                        % Physical 6 ms fast-step ceiling (60 uV / 6 ms)
+paser_mad_floor = 6.0;                       % PASER Step 2.2: 6 MAD upper threshold for fast derivative
 
 % --- 1. PRE-COMPUTE CONSERVATIVE TRIAL METRICS ---
 precomp = struct();
@@ -304,41 +314,48 @@ for t_idx = 1:length(target_subjs)
         X_bc_all       = zeros(size(X_raw));
         trial_max_amp  = zeros(nTr, 1);
         trial_c3_drift = zeros(nTr, 1);
+        trial_deriv_32 = zeros(nTr, 1);
         
         for tr = 1:nTr
             epoch = X_raw(:, :, tr);
             epoch_bc = epoch - mean(epoch(:, iBase), 2);
             X_bc_all(:, :, tr) = epoch_bc;
             
-            % 1. Drift in active analysis window [-0.5, 1.0 s] on {C3, C4, F3} + 32-Ch Median
+            % 1. Drift in active analysis window [-0.5, 1.0 s] on {C3, C4, F3, T7, T8} + Non-Ocular 85th Prctile
             ch_smooth_crit = max(abs(movmean(epoch_bc(:, iCritWin), smooth_pts, 2)), [], 2);
-            crit_drift     = max(max(ch_smooth_crit(core_roi)), median(ch_smooth_crit));
+            crit_drift     = max(max(ch_smooth_crit(core_roi)), prctile(ch_smooth_crit(non_ocular_chans), 85));
             
-            % Also check slow drift in late window [1.0, 2.4 s] on 32-Ch Median (scaled by 0.75 so mild late drift isn't over-rejected)
+            % Also check slow drift in late window [1.0, 2.4 s] (scaled by 0.75)
             ch_smooth_full = max(abs(movmean(epoch_bc(:, iFullWin), smooth_pts, 2)), [], 2);
-            late_med_drift = 0.75 * max(max(ch_smooth_full(core_roi)), median(ch_smooth_full));
+            late_med_drift = 0.75 * max(max(ch_smooth_full(core_roi)), prctile(ch_smooth_full(non_ocular_chans), 85));
             trial_c3_drift(tr) = max(crit_drift, late_med_drift);
             
-            % 2. Peak amplitude in [-0.5, 1.0 s] on {C3, C4, F3} + 32-Ch Median, plus 0.5x scaled C.R.A.P. check on {T7, T8}
+            % 2. Peak amplitude in [-0.5, 1.0 s] + 0.5x scaled C.R.A.P. check (>200 uV)
             ch_peak_crit = max(abs(epoch_bc(:, iCritWin)), [], 2);
             ch_peak_full = max(abs(epoch_bc(:, iFullWin)), [], 2);
-            crit_peak    = max(max(ch_peak_crit(core_roi)), median(ch_peak_crit));
-            crap_peak    = 0.5 * max(ch_peak_full(ext_roi)); % Exceeds 100 uV only if raw spike > 200 uV (Luck p.208)
+            crit_peak    = max(max(ch_peak_crit(core_roi)), prctile(ch_peak_crit(non_ocular_chans), 85));
+            crap_peak    = 0.5 * max(ch_peak_full(ext_roi));
             trial_max_amp(tr) = max(crit_peak, crap_peak);
+            
+            % 3. PASER Step 2.2: Fast 6 ms derivative |V(t + 6ms) - V(t)|
+            E_crit        = epoch_bc(:, iCritWin);
+            ch_deriv_crit = max(abs(E_crit(:, (1+deriv_pts):end) - E_crit(:, 1:(end-deriv_pts))), [], 2);
+            trial_deriv_32(tr) = max(max(ch_deriv_crit(core_roi)), prctile(ch_deriv_crit(non_ocular_chans), 85));
         end
         
         precomp(s).(c_name).X_bc_all       = X_bc_all;
         precomp(s).(c_name).trial_c3_drift = trial_c3_drift;
         precomp(s).(c_name).trial_max_amp  = trial_max_amp;
+        precomp(s).(c_name).trial_deriv_32 = trial_deriv_32;
         precomp(s).(c_name).c3_traces      = squeeze(X_bc_all(chan_idx, :, :));
     end
 end
 
-% --- 2. CONSERVATIVE 2D GRID SEARCH PARAMETERS (LUCK CH. 6) ---
+% --- 2. CONSERVATIVE 2D GRID SEARCH PARAMETERS (LUCK CH. 6 + PASER STEP 2.2) ---
 opt_mode    = 'per_subject';
-drift_grid  = 35 : 1 : 60;       % Conservative drift floor: 35 to 60 uV (avoids rejecting clean ERPs <35 uV)
+drift_grid  = 35 : 1 : 50;       % Updated drift range: 35 to 50 uV
 mad_grid    = 4.5 : 0.25 : 10.0; % Conservative MAD floor: 4.5 to 10.0
-min_keep_p3 = 24;                % Require >= 75% (3/$) kept trials
+min_keep_p3 = 24;                % Require >= 24/30 (80%) kept trials
 
 cost_surface   = inf(length(drift_grid), length(mad_grid), length(target_subjs));
 null_abs_val   = nan(length(drift_grid), length(mad_grid), length(target_subjs));
@@ -351,10 +368,12 @@ for t_idx = 1:length(target_subjs)
     
     d_mis = precomp(s).P3_missing.trial_c3_drift;
     a_mis = precomp(s).P3_missing.trial_max_amp;
+    v_mis = precomp(s).P3_missing.trial_deriv_32;
     X_mis = precomp(s).P3_missing.X_bc_all;
     
     d_500 = precomp(s).P3_500.trial_c3_drift;
     a_500 = precomp(s).P3_500.trial_max_amp;
+    v_500 = precomp(s).P3_500.trial_deriv_32;
     X_500 = precomp(s).P3_500.X_bc_all;
     
     for id = 1:length(drift_grid)
@@ -364,13 +383,17 @@ for t_idx = 1:length(target_subjs)
             
             rob_d_mis = median(d_mis) + m_val * mad(d_mis, 1);
             rob_a_mis = median(a_mis) + m_val * mad(a_mis, 1);
-            bad_mis   = (a_mis > sat_thresh_uV) | (a_mis > rob_a_mis) | ...
-                        (d_mis > d_lim)         | (d_mis > rob_d_mis);
+            rob_v_mis = median(v_mis) + max(paser_mad_floor, m_val) * mad(v_mis, 1);
+            bad_mis   = (a_mis > sat_thresh_uV)   | (a_mis > rob_a_mis) | ...
+                        (d_mis > d_lim)           | (d_mis > rob_d_mis) | ...
+                        (v_mis > deriv_thresh_uV) | (v_mis > rob_v_mis);
             
             rob_d_500 = median(d_500) + m_val * mad(d_500, 1);
             rob_a_500 = median(a_500) + m_val * mad(a_500, 1);
-            bad_500   = (a_500 > sat_thresh_uV) | (a_500 > rob_a_500) | ...
-                        (d_500 > d_lim)         | (d_500 > rob_d_500);
+            rob_v_500 = median(v_500) + max(paser_mad_floor, m_val) * mad(v_500, 1);
+            bad_500   = (a_500 > sat_thresh_uV)   | (a_500 > rob_a_500) | ...
+                        (d_500 > d_lim)           | (d_500 > rob_d_500) | ...
+                        (v_500 > deriv_thresh_uV) | (v_500 > rob_v_500);
             
             if sum(~bad_500) < min_keep_p3 || sum(~bad_mis) < min_keep_p3
                 continue; 
@@ -379,14 +402,12 @@ for t_idx = 1:length(target_subjs)
             erp_mis_cand = mean(X_mis(:, :, ~bad_mis), 3, 'omitnan');
             erp_500_cand = mean(X_500(:, :, ~bad_500), 3, 'omitnan');
             
-            % Target 0 uV baseline stability + strong penalty on rejecting >15% of trials (Luck p.208 Rule 3)
+            % Target 0 uV baseline stability + penalty on rejected trials
             err_mis_pre  = mean(abs(mean(erp_mis_cand(core_roi, iPreStim), 2)));
             err_mis_zero = mean(abs(mean(erp_mis_cand(core_roi, iZeroZone), 2)));
             err_500_pre  = mean(abs(mean(erp_500_cand(core_roi, iPreStim), 2)));
             err_500_zero = mean(abs(mean(erp_500_cand(core_roi, iZeroZone), 2)));
             
-            % Penalize each rejected trial (0.15 per trial) so optimizer prefers keeping clean trials
-            % unless rejecting a trial substantially improves baseline stability
             rej_penalty  = 0.15 * (sum(bad_mis) + sum(bad_500));
             
             cost_surface(id, im, t_idx) = 1.2 * (err_mis_pre + err_500_pre) + ...
@@ -411,7 +432,7 @@ glob_drift_opt = drift_grid(id_glob);
 glob_mad_opt   = mad_grid(im_glob);
 
 fprintf('\n========================================================================================\n');
-fprintf(' 2D GRID-SEARCH RESULTS (TARGETING 0 uV BASELINE STABILITY PER CONDITION)\n');
+fprintf(' 2D GRID-SEARCH RESULTS (35:50 uV + PASER 6ms DERIVATIVE, TARGETING 0 uV BASELINE)\n');
 fprintf('========================================================================================\n');
 fprintf('>>> GLOBAL OPTIMUM (Shared S3 & S14): drift_thresh_uV = %d uV | mad_mult = %.2f\n', ...
     glob_drift_opt, glob_mad_opt);
@@ -439,6 +460,7 @@ for t_idx = 1:length(target_subjs)
     fprintf('    - Cleaned Rand 500  [-0.2,0s] offset: %+5.2f uV | Rej: %d/30\n', ...
         r500_abs_val(id_app, im_app, t_idx), rej_counts_500(id_app, im_app, t_idx));
 end
+
 % --- 3. APPLY OPTIMAL THRESHOLDS & EXPORT SCREENED DATASETS ---
 screening_stats = struct();
 
@@ -449,28 +471,32 @@ for t_idx = 1:length(target_subjs)
     
     fprintf('\n--- SUBJECT %02d TRIAL SCREENING SUMMARY (drift_thresh = %d uV, mad_mult = %.2f) ---\n', ...
         s, drift_thresh_uV, mad_mult);
-    fprintf('%-12s | %-10s | %-12s | %-12s | %-12s | %-10s\n', ...
-        'Condition', 'Total Tr', 'Saturated', 'ROI Drift', 'Total Rej', 'Kept Tr');
-    fprintf('--------------------------------------------------------------------------------\n');
+    fprintf('%-12s | %-8s | %-10s | %-10s | %-10s | %-10s | %-8s\n', ...
+        'Condition', 'TotalTr', 'Saturated', 'ROI Drift', '6ms Deriv', 'Total Rej', 'Kept Tr');
+    fprintf('----------------------------------------------------------------------------------------\n');
     
     for c = 1:length(cond_keys)
         c_name = cond_keys{c};
         X_bc_all       = precomp(s).(c_name).X_bc_all;
         trial_c3_drift = precomp(s).(c_name).trial_c3_drift;
         trial_max_amp  = precomp(s).(c_name).trial_max_amp;
+        trial_deriv_32 = precomp(s).(c_name).trial_deriv_32;
         nTr            = length(trial_c3_drift);
         
         rob_sat_lim   = median(trial_max_amp)  + mad_mult * mad(trial_max_amp, 1);
         rob_drift_lim = median(trial_c3_drift) + mad_mult * mad(trial_c3_drift, 1);
+        rob_deriv_lim = median(trial_deriv_32) + max(paser_mad_floor, mad_mult) * mad(trial_deriv_32, 1);
         
-        is_saturated = (trial_max_amp > sat_thresh_uV)    | (trial_max_amp > rob_sat_lim);
+        is_saturated = (trial_max_amp  > sat_thresh_uV)   | (trial_max_amp  > rob_sat_lim);
         is_drifting  = (trial_c3_drift > drift_thresh_uV) | (trial_c3_drift > rob_drift_lim);
-        bad_trials   = is_saturated | is_drifting;
+        is_fast_step = (trial_deriv_32 > deriv_thresh_uV) | (trial_deriv_32 > rob_deriv_lim);
+        bad_trials   = is_saturated | is_drifting | is_fast_step;
         
-        min_keep = min(min_keep_p3, nTr);
+        if nTr >= 50, min_keep = 48; else, min_keep = min(min_keep_p3, nTr); end
         if sum(~bad_trials) < min_keep
             artifact_score = (trial_c3_drift / (median(trial_c3_drift) + eps)) + ...
-                             (trial_max_amp  / (median(trial_max_amp) + eps));
+                             (trial_max_amp  / (median(trial_max_amp) + eps)) + ...
+                             (trial_deriv_32 / (median(trial_deriv_32) + eps));
             [~, ord_clean] = sort(artifact_score, 'ascend');
             bad_trials = true(nTr, 1);
             bad_trials(ord_clean(1:min_keep)) = false;
@@ -483,13 +509,14 @@ for t_idx = 1:length(target_subjs)
         screening_stats(s).(c_name).bad_trials      = bad_trials;
         screening_stats(s).(c_name).trial_max_amp   = trial_max_amp;
         screening_stats(s).(c_name).trial_c3_drift  = trial_c3_drift;
+        screening_stats(s).(c_name).trial_deriv_32  = trial_deriv_32;
         screening_stats(s).(c_name).X_before        = X_bc_all;
         screening_stats(s).(c_name).X_after         = X_clean;
         screening_stats(s).(c_name).drift_thresh_uV = drift_thresh_uV;
         screening_stats(s).(c_name).mad_mult        = mad_mult;
         
-        fprintf('%-12s | %-10d | %-12d | %-12d | %-12d | %-10d\n', ...
-            c_name, nTr, sum(is_saturated), sum(is_drifting), sum(bad_trials), sum(~bad_trials));
+        fprintf('%-12s | %-8d | %-10d | %-10d | %-10d | %-10d | %-8d\n', ...
+            c_name, nTr, sum(is_saturated), sum(is_drifting), sum(is_fast_step), sum(bad_trials), sum(~bad_trials));
     end
     
     if save_trial_cleaned_sets
@@ -623,7 +650,10 @@ for t_idx = 1:length(target_subjs)
     nexttile(t_verify, 1); hold on; set(gca, 'FontSize', 14);
     bad_tr_500 = screening_stats(s).P3_500.bad_trials;
     tr_idx_500 = 1:length(bad_tr_500);
-    
+    deriv_v_500 = screening_stats(s).P3_500.trial_deriv_32;
+    deriv_v_mis = screening_stats(s).P3_missing.trial_deriv_32;
+
+    plot(tr_idx_500, deriv_v_500, 'g-^', 'Color', [0.15 0.65 0.25], 'LineWidth', 1.4, 'DisplayName', '|6ms Step Deriv| (\muV)');
     plot(tr_idx_500, drift_v_500, 'b-o', 'LineWidth', 1.5, 'DisplayName', '|ROI+Scalp Drift| (\muV)');
     plot(tr_idx_500, sat_v_500, 'k-s', 'LineWidth', 1.5, 'DisplayName', '|ROI+Scalp Peak| (\muV)');
     if any(bad_tr_500)
@@ -673,7 +703,10 @@ for t_idx = 1:length(target_subjs)
     nexttile(t_verify, 4); hold on; set(gca, 'FontSize', 14);
     bad_tr_mis = screening_stats(s).P3_missing.bad_trials;
     tr_idx_mis = 1:length(bad_tr_mis);
+    deriv_v_500 = screening_stats(s).P3_500.trial_deriv_32;
+    deriv_v_mis = screening_stats(s).P3_missing.trial_deriv_32;
     
+    plot(tr_idx_500, deriv_v_500, 'g-^', 'Color', [0.15 0.65 0.25], 'LineWidth', 1.4, 'DisplayName', '|6ms Step Deriv| (\muV)');
     plot(tr_idx_mis, drift_v_mis, 'b-o', 'LineWidth', 1.5, 'DisplayName', '|ROI+Scalp Drift| (\muV)');
     plot(tr_idx_mis, sat_v_mis, 'k-s', 'LineWidth', 1.5, 'DisplayName', '|ROI+Scalp Peak| (\muV)');
     if any(bad_tr_mis)
