@@ -22,19 +22,15 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
     end
     half_win_s = step_s / 2;
 
-    % If t_axis is in raw epoch seconds (0 to 3.5 s), tactile onset is 1.0 s.
-    % If t_axis is already tactile-locked (time_s from -1.0 to 2.5 s), tactile onset is 0.0 s.
     if min(t_axis) >= 0 && max(t_axis) > 1.2
         tactile_onset = 1.0;
     else
         tactile_onset = 0.0;
     end
 
-    % Convert window centers to tactile-relative start times
     t_rel_centers = t_axis - tactile_onset;
     t_rel_starts  = t_rel_centers - half_win_s;
 
-    % Restrict windows strictly to [-0.2, 1.0 s] relative to tactile onset
     win_keep = (t_rel_centers >= -0.200 - 1e-4) & (t_rel_centers <= 1.000 + 1e-4);
     if any(win_keep) && ~all(win_keep)
         t_rel_centers = t_rel_centers(win_keep);
@@ -56,7 +52,6 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
     num_subjs    = size(pow_A_group, 1);
     num_channels = size(pow_A_group{1, 1}, 1);
 
-    % Format bottom time labels in seconds relative to t = 0 tactile onset
     time_labels_sec = cell(1, num_windows);
     for col = 1:num_windows
         w_start_s = round(t_rel_starts(col) * 20) / 20;
@@ -65,7 +60,6 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
         time_labels_sec{col} = strrep(time_labels_sec{col}, '-0.00s', '0.00s');
     end
 
-    % Safe Channel Label Extraction
     if ~isempty(chanlocs) && isstruct(chanlocs) && isfield(chanlocs, 'labels')
         chan_labels = {chanlocs.labels};
     else
@@ -73,7 +67,7 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
     end
 
     row_labels = {'RAW', 'ALPHA', 'BETA', 'BETA / ALPHA'};
-    num_input_bands = size(pow_A_group, 2); % 3 bands: Col 1 = Raw, Col 2 = Alpha, Col 3 = Beta
+    num_input_bands = size(pow_A_group, 2);
 
     % =====================================================================
     % 2. COMPUTE SUBJECT TRIAL AVERAGES & NORMALIZED INDICES
@@ -97,89 +91,75 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
 
             subj_powA(s, :, :, b) = mA;
             subj_powB(s, :, :, b) = mB;
-
-            % Normalized Index = (Cond A - Cond B) / (Cond A + eps)
             subj_idx(s, :, :, b) = (mA - mB) ./ (mA + eps);
         end
     end
 
-    % Row 4: Beta/Alpha Ratio Index (Beta = Col 3, Alpha = Col 2)
     subj_ratioA    = squeeze(subj_powA(:, :, :, 3)) ./ (squeeze(subj_powA(:, :, :, 2)) + eps);
     subj_ratioB    = squeeze(subj_powB(:, :, :, 3)) ./ (squeeze(subj_powB(:, :, :, 2)) + eps);
     subj_ratio_idx = (subj_ratioA - subj_ratioB) ./ (subj_ratioA + eps);
 
-    % Stack all 4 rows: [num_channels x num_windows x 4]
     obs_all_rows = zeros(num_channels, num_windows, 4);
-    obs_all_rows(:, :, 1) = squeeze(mean(subj_idx(:, :, :, 1), 1, 'omitnan')); % Row 1: Raw
-    obs_all_rows(:, :, 2) = squeeze(mean(subj_idx(:, :, :, 2), 1, 'omitnan')); % Row 2: Alpha
-    obs_all_rows(:, :, 3) = squeeze(mean(subj_idx(:, :, :, 3), 1, 'omitnan')); % Row 3: Beta
-    obs_all_rows(:, :, 4) = squeeze(mean(subj_ratio_idx, 1, 'omitnan'));       % Row 4: Beta/Alpha
+    obs_all_rows(:, :, 1) = squeeze(mean(subj_idx(:, :, :, 1), 1, 'omitnan'));
+    obs_all_rows(:, :, 2) = squeeze(mean(subj_idx(:, :, :, 2), 1, 'omitnan'));
+    obs_all_rows(:, :, 3) = squeeze(mean(subj_idx(:, :, :, 3), 1, 'omitnan'));
+    obs_all_rows(:, :, 4) = squeeze(mean(subj_ratio_idx, 1, 'omitnan'));
 
     % =====================================================================
-    % 3. MAX-STATISTIC PERMUTATION TESTING (ALL 4 ROWS)
+    % 3. STATISTICAL TESTING ACROSS CHANNELS & WINDOWS (WILCOXON + FDR)
     % =====================================================================
     sig_mask_all = false(num_channels, num_windows, 4);
+    
+    for row = 1:4
+        if row <= 3
+            subj_mat = squeeze(subj_idx(:, :, :, row));
+        else
+            subj_mat = subj_ratio_idx;
+        end
 
-    % Permutations for Raw (b=1), Alpha (b=2), and Beta (b=3)
-    for b = 1:num_input_bands
-        max_null = zeros(n_perms, 1);
-        for p = 1:n_perms
-            pseudo_subjs = zeros(num_subjs, num_channels, num_windows);
-            for s = 1:num_subjs
-                mA = squeeze(subj_powA(s, :, :, b));
-                mB = squeeze(subj_powB(s, :, :, b));
-                if rand() > 0.5
-                    pseudo_subjs(s, :, :) = (mA - mB) ./ (mA + eps);
+        p_vals = zeros(num_channels, num_windows);
+
+        for ch = 1:num_channels
+            for w = 1:num_windows
+                dist = squeeze(subj_mat(:, ch, w));
+                if sum(~isnan(dist)) > 1 && any(dist ~= 0)
+                    p_vals(ch, w) = signrank(dist);
                 else
-                    pseudo_subjs(s, :, :) = (mB - mA) ./ (mB + eps);
+                    p_vals(ch, w) = 1.0;
                 end
             end
-            pseudo_grp  = squeeze(mean(pseudo_subjs, 1, 'omitnan'));
-            max_null(p) = max(abs(pseudo_grp(:)));
         end
-        thresh = prctile(max_null, (1 - alpha_level) * 100);
-        sig_mask_all(:, :, b) = abs(obs_all_rows(:, :, b)) > thresh;
-    end
-
-    % Permutations for Beta/Alpha Ratio (Row 4)
-    max_null_ratio = zeros(n_perms, 1);
-    for p = 1:n_perms
-        pseudo_subjs_r = zeros(num_subjs, num_channels, num_windows);
-        for s = 1:num_subjs
-            rA = squeeze(subj_ratioA(s, :, :));
-            rB = squeeze(subj_ratioB(s, :, :));
-            if rand() > 0.5
-                pseudo_subjs_r(s, :, :) = (rA - rB) ./ (rA + eps);
-            else
-                pseudo_subjs_r(s, :, :) = (rB - rA) ./ (rB + eps);
+        
+        for w = 1:num_windows
+            p_win = p_vals(:, w);
+            [p_sorted, ~] = sort(p_win, 'ascend');
+            fdr_thresh_vec = (1:num_channels)' * (alpha_level / num_channels);
+            max_idx = find(p_sorted <= fdr_thresh_vec, 1, 'last');
+            if ~isempty(max_idx)
+                p_crit = p_sorted(max_idx);
+                sig_mask_all(:, w, row) = (p_win <= p_crit);
             end
         end
-        pseudo_grp_r      = squeeze(mean(pseudo_subjs_r, 1, 'omitnan'));
-        max_null_ratio(p) = max(abs(pseudo_grp_r(:)));
     end
-    thresh_ratio = prctile(max_null_ratio, (1 - alpha_level) * 100);
-    sig_mask_all(:, :, 4) = abs(obs_all_rows(:, :, 4)) > thresh_ratio;
 
     % =====================================================================
-    % 4. RENDER 4-ROW FIGURE (EXPANDED TOPOPLOTS, RIGHT-ALIGNED COLORBAR)
+    % 4. RENDER 4-ROW FIGURE (EXPANDED HEADROOM & ADAPTIVE CHANNEL LABELS)
     % =====================================================================
-    fig_width  = max(1600, 210 * num_windows + 340);
+    fig_width  = max(1750, 220 * num_windows + 430);
     fig_height = 1100;
 
     fig = figure('Position', [30, 30, fig_width, fig_height], ...
         'Name', sprintf('Figure 2: %s vs %s', condA_name, condB_name), ...
         'Color', 'w', 'Visible', 'off');
 
-    % Canvas coordinate spacing:
-    % Expanded usable_w to 0.74 so topoplots are larger and fill horizontal space
-    left_margin = 0.05;
-    usable_w    = 0.74; 
+    left_margin = 0.045;
+    usable_w    = 0.730; 
     cell_w      = usable_w / num_windows;
     plot_w      = cell_w * 0.90;
     plot_h      = 0.170;
 
-    % Vertical positions for Rows 1, 2, 3, 4 with dedicated title headroom
-    row_y_bots = [0.695, 0.490, 0.285, 0.055];
+    % Adjusted vertical spacing: increased gap between Row 2 (ALPHA) and Row 3 (BETA) from 38.5px to 55px
+    row_y_bots = [0.705, 0.505, 0.285, 0.055];
 
     for row = 1:4
         for col = 1:num_windows
@@ -194,17 +174,44 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
             if any(curr_sig)
                 sig_chans = find(curr_sig);
                 topoplot(data_to_plot, chanlocs, 'maplimits', [-1 1], 'colormap', jet, ...
-                    'emarker2', {sig_chans, '.', 'k', 14, 2});
+                    'emarker2', {sig_chans, '.', 'k', 28, 2});
 
                 sig_ch_names = chan_labels(curr_sig);
-                if length(sig_ch_names) > 5
-                    split_idx = ceil(length(sig_ch_names) / 2);
-                    line1 = strjoin(sig_ch_names(1:split_idx), ', ');
-                    line2 = strjoin(sig_ch_names(split_idx+1:end), ', ');
-                    title({line1, line2}, 'FontSize', 9, 'FontWeight', 'bold', 'Color', [0.8 0 0]);
+                n_sig = length(sig_ch_names);
+                
+                % --- ADAPTIVE 3-LINE MAXIMUM WITH WIDE HORIZONTAL PACKING ---
+                max_lines = 3; % Strictly limit to at most 3 vertical lines
+                
+                if n_sig <= 4
+                    % 1 Line: Large font
+                    lines_cell = {strjoin(sig_ch_names, ', ')};
+                    f_size = 11.0;
+                elseif n_sig <= 8
+                    % 2 Lines: Balanced font (~3-4 channels per line)
+                    ch_per_line = ceil(n_sig / 2);
+                    lines_cell = {strjoin(sig_ch_names(1:ch_per_line), ', '); ...
+                                  strjoin(sig_ch_names(ch_per_line+1:end), ', ')};
+                    f_size = 9.5;
                 else
-                    title(strjoin(sig_ch_names, ', '), 'FontSize', 10, 'FontWeight', 'bold', 'Color', [0.8 0 0]);
+                    % 3 Lines: Increased width (4-5 channels per line) with compact font
+                    ch_per_line = ceil(n_sig / max_lines);
+                    n_lines_act = ceil(n_sig / ch_per_line);
+                    lines_cell = cell(n_lines_act, 1);
+                    for l_i = 1:n_lines_act
+                        i_st = (l_i - 1) * ch_per_line + 1;
+                        i_en = min(l_i * ch_per_line, n_sig);
+                        lines_cell{l_i} = strjoin(sig_ch_names(i_st:i_en), ', ');
+                    end
+                    f_size = 8.0;
                 end
+                
+                % Condition: Scale font size smaller if any individual line exceeds 24 characters
+                max_chars = max(cellfun(@length, lines_cell));
+                if max_chars > 24
+                    f_size = max(7.0, f_size - 1.0);
+                end
+                
+                title(lines_cell, 'FontSize', f_size, 'FontWeight', 'bold', 'Color', [0.8 0 0]);
             else
                 topoplot(data_to_plot, chanlocs, 'maplimits', [-1 1], 'colormap', jet);
                 title('');
@@ -213,20 +220,21 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
             % Row label on the far left of column 1
             if col == 1
                 text(-0.78, 0, row_labels{row}, 'HorizontalAlignment', 'center', ...
-                    'Rotation', 90, 'FontSize', 14, 'FontWeight', 'bold');
+                    'Rotation', 90, 'FontSize', 22, 'FontWeight', 'bold');
             end
 
-            % Time label below each topoplot
-            text(0, -0.68, time_labels_sec{col}, ...
-                'HorizontalAlignment', 'center', 'FontSize', 13, 'FontWeight', 'bold');
+            % Time label strictly on the bottom row (Row 4)
+            if row == 4
+                text(0, -0.68, time_labels_sec{col}, ...
+                    'HorizontalAlignment', 'center', 'FontSize', 21, 'FontWeight', 'bold');
+            end
         end
     end
 
     % ---------------------------------------------------------------------
     % 5. RIGHT-ALIGNED COLORBAR & NON-COLLIDING TEXT LABELS
     % ---------------------------------------------------------------------
-    % Positioned near the right margin (x = 0.835) to eliminate dead white space
-    cb_x = 0.835; 
+    cb_x = 0.818; 
     cb_y = 0.080; 
     cb_w = 0.016; 
     cb_h = 0.760;
@@ -234,57 +242,54 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
     cb_ax = axes(fig, 'Position', [0, 0, 1, 1], 'Visible', 'off');
     colormap(cb_ax, jet); clim(cb_ax, [-1 1]);
     cb = colorbar(cb_ax, 'Position', [cb_x, cb_y, cb_w, cb_h]);
-    cb.FontSize   = 13;
+    cb.FontSize   = 19;
     cb.Ticks      = [-1, -0.5, 0, 0.5, 1];
     cb.TickLabels = {'-1.0', '-0.5', '0.0', '+0.5', '+1.0'};
     ylabel(cb, sprintf('Normalized Index: (%s - %s) / %s', condA_name, condB_name, condA_name), ...
-        'FontSize', 14, 'FontWeight', 'bold');
+        'FontSize', 22, 'FontWeight', 'bold');
 
-    % Canvas annotation layer for clean text placement
     ax_ann = axes(fig, 'Position', [0, 0, 1, 1], 'Visible', 'off');
     hold(ax_ann, 'on');
 
-    % Shifted +0.038 units to the right so labels NEVER overlap the "+1.0" or "-1.0" tick text
-    label_x_pos = cb_x + cb_w + 0.038;
+    % Top label (+1.0 Cued): shifted right to completely clear '+1.0'
+    label_x_top = cb_x + cb_w + 0.052;
+    text(ax_ann, label_x_top, cb_y + cb_h, condA_name, ...
+        'FontSize', 21, 'FontWeight', 'bold', 'Color', [0.85 0 0], 'VerticalAlignment', 'middle');
 
-    text(ax_ann, label_x_pos, cb_y + cb_h, condA_name, ...
-        'FontSize', 15, 'FontWeight', 'bold', 'Color', [0.85 0 0], 'VerticalAlignment', 'middle');
+    % Bottom label (-1.0 Unpred 2000): placed at +0.038 so it never clips on the right edge
+    label_x_bot = cb_x + cb_w + 0.038;
+    text(ax_ann, label_x_bot, cb_y, condB_name, ...
+        'FontSize', 21, 'FontWeight', 'bold', 'Color', [0 0.25 0.85], 'VerticalAlignment', 'middle');
 
-    text(ax_ann, label_x_pos, cb_y, condB_name, ...
-        'FontSize', 15, 'FontWeight', 'bold', 'Color', [0 0.25 0.85], 'VerticalAlignment', 'middle');
+    % Top Legend: shifted leftward to x = 0.748 and sized at 16 pt to prevent clipping
+    leg_x = cb_x - 0.050;
+    text(ax_ann, leg_x, cb_y + cb_h + 0.065, sprintf('Red: Higher in %s', condA_name), ...
+        'FontSize', 16, 'FontWeight', 'bold', 'Color', [0.85 0 0], 'VerticalAlignment', 'bottom');
 
-    % Narrative legend block above the colorbar
-    text(ax_ann, cb_x - 0.010, cb_y + cb_h + 0.065, sprintf('Red: Higher in %s', condA_name), ...
-        'FontSize', 15, 'FontWeight', 'bold', 'Color', [0.85 0 0], 'VerticalAlignment', 'bottom');
-
-    text(ax_ann, cb_x - 0.010, cb_y + cb_h + 0.035, sprintf('Blue: Higher in %s', condB_name), ...
-        'FontSize', 15, 'FontWeight', 'bold', 'Color', [0 0.25 0.85], 'VerticalAlignment', 'bottom');
+    text(ax_ann, leg_x, cb_y + cb_h + 0.035, sprintf('Blue: Higher in %s', condB_name), ...
+        'FontSize', 16, 'FontWeight', 'bold', 'Color', [0 0.25 0.85], 'VerticalAlignment', 'bottom');
 
     % ---------------------------------------------------------------------
-    % 6. CONCISE 2-ROW MAIN TITLE & SECTION HEADERS
+    % 6. MAIN TITLE & SECTION HEADERS
     % ---------------------------------------------------------------------
     center_topos_x = left_margin + usable_w / 2;
 
-    % Row 1 of Main Title (Primary Headline)
-    text(ax_ann, center_topos_x, 0.960, ...
+    text(ax_ann, center_topos_x, 0.965, ...
         sprintf('Sensor-Space Dynamics: %s vs. %s', condA_name, condB_name), ...
-        'HorizontalAlignment', 'center', 'FontSize', 19, 'FontWeight', 'bold', 'Color', 'k');
+        'HorizontalAlignment', 'center', 'FontSize', 27, 'FontWeight', 'bold', 'Color', 'k');
 
-    % Row 2 of Main Title (Window & Formula details)
-    text(ax_ann, center_topos_x, 0.925, ...
+    text(ax_ann, center_topos_x, 0.930, ...
         sprintf('Normalized Index: (%s - %s) / %s  [-0.20s to 1.00s, t = 0s Tactile Onset]', ...
         condA_name, condB_name, condA_name), ...
-        'HorizontalAlignment', 'center', 'FontSize', 13, 'FontWeight', 'bold', 'Color', [0.3 0.3 0.3]);
+        'HorizontalAlignment', 'center', 'FontSize', 21, 'FontWeight', 'bold', 'Color', [0.3 0.3 0.3]);
 
-    % Section 1 Sub-header (above Rows 1, 2, 3: Raw, Alpha, Beta)
-    text(ax_ann, center_topos_x, 0.885, ...
+    text(ax_ann, center_topos_x, 0.890, ...
         'Broadband & Band Power Index (Raw, Alpha, Beta)', ...
-        'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold', 'Color', [0.2 0.2 0.2]);
+        'HorizontalAlignment', 'center', 'FontSize', 22, 'FontWeight', 'bold', 'Color', [0.2 0.2 0.2]);
 
-    % Section 2 Sub-header (above Row 4: Beta/Alpha Ratio)
     text(ax_ann, center_topos_x, 0.245, ...
         'Beta / Alpha Ratio Index', ...
-        'HorizontalAlignment', 'center', 'FontSize', 14, 'FontWeight', 'bold', 'Color', [0.2 0.2 0.2]);
+        'HorizontalAlignment', 'center', 'FontSize', 22, 'FontWeight', 'bold', 'Color', [0.2 0.2 0.2]);
 
     % ---------------------------------------------------------------------
     % 7. EXPORT 600 PPI HIGH-RES PNG & VECTOR SVG
@@ -301,5 +306,4 @@ function plot_group_power_index_v2(pow_A_group, pow_B_group, t_axis, condA_name,
     catch
         print(fig, [out_base, '_600ppi.png'], '-dpng', '-r600');
     end
-    close(fig);
 end

@@ -1875,8 +1875,10 @@ text(ax_title, ax2_pos(1) + ax2_pos(3)/2, 0.965, 'Stimulus Omitted / Delayed (C3
 % -------------------------------------------------------------------------
 % 8. EXPORT 600 PPI PUBLICATION IMAGE
 % -------------------------------------------------------------------------
-fig1B_out_png = fullfile(screening_fig_dir, 'Figure_1B_Channel_C3_Dynamics_600ppi.png');
-fig1B_out_svg = fullfile(screening_fig_dir, 'Figure_1B_Channel_C3_Dynamics.svg');
+% Changed destination from screening_fig_dir to output_path
+fig1B_out_png = fullfile(output_path, 'Figure_1B_Channel_C3_Dynamics_600ppi.png');
+fig1B_out_svg = fullfile(output_path, 'Figure_1B_Channel_C3_Dynamics.svg');
+
 try
     exportgraphics(fig1B, fig1B_out_png, 'Resolution', 600);
     saveas(fig1B, fig1B_out_svg);
@@ -2086,8 +2088,12 @@ else
     out_tag = 'GrandAvg';
 end
 
-fig1C_out_png = fullfile(screening_fig_dir, sprintf('Figure_1C_Stacked_Channels_%s_600ppi.png', out_tag));
-fig1C_out_svg = fullfile(screening_fig_dir, sprintf('Figure_1C_Stacked_Channels_%s.svg', out_tag));
+% -------------------------------------------------------------------------
+% 6. EXPORT 600 PPI PUBLICATION IMAGES (PNG + VECTOR SVG)
+% -------------------------------------------------------------------------
+% Changed destination from screening_fig_dir to output_path
+fig1C_out_png = fullfile(output_path, sprintf('Figure_1C_Stacked_Channels_%s_600ppi.png', out_tag));
+fig1C_out_svg = fullfile(output_path, sprintf('Figure_1C_Stacked_Channels_%s.svg', out_tag));
 
 try
     exportgraphics(fig1C, fig1C_out_png, 'Resolution', 600);
@@ -2154,13 +2160,15 @@ for c_i = 1:length(conds_fig2)
     pow_groups.(c_name) = pow_cell;
 end
 
+% 1. Figure 2A: (Cued - Rand Null) / Cued (4 Rows)
 plot_group_power_index_v2(pow_groups.P1, pow_groups.P3_missing, t_centers_2, ...
     'Cued', 'Rand Null', 'Cued vs Rand Null (-0.2 to 1.0s)', ...
-    EEG.chanlocs, 1000, 0.05, screening_fig_dir);
+    EEG.chanlocs, 1000, 0.05, output_path);
 
+% 2. Figure 2B: (Cued - Unpred 2000) / Cued (4 Rows)
 plot_group_power_index_v2(pow_groups.P1, pow_groups.P2_2000, t_centers_2, ...
     'Cued', 'Unpred 2000', 'Cued vs Unpred 2000 (-0.2 to 1.0s)', ...
-    EEG.chanlocs, 1000, 0.05, screening_fig_dir);
+    EEG.chanlocs, 1000, 0.05, output_path);
 
 %% =========================================================================
 %% AGGREGATE FIGURE 3B: MULTI-BAND SCREE PLOT
