@@ -1575,13 +1575,24 @@ fclose(fid_sum);
 fprintf('\nAll Summary Tables printed and saved to: %s\n', summary_log_file);
 
 %% =========================================================================
-%% FIGURE 1B: CHANNEL C3 ERP DYNAMICS ACROSS GROUPS A & B (MEAN +/- STD)
+%% FIGURE 1B: CHANNEL C3 ERP DYNAMICS + TOPOPLOTS (150, 400, 900 ms) + WILCOXON BARS
 %% =========================================================================
-fprintf('\nGenerating Figure 1B: Channel C3 ERP Waveforms (Mean +/- STD)...\n');
+fprintf('\nGenerating Figure 1B: Channel C3 ERPs with Topoplots (150, 400, 900 ms) & Wilcoxon Bars...\n');
+orig_warn_1B = warning('off', 'all');
 
-time_win = [-0.200, 1.000];
-use_sem  = false;
-norm_au  = false;
+% -------------------------------------------------------------------------
+% 1. USER CONFIGURATION & STATISTICAL PARAMETERS
+% -------------------------------------------------------------------------
+time_win       = [-0.200, 1.000];        % ERP time window [-0.2 s to 1.0 s]
+topo_times     = [0.150, 0.400, 0.900];  % 3 topoplot latencies: 150, 400, 900 ms
+topo_half_win  = 0.025;                  % Average +/- 25 ms around each latency for clean SNR
+norm_au        = false;                  % false = Voltage (\muV); true = Normalized to P1 peak (a.u.)
+
+% Statistical bar settings (Wilcoxon signed-rank against Cued P1)
+alpha_stat     = 0.05;                   % Significance threshold (p < 0.05)
+use_fdr        = false;                  % false = uncorrected + cluster duration; true = Benjamini-Hochberg FDR
+min_sig_ms     = 20;                     % Minimum contiguous significant duration in ms
+single_red_bar = false;                  % false = condition-colored bars; true = single crimson bar
 
 if ~exist('chan_c3', 'var') || isempty(chan_c3)
     chan_c3 = 14;
@@ -1591,148 +1602,279 @@ if ~exist('chan_c3', 'var') || isempty(chan_c3)
     end
 end
 
-subjs_plot = valid_retained_subjs;
+subjs_plot   = valid_retained_subjs;
 n_subjs_plot = length(subjs_plot);
+time_mask    = (time_s >= time_win(1)) & (time_s <= time_win(2));
+t_eval       = time_s(time_mask);
+n_t          = length(t_eval);
 
-time_mask = (time_s >= time_win(1)) & (time_s <= time_win(2));
-t_eval    = time_s(time_mask);
+% -------------------------------------------------------------------------
+% 2. COLOR PALETTE
+% -------------------------------------------------------------------------
+c_P1      = [0.07, 0.35, 0.37]; % Dark Teal
+c_P2_500  = [0.47, 0.12, 0.08]; % Dark Maroon
+c_P3_500  = [0.88, 0.57, 0.10]; % Amber / Gold
+c_P2_2000 = [0.90, 0.59, 0.51]; % Coral / Salmon
+c_P3_null = [0.94, 0.75, 0.47]; % Light Gold / Sand
+c_sig_red = [0.78, 0.12, 0.12]; % Crimson Red
 
-c_P1     = [0.07, 0.35, 0.37];
-c_P2_500 = [0.47, 0.12, 0.08];
-c_P3_500 = [0.88, 0.57, 0.10];
-
-c_P2_2000 = [0.90, 0.59, 0.51];
-c_P3_null = [0.94, 0.75, 0.47];
-
-c_banner_pre  = [0.10, 0.63, 0.63];
-c_banner_stim = [0.91, 0.54, 0.40];
-c_banner_post = [0.50, 0.50, 0.50];
-
+% -------------------------------------------------------------------------
+% 3. EXTRACT C3 SUBJECT TRACES & 32-CHANNEL GRAND AVERAGES FOR TOPOPLOTS
+% -------------------------------------------------------------------------
 cond_list = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
 erp_stats = struct();
 
 for c_i = 1:length(cond_list)
-    c_name = cond_list{c_i};
-    subj_traces = zeros(length(t_eval), n_subjs_plot);
+    c_name      = cond_list{c_i};
+    subj_traces = zeros(n_t, n_subjs_plot);
+    subj_32ch   = zeros(cfg.num_ch, length(time_s), n_subjs_plot);
     
     for s_i = 1:n_subjs_plot
-        s = subjs_plot(s_i);
-        raw_mat = data_all_conds.Raw.(c_name){s};
-        c3_epoch = squeeze(raw_mat(chan_c3, time_mask, :));
-        subj_traces(:, s_i) = mean(c3_epoch, 2, 'omitnan');
+        s       = subjs_plot(s_i);
+        raw_mat = data_all_conds.Raw.(c_name){s}; % [32 x time x trials]
+        
+        erp_s = mean(raw_mat, 3, 'omitnan');
+        subj_32ch(:, :, s_i) = erp_s;
+        subj_traces(:, s_i)  = erp_s(chan_c3, time_mask)';
     end
     
-    m_trace = mean(subj_traces, 2, 'omitnan');
-    s_trace = std(subj_traces, 0, 2, 'omitnan');
-    if use_sem
-        s_trace = s_trace ./ sqrt(n_subjs_plot);
-    end
-    
-    erp_stats.(c_name).mean = m_trace;
-    erp_stats.(c_name).std  = s_trace;
+    erp_stats.(c_name).subj_traces = subj_traces;
+    erp_stats.(c_name).mean        = mean(subj_traces, 2, 'omitnan');
+    erp_stats.(c_name).topo_32ch   = mean(subj_32ch, 3, 'omitnan');
 end
 
 if norm_au
-    p1_peak = max(erp_stats.P1.mean);
+    p1_peak = max(abs(erp_stats.P1.mean));
     if p1_peak <= 0, p1_peak = 1; end
     for c_i = 1:length(cond_list)
         c_name = cond_list{c_i};
-        erp_stats.(c_name).mean = erp_stats.(c_name).mean / p1_peak;
-        erp_stats.(c_name).std  = erp_stats.(c_name).std  / p1_peak;
+        erp_stats.(c_name).mean        = erp_stats.(c_name).mean / p1_peak;
+        erp_stats.(c_name).subj_traces = erp_stats.(c_name).subj_traces / p1_peak;
+        erp_stats.(c_name).topo_32ch   = erp_stats.(c_name).topo_32ch / p1_peak;
     end
-    y_label_str = 'Amplitude (a.u.)';
+    y_label_str = 'EEG Amplitude (a.u.)';
+    cb_unit_str = 'a.u.';
 else
-    y_label_str = 'Amplitude (\muV)';
+    y_label_str = 'EEG Amplitude (\muV)';
+    cb_unit_str = '\muV';
 end
 
-all_max = []; all_min = [];
+% -------------------------------------------------------------------------
+% 4. PAIRED WILCOXON SIGNED-RANK TESTS ACROSS TIME AT CHANNEL C3
+% -------------------------------------------------------------------------
+pairs_A  = {'P2_500', 'P3_500'};
+pairs_B  = {'P2_2000', 'P3_missing'};
+p_vals_A = ones(length(pairs_A), n_t);
+p_vals_B = ones(length(pairs_B), n_t);
+
+for p_i = 1:length(pairs_A)
+    c_comp = pairs_A{p_i};
+    for t_i = 1:n_t
+        x_ref  = erp_stats.P1.subj_traces(t_i, :);
+        x_comp = erp_stats.(c_comp).subj_traces(t_i, :);
+        if any(~isnan(x_ref - x_comp))
+            p_vals_A(p_i, t_i) = signrank(x_comp, x_ref);
+        end
+    end
+end
+
+for p_i = 1:length(pairs_B)
+    c_comp = pairs_B{p_i};
+    for t_i = 1:n_t
+        x_ref  = erp_stats.P1.subj_traces(t_i, :);
+        x_comp = erp_stats.(c_comp).subj_traces(t_i, :);
+        if any(~isnan(x_ref - x_comp))
+            p_vals_B(p_i, t_i) = signrank(x_comp, x_ref);
+        end
+    end
+end
+
+min_pts      = max(1, round((min_sig_ms / 1000) * cfg.fs));
+get_sig_mask = @(p_vec) filter_contiguous_runs(apply_bh_fdr(p_vec, alpha_stat, use_fdr), min_pts);
+
+sig_A = false(length(pairs_A), n_t);
+sig_B = false(length(pairs_B), n_t);
+for p_i = 1:length(pairs_A), sig_A(p_i, :) = get_sig_mask(p_vals_A(p_i, :)); end
+for p_i = 1:length(pairs_B), sig_B(p_i, :) = get_sig_mask(p_vals_B(p_i, :)); end
+
+% -------------------------------------------------------------------------
+% 5. COMPUTE COORDINATED Y-LIMITS & TOPOPLOT COLOR LIMITS
+% -------------------------------------------------------------------------
+all_means = [];
 for c_i = 1:length(cond_list)
-    c_name = cond_list{c_i};
-    all_max = [all_max; erp_stats.(c_name).mean + erp_stats.(c_name).std];
-    all_min = [all_min; erp_stats.(c_name).mean - erp_stats.(c_name).std];
+    all_means = [all_means; erp_stats.(cond_list{c_i}).mean];
 end
-min_val = min(all_min);
-max_val = max(all_max);
-y_pad   = (max_val - min_val) * 0.12;
-if y_pad <= 0 || isnan(y_pad), y_pad = 1; end
+min_val = min(all_means);
+max_val = max(all_means);
+y_span  = max_val - min_val;
+if y_span <= 0 || isnan(y_span), y_span = 2; end
 
-if norm_au
-    ylim_shared = [-0.35, 1.15];
-else
-    ylim_shared = [floor((min_val - y_pad/2)*2)/2, ceil((max_val + y_pad)*2)/2];
+ylim_shared = [min_val - 0.24 * y_span, max_val + 0.15 * y_span];
+
+% Scalp map topoplots averaged across conditions for each panel
+topo_map_A = (erp_stats.P1.topo_32ch + erp_stats.P2_500.topo_32ch + erp_stats.P3_500.topo_32ch) / 3;
+topo_map_B = (erp_stats.P2_2000.topo_32ch + erp_stats.P3_missing.topo_32ch) / 2;
+
+topo_vecs_A = zeros(cfg.num_ch, length(topo_times));
+topo_vecs_B = zeros(cfg.num_ch, length(topo_times));
+for k = 1:length(topo_times)
+    idx_w = (time_s >= (topo_times(k) - topo_half_win)) & (time_s <= (topo_times(k) + topo_half_win));
+    topo_vecs_A(:, k) = mean(topo_map_A(:, idx_w), 2, 'omitnan');
+    topo_vecs_B(:, k) = mean(topo_map_B(:, idx_w), 2, 'omitnan');
 end
+max_topo = max(abs([topo_vecs_A(:); topo_vecs_B(:)])) * 0.90;
+if isempty(max_topo) || max_topo <= 0 || isnan(max_topo), max_topo = 1; end
+c_lim_topo = [-max_topo, max_topo];
 
-fig1B = figure('Position', [100, 100, 1200, 480], 'Color', 'w', ...
-    'Name', 'Figure 1B: Channel C3 Across Conditions');
-tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
+% -------------------------------------------------------------------------
+% 6. RENDER PUBLICATION FIGURE
+% -------------------------------------------------------------------------
+fig1B = figure('Position', [50, 50, 1500, 660], 'Color', 'w', ...
+    'Name', 'Figure 1B: Channel C3 ERPs with Topoplots & Wilcoxon Bars');
+
+% Main ERP Axes Positions [left, bottom, width, height]
+ax1_pos = [0.060, 0.13, 0.405, 0.54];
+ax2_pos = [0.550, 0.13, 0.405, 0.54];
 
 % ==================== SUBPLOT 1: STIMULUS DELIVERED ====================
-ax1 = nexttile; hold on; set(gca, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.8);
-box off;
+ax1 = axes('Position', ax1_pos); hold(ax1, 'on');
+set(ax1, 'FontSize', 15, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+box(ax1, 'off');
 
-yline(0, 'Color', [0.85 0.85 0.85], 'LineWidth', 1.2, 'HandleVisibility', 'off');
-xline(0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
+yline(ax1, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
+xline(ax1, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
-t_fill = [t_eval(:)', fliplr(t_eval(:)')];
+% Vertical dotted connector lines at 150, 400, 900 ms extending toward topoplots
+for k = 1:length(topo_times)
+    tk = topo_times(k);
+    plot(ax1, [tk, tk], [ylim_shared(1), ylim_shared(2) * 1.05], 'k:', ...
+        'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
+end
 
-fill(t_fill, [erp_stats.P1.mean' + erp_stats.P1.std', fliplr(erp_stats.P1.mean' - erp_stats.P1.std')], ...
-    c_P1, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(t_eval, erp_stats.P1.mean, 'Color', c_P1, 'LineWidth', 2.5);
+% Mean Traces (No standard deviation ribbons)
+plot(ax1, t_eval, erp_stats.P1.mean,     'Color', c_P1,     'LineWidth', 2.6, 'DisplayName', 'Cued (P1)');
+plot(ax1, t_eval, erp_stats.P2_500.mean, 'Color', c_P2_500, 'LineWidth', 2.6, 'DisplayName', 'Unpred 500 (P2-500)');
+plot(ax1, t_eval, erp_stats.P3_500.mean, 'Color', c_P3_500, 'LineWidth', 2.6, 'DisplayName', 'Rand 500 (P3-500)');
 
-fill(t_fill, [erp_stats.P2_500.mean' + erp_stats.P2_500.std', fliplr(erp_stats.P2_500.mean' - erp_stats.P2_500.std')], ...
-    c_P2_500, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(t_eval, erp_stats.P2_500.mean, 'Color', c_P2_500, 'LineWidth', 2.5);
+% Wilcoxon Significance Bars along Bottom
+y_bar_base = ylim_shared(1) + 0.04 * (ylim_shared(2) - ylim_shared(1));
+y_bar_step = 0.045 * (ylim_shared(2) - ylim_shared(1));
 
-fill(t_fill, [erp_stats.P3_500.mean' + erp_stats.P3_500.std', fliplr(erp_stats.P3_500.mean' - erp_stats.P3_500.std')], ...
-    c_P3_500, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(t_eval, erp_stats.P3_500.mean, 'Color', c_P3_500, 'LineWidth', 2.5);
+if single_red_bar
+    any_sig_A = any(sig_A, 1);
+    draw_sig_bars(ax1, t_eval, any_sig_A, y_bar_base, c_sig_red, 6.0);
+    if any(any_sig_A)
+        text(ax1, 0.52, y_bar_base + y_bar_step*0.8, 'p < 0.05 (Wilcoxon)', ...
+            'Color', c_sig_red, 'FontSize', 12, 'FontWeight', 'bold');
+    end
+else
+    draw_sig_bars(ax1, t_eval, sig_A(1, :), y_bar_base + y_bar_step, c_P2_500, 5.0);
+    draw_sig_bars(ax1, t_eval, sig_A(2, :), y_bar_base,              c_P3_500, 5.0);
+    text(ax1, -0.18, y_bar_base + y_bar_step*0.5, 'p < 0.05 vs. P1', ...
+        'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
+end
 
-text(0.55, ylim_shared(2)*0.88, 'P1',     'Color', c_P1,     'FontSize', 18, 'FontWeight', 'bold');
-text(0.55, ylim_shared(2)*0.74, 'P2-500', 'Color', c_P2_500, 'FontSize', 18, 'FontWeight', 'bold');
-text(0.55, ylim_shared(2)*0.60, 'P3-500', 'Color', c_P3_500, 'FontSize', 18, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.86, 'P1',     'Color', c_P1,     'FontSize', 15, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.72, 'P2-500', 'Color', c_P2_500, 'FontSize', 15, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.58, 'P3-500', 'Color', c_P3_500, 'FontSize', 15, 'FontWeight', 'bold');
 
-b_height = (ylim_shared(2) - ylim_shared(1)) * 0.08;
-b_bot    = ylim_shared(2);
-b_top    = b_bot + b_height;
-patch([-0.2, 0.0, 0.0, -0.2], [b_bot, b_bot, b_top, b_top], c_banner_pre,  'EdgeColor', 'none', 'Clipping', 'off');
-patch([ 0.0, 0.5, 0.5,  0.0], [b_bot, b_bot, b_top, b_top], c_banner_stim, 'EdgeColor', 'none', 'Clipping', 'off');
-patch([ 0.5, 1.0, 1.0,  0.5], [b_bot, b_bot, b_top, b_top], c_banner_post, 'EdgeColor', 'none', 'Clipping', 'off');
-
-xlim([-0.2, 1.0]); ylim(ylim_shared);
-xlabel('Time (s)', 'FontSize', 20, 'FontWeight', 'bold');
-ylabel(y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
+xlim(ax1, time_win); ylim(ax1, ylim_shared);
+xticks(ax1, -0.2 : 0.2 : 1.0);
+xticklabels(ax1, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
+xlabel(ax1, 'Time after expected stimulus (ms)', 'FontSize', 16, 'FontWeight', 'bold');
+ylabel(ax1, y_label_str, 'FontSize', 16, 'FontWeight', 'bold');
 
 % ==================== SUBPLOT 2: STIMULUS OMITTED / DELAYED ====================
-ax2 = nexttile; hold on; set(gca, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.8);
-box off;
+ax2 = axes('Position', ax2_pos); hold(ax2, 'on');
+set(ax2, 'FontSize', 15, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+box(ax2, 'off');
 
-yline(0, 'Color', [0.85 0.85 0.85], 'LineWidth', 1.2, 'HandleVisibility', 'off');
-xline(0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
+yline(ax2, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
+xline(ax2, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
-fill(t_fill, [erp_stats.P1.mean' + erp_stats.P1.std', fliplr(erp_stats.P1.mean' - erp_stats.P1.std')], ...
-    c_P1, 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(t_eval, erp_stats.P1.mean, 'Color', c_P1, 'LineWidth', 2.5);
+for k = 1:length(topo_times)
+    tk = topo_times(k);
+    plot(ax2, [tk, tk], [ylim_shared(1), ylim_shared(2) * 1.05], 'k:', ...
+        'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
+end
 
-fill(t_fill, [erp_stats.P2_2000.mean' + erp_stats.P2_2000.std', fliplr(erp_stats.P2_2000.mean' - erp_stats.P2_2000.std')], ...
-    c_P2_2000, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(t_eval, erp_stats.P2_2000.mean, 'Color', c_P2_2000, 'LineWidth', 2.5);
+plot(ax2, t_eval, erp_stats.P1.mean,         'Color', c_P1,      'LineWidth', 2.6, 'DisplayName', 'Cued (P1)');
+plot(ax2, t_eval, erp_stats.P2_2000.mean,    'Color', c_P2_2000, 'LineWidth', 2.6, 'DisplayName', 'Unpred 2000 (P2-2000)');
+plot(ax2, t_eval, erp_stats.P3_missing.mean, 'Color', c_P3_null, 'LineWidth', 2.6, 'DisplayName', 'Rand Null (P3-null)');
 
-fill(t_fill, [erp_stats.P3_missing.mean' + erp_stats.P3_missing.std', fliplr(erp_stats.P3_missing.mean' - erp_stats.P3_missing.std')], ...
-    c_P3_null, 'FaceAlpha', 0.20, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-plot(t_eval, erp_stats.P3_missing.mean, 'Color', c_P3_null, 'LineWidth', 2.5);
+if single_red_bar
+    any_sig_B = any(sig_B, 1);
+    draw_sig_bars(ax2, t_eval, any_sig_B, y_bar_base, c_sig_red, 6.0);
+    if any(any_sig_B)
+        text(ax2, 0.52, y_bar_base + y_bar_step*0.8, 'p < 0.05 (Wilcoxon)', ...
+            'Color', c_sig_red, 'FontSize', 12, 'FontWeight', 'bold');
+    end
+else
+    draw_sig_bars(ax2, t_eval, sig_B(1, :), y_bar_base + y_bar_step, c_P2_2000, 5.0);
+    draw_sig_bars(ax2, t_eval, sig_B(2, :), y_bar_base,              c_P3_null, 5.0);
+    text(ax2, -0.18, y_bar_base + y_bar_step*0.5, 'p < 0.05 vs. P1', ...
+        'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
+end
 
-text(0.55, ylim_shared(2)*0.88, 'P1',      'Color', c_P1,      'FontSize', 18, 'FontWeight', 'bold');
-text(0.55, ylim_shared(2)*0.74, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 18, 'FontWeight', 'bold');
-text(0.55, ylim_shared(2)*0.60, 'P3-null', 'Color', c_P3_null, 'FontSize', 18, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.86, 'P1',      'Color', c_P1,      'FontSize', 15, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.72, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 15, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.58, 'P3-null', 'Color', c_P3_null, 'FontSize', 15, 'FontWeight', 'bold');
 
-patch([-0.2, 0.0, 0.0, -0.2], [b_bot, b_bot, b_top, b_top], c_banner_pre,  'EdgeColor', 'none', 'Clipping', 'off');
-patch([ 0.0, 0.5, 0.5,  0.0], [b_bot, b_bot, b_top, b_top], c_banner_stim, 'EdgeColor', 'none', 'Clipping', 'off');
-patch([ 0.5, 1.0, 1.0,  0.5], [b_bot, b_bot, b_top, b_top], c_banner_post, 'EdgeColor', 'none', 'Clipping', 'off');
+xlim(ax2, time_win); ylim(ax2, ylim_shared);
+xticks(ax2, -0.2 : 0.2 : 1.0);
+xticklabels(ax2, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
+xlabel(ax2, 'Time after expected stimulus (ms)', 'FontSize', 16, 'FontWeight', 'bold');
+ylabel(ax2, y_label_str, 'FontSize', 16, 'FontWeight', 'bold');
 
-xlim([-0.2, 1.0]); ylim(ylim_shared);
-xlabel('Time (s)', 'FontSize', 20, 'FontWeight', 'bold');
-ylabel(y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
+% -------------------------------------------------------------------------
+% 7. ADD FLOATING TOPOPLOTS AT 150, 400, 900 MS ABOVE EACH PANEL
+% -------------------------------------------------------------------------
+topo_w = 0.076;                           % Calibrated width so 150 & 400 ms topoplots do not collide
+topo_h = 0.175;                           
+topo_y = ax1_pos(2) + ax1_pos(4) + 0.015; % Directly above the top axis boundary
+t_span = time_win(2) - time_win(1);
 
+% Panel A Topoplots (150, 400, 900 ms)
+for k = 1:length(topo_times)
+    frac_x   = (topo_times(k) - time_win(1)) / t_span;
+    center_x = ax1_pos(1) + frac_x * ax1_pos(3);
+    ax_tA    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs_A(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_tA, 'jet'); clim(ax_tA, c_lim_topo);
+    title(ax_tA, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 11, 'FontWeight', 'bold');
+end
+
+% Panel B Topoplots (150, 400, 900 ms)
+for k = 1:length(topo_times)
+    frac_x   = (topo_times(k) - time_win(1)) / t_span;
+    center_x = ax2_pos(1) + frac_x * ax2_pos(3);
+    ax_tB    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs_B(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_tB, 'jet'); clim(ax_tB, c_lim_topo);
+    title(ax_tB, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 11, 'FontWeight', 'bold');
+end
+
+% Shared Center Colorbar
+ax_cb = axes('Position', [0.490, 0.48, 0.014, 0.18], 'Visible', 'off');
+colormap(ax_cb, 'jet'); clim(ax_cb, c_lim_topo);
+cb = colorbar(ax_cb, 'Position', [0.492, 0.48, 0.012, 0.18]);
+cb.FontSize = 11;
+cb.Title.String = cb_unit_str;
+cb.Title.FontSize = 12;
+cb.Title.FontWeight = 'bold';
+
+% Panel Titles
+ax_title = axes('Position', [0, 0, 1, 1], 'Visible', 'off');
+text(ax_title, ax1_pos(1) + ax1_pos(3)/2, 0.965, 'Stimulus Delivered (C3)', ...
+    'HorizontalAlignment', 'center', 'FontSize', 19, 'FontWeight', 'bold');
+text(ax_title, ax2_pos(1) + ax2_pos(3)/2, 0.965, 'Stimulus Omitted / Delayed (C3)', ...
+    'HorizontalAlignment', 'center', 'FontSize', 19, 'FontWeight', 'bold');
+
+% -------------------------------------------------------------------------
+% 8. EXPORT 600 PPI PUBLICATION IMAGE
+% -------------------------------------------------------------------------
 fig1B_out_png = fullfile(screening_fig_dir, 'Figure_1B_Channel_C3_Dynamics_600ppi.png');
 fig1B_out_svg = fullfile(screening_fig_dir, 'Figure_1B_Channel_C3_Dynamics.svg');
 try
@@ -1744,6 +1886,54 @@ catch
     print(fig1B, fig1B_out_png, '-dpng', '-r600');
 end
 close(fig1B);
+warning(orig_warn_1B);
+
+%% =========================================================================
+%% LOCAL HELPER FUNCTIONS FOR FIGURE 1B WILCOXON BARS
+%% =========================================================================
+function sig_mask = apply_bh_fdr(p_vals, alpha_lvl, do_fdr)
+    p_vals = p_vals(:)';
+    if ~do_fdr
+        sig_mask = (p_vals < alpha_lvl);
+        return;
+    end
+    valid = ~isnan(p_vals);
+    p_sub = p_vals(valid);
+    m     = length(p_sub);
+    [p_sorted, ~] = sort(p_sub);
+    thresh_vec    = (1:m) * (alpha_lvl / m);
+     below_idx     = find(p_sorted <= thresh_vec, 1, 'last');
+    if isempty(below_idx)
+        sig_mask = false(size(p_vals));
+    else
+        p_crit   = p_sorted(below_idx);
+        sig_mask = (p_vals <= p_crit);
+    end
+end
+
+function clean_mask = filter_contiguous_runs(sig_mask, min_pts)
+    clean_mask = false(size(sig_mask));
+    d          = diff([0, double(sig_mask(:)'), 0]);
+    run_starts = find(d == 1);
+    run_ends   = find(d == -1) - 1;
+    for r = 1:length(run_starts)
+        if (run_ends(r) - run_starts(r) + 1) >= min_pts
+            clean_mask(run_starts(r):run_ends(r)) = true;
+        end
+    end
+end
+
+function draw_sig_bars(ax_h, t_vec, sig_mask, y_level, bar_col, lw)
+    d          = diff([0, double(sig_mask(:)'), 0]);
+    run_starts = find(d == 1);
+    run_ends   = find(d == -1) - 1;
+    for r = 1:length(run_starts)
+        t1 = t_vec(run_starts(r));
+        t2 = t_vec(run_ends(r));
+        plot(ax_h, [t1, t2], [y_level, y_level], '-', ...
+            'Color', bar_col, 'LineWidth', lw, 'HandleVisibility', 'off');
+    end
+end
 
 %% =========================================================================
 %% FIGURE 1C: MULTI-CHANNEL STACKED ERPs (1x5 LAYOUT, [-0.6, 1.0 s] WINDOW)
@@ -1831,7 +2021,7 @@ if isempty(p90_erp) || isnan(p90_erp) || p90_erp <= 0, p90_erp = 8; end
 chan_step = max(1.35 * med_sd, 1.40 * p90_erp); 
 y_offsets = (n_plot_chans:-1:1)' * chan_step;
 
-fig1C = figure('Position', [50, 50, 2200, 750], 'Color', 'w', ...
+fig1C = figure('Position', [50, 50, 2200, 1500], 'Color', 'w', ...
     'Name', 'Figure 1C: Multi-Channel Stacked ERPs');
 t_layout = tiledlayout(1, 5, 'TileSpacing', 'compact', 'Padding', 'normal');
 
