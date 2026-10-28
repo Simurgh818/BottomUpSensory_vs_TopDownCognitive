@@ -117,7 +117,7 @@ if isfield(EEG, 'srate') && ~isempty(EEG.srate) && isscalar(EEG.srate) && EEG.sr
 elseif exist('time_s', 'var') && length(time_s) > 1
     fs = round(1 / (time_s(2) - time_s(1)));
 else
-    fs = 500; 
+    fs = 512; 
 end
 
 fn = fs / 2;
@@ -2215,9 +2215,9 @@ try pause(0.5); saveas(fig3B, [save_file_3b, '.svg']); saveas(fig3B, [save_file_
 close(fig3B);
 
 %% =========================================================================
-%% AGGREGATE FIGURE 5A: MULTI-BAND LOG(R) REDISTRIBUTION (3x2 GRID + STATS)
+%% AGGREGATE FIGURE 5A: SPLIT INTO (1) RAW (1x2) & (2) ALPHA/BETA (2x2)
 %% =========================================================================
-disp('Generating Figure 5A: Multi-Band log(r) Subspace Redistribution (All Retained Subjects)...');
+disp('Generating Figure 5A: Split Raw (1x2) and Alpha & Beta (2x2) log(r) Subspace Redistribution...');
 
 plot_bands_filt = {'Alpha', 'Beta'};
 band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
@@ -2225,6 +2225,7 @@ band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
 raw_color = [0.15 0.15 0.15];
 cond_markers_A = {'o', 's', 'd'}; cond_styles_A  = {'-', '--', ':'};
 cond_markers_B = {'^', 'v', 'd', 'p'}; cond_styles_B  = {'-', '--', ':', '-.'};
+
 all_y_5a = [];
 for g_chk = 1:length(subj_group_names)
     for b_chk = {'Raw', 'Alpha', 'Beta'}
@@ -2243,10 +2244,15 @@ star_offset = (global_5a_ymax - global_5a_ymin) * 0.03;
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig5A = figure('Position', [100, 100, 1600, 1300], 'Name', sprintf('Figure 5A: %s', cohort_str));
-    tiledlayout(3, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
     
-    % ROW 1, COL 1: STIMULUS DELIVERED - RAW BROADBAND
+    % =====================================================================
+    % FIGURE 5A (PART 1): RAW BROADBAND SIGNAL (1x2 GRID)
+    % =====================================================================
+    fig5A_Raw = figure('Position', [100, 100, 1300, 520], ...
+        'Name', sprintf('Figure 5A (Raw): %s', cohort_str), 'Color', 'w');
+    tiledlayout(1, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
+    
+    % --- COL 1: STIMULUS DELIVERED - RAW BROADBAND ---
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -2281,13 +2287,14 @@ for g = 1:length(subj_group_names)
             end
         end
     end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
+    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
+    xlabel('Spatial Direction Index', 'FontSize', 16, 'FontWeight', 'bold');
     ylabel('log(r_i) \pm SEM', 'FontSize', 16, 'FontWeight', 'bold');
     title(sprintf('Stimulus Delivered — Raw\n(%s)', cohort_str), 'FontSize', 16, 'FontWeight', 'bold');
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ROW 1, COL 2: STIMULUS OMITTED / DELAYED - RAW BROADBAND
+    % --- COL 2: STIMULUS OMITTED / DELAYED - RAW BROADBAND ---
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -2322,12 +2329,26 @@ for g = 1:length(subj_group_names)
             end
         end
     end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
+    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
+    xlabel('Spatial Direction Index', 'FontSize', 16, 'FontWeight', 'bold');
     title(sprintf('Stimulus Omitted / Delayed — Raw\n(%s)', cohort_str), 'FontSize', 16, 'FontWeight', 'bold');
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ROW 2, COL 1: STIMULUS DELIVERED - ALPHA
+    sgtitle(sprintf('Subspace Redistribution Geometry — Raw (%s)', cohort_str), 'FontSize', 20, 'FontWeight', 'bold');
+    
+    save_file_5a_raw = fullfile(output_path, sprintf('Figure_5A_Raw_LogR_%s', fig_tags{g}));
+    try pause(0.5); saveas(fig5A_Raw, [save_file_5a_raw, '.svg']); saveas(fig5A_Raw, [save_file_5a_raw, '.png']); catch, end
+    close(fig5A_Raw);
+    
+    % =====================================================================
+    % FIGURE 5A (PART 2): FILTERED ALPHA & BETA SIGNALS (2x2 GRID)
+    % =====================================================================
+    fig5A_AB = figure('Position', [100, 100, 1300, 920], ...
+        'Name', sprintf('Figure 5A (Alpha & Beta): %s', cohort_str), 'Color', 'w');
+    tiledlayout(2, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
+    
+    % --- ROW 1, COL 1: STIMULUS DELIVERED - ALPHA ---
     b_name = 'Alpha'; col = band_colors_filt(b_name);
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
@@ -2369,7 +2390,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ROW 2, COL 2: STIMULUS OMITTED / DELAYED - ALPHA
+    % --- ROW 1, COL 2: STIMULUS OMITTED / DELAYED - ALPHA ---
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -2409,7 +2430,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ROW 3, COL 1: STIMULUS DELIVERED - BETA
+    % --- ROW 2, COL 1: STIMULUS DELIVERED - BETA ---
     b_name = 'Beta'; col = band_colors_filt(b_name);
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
@@ -2452,7 +2473,7 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    % ROW 3, COL 2: STIMULUS OMITTED / DELAYED - BETA
+    % --- ROW 2, COL 2: STIMULUS OMITTED / DELAYED - BETA ---
     nexttile; hold on; set(gca, 'FontSize', 16);
     yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     
@@ -2493,11 +2514,11 @@ for g = 1:length(subj_group_names)
     lgd = legend('Location', 'best'); lgd.FontSize = 14;
     ylim([global_5a_ymin, global_5a_ymax]);
     
-    sgtitle(sprintf('Subspace Redistribution Geometry (%s)', cohort_str), 'FontSize', 20, 'FontWeight', 'bold');
+    sgtitle(sprintf('Subspace Redistribution Geometry — Alpha & Beta (%s)', cohort_str), 'FontSize', 20, 'FontWeight', 'bold');
     
-    save_file_5a = fullfile(output_path, sprintf('Figure_5A_MultiBand_LogR_%s', fig_tags{g}));
-    try pause(0.5); saveas(fig5A, [save_file_5a, '.svg']); saveas(fig5A, [save_file_5a, '.png']); catch, end
-    close(fig5A);
+    save_file_5a_ab = fullfile(output_path, sprintf('Figure_5A_AlphaBeta_LogR_%s', fig_tags{g}));
+    try pause(0.5); saveas(fig5A_AB, [save_file_5a_ab, '.svg']); saveas(fig5A_AB, [save_file_5a_ab, '.png']); catch, end
+    close(fig5A_AB);
 end
 
 %% =========================================================================
