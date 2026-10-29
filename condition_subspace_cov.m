@@ -724,15 +724,25 @@ if any(subj_excluded_2_3)
 end
 fprintf('======================================================\n');
 
+% Close any stale open file handles first
+fclose('all');
+
 summary_log_file = fullfile(output_path, 'Summary_Tables_All_Bands.txt');
 fid_sum = fopen(summary_log_file, 'w');
+
+if fid_sum < 0
+    warning('Could not open %s for writing (file may be open in another application). Output will be displayed to Command Window only.', summary_log_file);
+    dest_list = 1;
+else
+    dest_list = [1, fid_sum];
+end
 
 for band_idx = 1:length(bands_to_process)
     band_name = bands_to_process{band_idx};
     current_data = data_all_conds.(band_name); 
     num_subjects = length(current_data.(cfg.ref_cond));
     
-    for dest = [1, fid_sum]
+    for dest = dest_list
         fprintf(dest, '\n\n======================================================\n');
         fprintf(dest, '   BAND: %s | REFERENCE: %s (INDIVIDUAL COMPONENTS)\n', upper(band_name), cfg.ref_cond);
         fprintf(dest, '======================================================\n');
@@ -741,8 +751,9 @@ for band_idx = 1:length(bands_to_process)
     group_dir = fullfile(output_path, 'group', band_name, cfg.ref_cond);
     if ~exist(group_dir, 'dir'), mkdir(group_dir); end
 
-    % --- BASIS MODE SELECTION ('universal' or 'P1') ---
+    % --- BASIS MODE SELECTION ('universal' concatenated or 'P1') ---
     if ~isfield(cfg, 'basis_mode'), cfg.basis_mode = 'universal'; end
+    n_sub_half = 10; % 10 clean trials for Half A (basis) and 10 for Half B (projection)
 
     Xi_all_subjs = nan(cfg.num_ch, cfg.m, num_subjects);
     lam_frac_all = nan(cfg.m, num_subjects);
@@ -752,24 +763,24 @@ for band_idx = 1:length(bands_to_process)
     for s = valid_retained_subjs
         rng(cfg.seed + s);
         if strcmpi(cfg.basis_mode, 'universal')
-            % Pool dynamic covariance equally across all 5 conditions (Half A of each)
-            C_pool = zeros(cfg.num_ch, cfg.num_ch);
-            n_cond_pool = 0;
+            % Concatenate baseline-corrected Half-A ERPs (10 trials each) across all 5 conditions
+            X_concat_A = [];
             for c_p = 1:length(cfg.all_conds)
                 c_pname = cfg.all_conds{c_p};
                 if ~isfield(current_data, c_pname), continue; end
-                raw_c = current_data.(c_pname){s};
+                raw_c   = current_data.(c_pname){s};
                 valid_c = find(~isnan(squeeze(raw_c(1, 1, :))));
-                perm_c = valid_c(randperm(length(valid_c)));
-                n_h = min(floor(cfg.nTrialMatch / 2), floor(length(valid_c) / 2));
-                erp_cA = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
-                b_cA   = mean(erp_cA(:, iBase), 2, 'omitnan');
-                C_pool = C_pool + covCentered(erp_cA(:, iWin), b_cA);
-                n_cond_pool = n_cond_pool + 1;
+                perm_c  = valid_c(randperm(length(valid_c)));
+                n_h     = min(n_sub_half, floor(length(valid_c) / 2));
+                
+                erp_cA  = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
+                b_cA    = mean(erp_cA(:, iBase), 2, 'omitnan');
+                X_cA_bc = erp_cA(:, iWin) - b_cA; % Baseline-corrected ERP over iWin
+                X_concat_A = [X_concat_A, X_cA_bc]; %#ok<AGROW>
             end
-            C_A_cent = C_pool / max(1, n_cond_pool);
+            C_A_cent = covCentered(X_concat_A, zeros(cfg.num_ch, 1));
         else
-            % Original P1-only basis
+            % P1-only basis
             raw_ref = current_data.(cfg.ref_cond){s};
             valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
             perm = valid_ref_idx(randperm(length(valid_ref_idx)));
@@ -805,7 +816,7 @@ for band_idx = 1:length(bands_to_process)
     
     figA = figure('Position', [100, 100, 1000, 400], 'Visible', 'off');
     subplot(1, 2, 1); plot(1:cfg.m, lam_frac_all(:, valid_retained_subjs), '-o', 'LineWidth', 1.5); grid on;
-    xlabel('Direction Index'); ylabel('Fraction of Total Variance'); title(sprintf('Eigenvalue Spectra [%s|%s]', band_name, cfg.ref_cond));
+    xlabel('Direction Index'); ylabel('Fraction of Total Variance'); title(sprintf('Eigenvalue Spectra [%s|%s]', band_name, cfg.basis_mode));
     subplot(1, 2, 2); bar(mean(gap_all(:, valid_retained_subjs), 2, 'omitnan')); hold on;
     errorbar(1:cfg.m-1, mean(gap_all(:, valid_retained_subjs), 2, 'omitnan'), std(gap_all(:, valid_retained_subjs), 0, 2, 'omitnan'), 'k.', 'LineWidth', 1.2);
     grid on; xlabel('Gap Index'); ylabel('Relative Gap'); title('Mean Subspace Gaps');
@@ -817,7 +828,7 @@ for band_idx = 1:length(bands_to_process)
     subjs_topo = valid_retained_subjs(1:min(4, length(valid_retained_subjs))); % First 4 retained subjects
     n_rows_B   = length(subjs_topo);
     
-    figB = figure('Position', [100, 100, 220 * cfg.m + 120, 210 * n_rows_B], 'Visible', 'off');
+    figB = figure('Position', [100, 100, 220 * cfg.m + 120, 210 * n_rows_B], 'Color', 'w', 'Visible', 'off');
     for r_idx = 1:n_rows_B
         s = subjs_topo(r_idx);
         for k = 1:cfg.m
@@ -850,192 +861,19 @@ for band_idx = 1:length(bands_to_process)
     cb_B = colorbar('Position', [0.90, 0.15, 0.02, 0.72]);
     cb_B.Limits = [-0.4, 0.4];
     cb_B.Ticks  = -0.4 : 0.2 : 0.4;
-    cb_B.Label.String   = 'Spatial Weight (a.u.)';
-    cb_B.Label.FontSize = 22;
+    cb_B.Label.String     = 'Spatial Weight (a.u.)';
+    cb_B.Label.FontSize   = 22;
     cb_B.Label.FontWeight = 'bold';
-    cb_B.FontSize = 20;
+    cb_B.FontSize         = 20;
     
     save_file_B = fullfile(group_dir, 'Deliverable_B_Topos');
     try saveas(figB, [save_file_B, '.png']); saveas(figB, [save_file_B, '.svg']); catch, end
     close(figB);
 
-    figC = figure('Position', [100, 100, 300 * cfg.m, 350], 'Visible', 'off');
-    tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
-    
-    n_ret = length(valid_retained_subjs);
-    subj_subj_sim = nan(n_ret, n_ret, cfg.m);
-    for k = 1:cfg.m
-        for idx1 = 1:n_ret
-            s1 = valid_retained_subjs(idx1);
-            for idx2 = 1:n_ret
-                s2 = valid_retained_subjs(idx2);
-                subj_subj_sim(idx1, idx2, k) = abs(dot(Xi_aligned(:, k, s1), Xi_aligned(:, k, s2)));
-            end
-        end
-        
-        nexttile;
-        imagesc(subj_subj_sim(:, :, k));
-        colormap('jet'); clim([0 1]); axis square;
-        title(sprintf('\\xi_%d', k), 'FontSize', 28, 'FontWeight', 'bold');
-        
-        if k == 1, ylabel('Retained Subject Index', 'FontSize', 22, 'FontWeight', 'bold'); end
-        xlabel('Retained Subject Index', 'FontSize', 22, 'FontWeight', 'bold');
-        xticks([1, n_ret]); yticks([1, n_ret]);
-    end
-    
-    cb = colorbar; cb.Layout.Tile = 'east'; 
-    cb.Label.String = 'Absolute Cosine Similarity'; cb.Label.FontSize = 14;
-    sgtitle(sprintf('Cross-Subject Component Consistency (%s %s, n=%d)', band_name, cfg.ref_cond, n_ret), 'FontSize', 28, 'FontWeight', 'bold');
-    
-    save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim', 'valid_retained_subjs');
-    saveas(figC, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); close(figC);
-
-    G_splits     = nan(length(cfg.all_conds), cfg.nRep, num_subjects);
-    log_r_splits = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
-    lat_splits   = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
-    sust_splits  = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
-    traj_splits  = nan(length(cfg.all_conds), cfg.m, num_windows, cfg.nRep, num_subjects);
-
-    for subj = valid_retained_subjs
-        subj_dir = fullfile(output_path, sprintf('subj%02d', subj), band_name, cfg.ref_cond);
-        if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
-        save(fullfile(subj_dir, 'cfg.mat'), 'cfg');
-        
-        Xi_stable = Xi_aligned(:, :, subj);
-        
-        for rep = 1:cfg.nRep
-            rng(cfg.seed + rep + subj*1000); 
-            
-            % Partition every condition into non-overlapping Half A (basis) and Half B (test projection)
-            halfA_idx = struct();
-            halfB_idx = struct();
-            C_pool_rep = zeros(cfg.num_ch, cfg.num_ch);
-            n_pool_rep = 0;
-            
-            for c_p = 1:length(cfg.all_conds)
-                cond_p = cfg.all_conds{c_p};
-                if ~isfield(current_data, cond_p), continue; end
-                raw_cp = current_data.(cond_p){subj};
-                valid_cp = find(~isnan(squeeze(raw_cp(1, 1, :))));
-                perm_cp  = valid_cp(randperm(length(valid_cp)));
-                
-                % Use 12 trials for Half A and 12 trials for Half B (since min_keep >= 24)
-                n_sub = min(12, floor(length(valid_cp) / 2));
-                halfA_idx.(cond_p) = perm_cp(1:n_sub);
-                halfB_idx.(cond_p) = perm_cp(n_sub + (1:n_sub));
-                
-                erp_cpA = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
-                b_cpA   = mean(erp_cpA(:, iBase), 2, 'omitnan');
-                C_cpA   = covCentered(erp_cpA(:, iWin), b_cpA);
-                
-                if strcmpi(cfg.basis_mode, 'universal')
-                    C_pool_rep = C_pool_rep + C_cpA;
-                    n_pool_rep = n_pool_rep + 1;
-                elseif strcmp(cond_p, cfg.ref_cond)
-                    C_pool_rep = C_cpA;
-                    n_pool_rep = 1;
-                end
-            end
-            
-            C_A_cent = C_pool_rep / max(1, n_pool_rep);
-            [V, D] = eig(C_A_cent, 'vector');
-            [lam, ord] = sort(D, 'descend');
-            V = V(:, ord);
-            Xi_rep = V(:, 1:cfg.m);
-            lam_frac_rep = lam(1:cfg.m) / sum(lam);
-            gap_rep = (lam(1:cfg.m-1) - lam(2:cfg.m)) ./ lam(1:cfg.m-1);
-            
-            for k = 1:cfg.m
-                if dot(Xi_rep(:, k), Xi_stable(:, k)) < 0
-                    Xi_rep(:, k) = -Xi_rep(:, k);
-                end
-            end
-            
-            basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep);
-            
-            % Reference ceiling from held-out Half B of Cued (P1)
-            raw_ref = current_data.(cfg.ref_cond){subj};
-            iA = halfA_idx.(cfg.ref_cond);
-            iB = halfB_idx.(cfg.ref_cond);
-            erpB = mean(raw_ref(:, :, iB), 3, 'omitnan');
-            bB   = mean(erpB(:, iBase), 2, 'omitnan');
-            XB   = erpB(:, iWin) - bB;
-            
-            v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win;
-            V_ceil = sum(v_ceil);
-            
-            proj_B = Xi_rep' * XB; 
-            [~, max_idx_B] = max(abs(proj_B), [], 2);
-            t_lat_ceil = t_eval(max_idx_B); 
-            
-            split_vars = struct('iA', iA, 'iB', iB);
-            proj_vars  = struct('v_ceil', v_ceil);
-            
-            for c = 1:length(cfg.all_conds)
-                cond = cfg.all_conds{c};
-                if ~isfield(current_data, cond), continue; end
-                
-                raw_cond = current_data.(cond){subj};
-                idx_k = halfB_idx.(cond); % Held-out Half B for ALL conditions!
-                erp_k = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
-                bk    = mean(erp_k(:, iBase), 2, 'omitnan');
-                Xk    = erp_k(:, iWin) - bk;
-                if strcmp(cond, cfg.ref_cond)
-                    Xk = XB; bk = bB; idx_k = iB;
-                    erp_k = erpB; 
-                else
-                    valid_cond_idx = find(~isnan(squeeze(raw_cond(1, 1, :))));
-                    n_pick = min(cfg.nTrialMatch, length(valid_cond_idx));
-                    idx_k  = valid_cond_idx(randperm(length(valid_cond_idx), n_pick));
-                    erp_k  = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
-                    bk     = mean(erp_k(:, iBase), 2, 'omitnan');
-                    Xk     = erp_k(:, iWin) - bk;
-                end
-                
-                split_vars.(cond) = idx_k;
-                v_k = sum((Xi_rep' * Xk).^2, 2) / T_win;
-                V_k = sum(v_k);
-                G_k = V_k / V_ceil;
-                r_k = v_k ./ v_ceil;
-                log_r_k = log(r_k);
-                
-                proj_vars.(cond) = struct('v_k', v_k, 'G', G_k, 's_k', v_k/V_k, 'r', r_k, 'log_r', log_r_k);
-                
-                G_splits(c, rep, subj)        = G_k;
-                log_r_splits(c, :, rep, subj) = log_r_k;
-                
-                proj_k = Xi_rep' * Xk; 
-                [~, max_idx_k] = max(abs(proj_k), [], 2);
-                lat_splits(c, :, rep, subj) = (t_eval(max_idx_k) - t_lat_ceil)' * 1000;
-                
-                xbar = mean(Xk, 2); Xd = Xk - xbar;
-                v_sust = (Xi_rep' * xbar).^2;
-                v_dyn  = sum((Xi_rep' * Xd).^2, 2) / T_win;
-                sust_splits(c, :, rep, subj) = v_sust ./ (v_sust + v_dyn + eps);
-
-                for w = 1:num_windows
-                    w_mask = time_s >= t_starts(w) & time_s < (t_starts(w) + cfg.slide_win);
-                    if nnz(w_mask) > 0
-                        X_win = erp_k(:, w_mask) - bk;
-                        v_win = sum((Xi_rep' * X_win).^2, 2) / nnz(w_mask);
-                        traj_splits(c, :, w, rep, subj) = v_win;
-                    end
-                end
-            end
-            
-            rep_str = sprintf('%02d', rep);
-            save(fullfile(subj_dir, ['split_rep' rep_str '.mat']), '-struct', 'split_vars');
-            save(fullfile(subj_dir, ['basis_rep' rep_str '.mat']), '-struct', 'basis_vars');
-            save(fullfile(subj_dir, ['proj_rep' rep_str '.mat']), '-struct', 'proj_vars');
-        end
-    end
-
-    save(fullfile(group_dir, 'results.mat'), 'G_splits', 'log_r_splits', 'lat_splits', 'sust_splits', 'traj_splits', 'valid_retained_subjs');
-
     % ------------------------------------------------------------------
     %% CHECKPOINT 1 (B): Cross-Subject Consistency Permutation Test
     % ------------------------------------------------------------------
-    for dest = [1, fid_sum]
+    for dest = dest_list
         fprintf(dest, '\nRunning 1,000-iteration Spatial Permutation Test for Consistency...\n');
     end
     n_perms = 1000;
@@ -1084,7 +922,7 @@ for band_idx = 1:length(bands_to_process)
         end
     end
     
-    for dest = [1, fid_sum]
+    for dest = dest_list
         fprintf(dest, '\n--- Cross-Subject Component Consistency ---\n');
         fprintf(dest, 'Direction | True Sim | 95%% Null Thresh | p-value | Significance\n');
         fprintf(dest, '---------------------------------------------------------------\n');
@@ -1096,12 +934,345 @@ for band_idx = 1:length(bands_to_process)
         elseif p_vals(k) < 0.01, sig_str = '**';
         elseif p_vals(k) < 0.05, sig_str = '*';
         else, sig_str = 'ns'; end
-        for dest = [1, fid_sum]
+        for dest = dest_list
             fprintf(dest, 'Xi_%d      | %.3f    | %.3f           | %.4f  | %s\n', ...
                 k, true_mean_sim(k), thresh_95(k), p_vals(k), sig_str);
         end
     end
-    for dest = [1, fid_sum]
+    for dest = dest_list
+        fprintf(dest, '---------------------------------------------------------------\n');
+    end
+    
+    % Enlarged figure canvas to [1500 x 700] for clean typography spacing
+    figC = figure('Position', [150, 150, 1500, 700], 'Color', 'w', ...
+        'Name', sprintf('Permutation Test: %s', band_name), 'Visible', 'off');
+    t = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    title(t, sprintf('Cross-Subject Consistency: Null vs True (%s Universal Basis, n=%d)', ...
+        band_name, n_ret), 'FontSize', 24, 'FontWeight', 'bold');
+    
+    for k = 1:cfg.m
+        nexttile; hold on;
+        set(gca, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.2, 'TickDir', 'out');
+        
+        % Null distribution histogram
+        histogram(null_mean_sim(k, :), 30, 'Normalization', 'probability', ...
+            'FaceColor', [0.72 0.72 0.72], 'EdgeColor', 'none');
+        
+        % 95% Null Threshold line (Label at TOP, aligned to LEFT of line)
+        xline(thresh_95(k), 'k--', ...
+            'LineWidth', 1.8, ...
+            'Label', '95% Thresh', ...
+            'LabelOrientation', 'horizontal', ...
+            'LabelVerticalAlignment', 'top', ...
+            'LabelHorizontalAlignment', 'left', ...
+            'FontSize', 15);
+        
+        % True Similarity line (Label LOWERED to MIDDLE, aligned to RIGHT of line)
+        if p_vals(k) < 0.05
+            line_color = [0.82 0.12 0.12]; % Crimson Red for significant
+        else
+            line_color = [0.25 0.25 0.25]; % Dark Gray for non-significant
+        end
+        xline(true_mean_sim(k), '-', ...
+            'Color', line_color, ...
+            'LineWidth', 2.6, ...
+            'Label', 'True Sim', ...
+            'LabelOrientation', 'horizontal', ...
+            'LabelVerticalAlignment', 'middle', ...
+            'LabelHorizontalAlignment', 'right', ...
+            'FontSize', 15);
+        
+        title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 20, 'FontWeight', 'bold');
+        
+        % Add X-axis label on bottom row (k = 4, 5, 6)
+        if k >= 4
+            xlabel('Mean Abs. Cosine Similarity', 'FontSize', 17, 'FontWeight', 'bold');
+        end
+        
+        % Add Y-axis label on left column (k = 1, 4)
+        if ismember(k, [1, 4])
+            ylabel('Probability', 'FontSize', 18, 'FontWeight', 'bold');
+        end
+        
+        xlim([0, max(max(null_mean_sim(k, :)), true_mean_sim(k)) * 1.15]);
+        grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
+        box on;
+    end
+    
+    save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
+    try
+        exportgraphics(figC, save_file_perm, 'Resolution', 600);
+    catch
+        saveas(figC, save_file_perm);
+    end
+    close(figC);
+
+    % ------------------------------------------------------------------
+    %% SUBJECT CLUSTERING ON DIRECTIONS 1 & 2 (FOR AUDREY & ESLAM REVIEW)
+    % ------------------------------------------------------------------
+    % Combine similarity across Directions 1 and 2
+    sim_xi12 = 0.5 * (subj_subj_sim(:, :, 1) + subj_subj_sim(:, :, 2));
+    dist_mat = 1 - sim_xi12;
+    dist_vec = squareform(dist_mat - diag(diag(dist_mat))); % Pairwise cosine distance vector
+    Z_link   = linkage(dist_vec, 'average');
+    clust_id = cluster(Z_link, 'maxclust', 2);
+    
+    % Ensure Cluster 1 is always the larger (normative majority) cluster
+    if sum(clust_id == 1) < sum(clust_id == 2)
+        clust_id = 3 - clust_id;
+    end
+    [~, ord_clust] = sort(clust_id, 'ascend');
+    subjs_ordered  = valid_retained_subjs(ord_clust);
+    
+    % Permutation test for within-cluster vs. between-cluster similarity
+    same_mask = (clust_id == clust_id') & ~eye(n_ret);
+    diff_mask = (clust_id ~= clust_id');
+    obs_clust_diff = mean(sim_xi12(same_mask)) - mean(sim_xi12(diff_mask));
+    null_clust_diff = zeros(1000, 1);
+    for p_c = 1:1000
+        perm_c = randperm(n_ret);
+        c_shuf = clust_id(perm_c);
+        s_m = (c_shuf == c_shuf') & ~eye(n_ret);
+        d_m = (c_shuf ~= c_shuf');
+        null_clust_diff(p_c) = mean(sim_xi12(s_m)) - mean(sim_xi12(d_m));
+    end
+    p_clust_perm = (1 + sum(null_clust_diff >= obs_clust_diff)) / 1001;
+    
+    for dest = dest_list
+        fprintf(dest, '\n--- UNIVERSAL BASIS SUBJECT CLUSTERING (DIRECTIONS 1 & 2) [%s] ---\n', upper(band_name));
+        fprintf(dest, '  * Cluster 1 (n=%d): Subjects %s\n', sum(clust_id==1), mat2str(valid_retained_subjs(clust_id==1)));
+        fprintf(dest, '  * Cluster 2 (n=%d): Subjects %s\n', sum(clust_id==2), mat2str(valid_retained_subjs(clust_id==2)));
+        fprintf(dest, '  * Within vs. Between Cluster Sim Diff = %+.3f (Permutation p = %.4f)\n', obs_clust_diff, p_clust_perm);
+    end
+    
+    % Plot Clustered Similarity Matrices for Audrey & Eslam
+    figClust = figure('Position', [100, 100, 1400, 450], 'Color', 'w', 'Visible', 'off');
+    tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    titles_cl = {'\xi_1 Similarity (Clustered)', '\xi_2 Similarity (Clustered)', 'Combined (\xi_1+\xi_2)/2 (Clustered)'};
+    mats_cl   = {subj_subj_sim(ord_clust, ord_clust, 1), subj_subj_sim(ord_clust, ord_clust, 2), sim_xi12(ord_clust, ord_clust)};
+    n_c1      = sum(clust_id == 1);
+    
+    for p_i = 1:3
+        nexttile; hold on;
+        imagesc(mats_cl{p_i}); colormap('jet'); clim([0 1]); axis square; set(gca, 'YDir', 'reverse', 'FontSize', 14);
+        % Draw white boundary line separating Cluster 1 and Cluster 2
+        if n_c1 < n_ret
+            xline(n_c1 + 0.5, 'w--', 'LineWidth', 2.5);
+            yline(n_c1 + 0.5, 'w--', 'LineWidth', 2.5);
+        end
+        xticks(1:n_ret); xticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_ordered, 'UniformOutput', false)); xtickangle(45);
+        yticks(1:n_ret); yticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_ordered, 'UniformOutput', false));
+        xlim([0.5, n_ret + 0.5]); ylim([0.5, n_ret + 0.5]);
+        title(titles_cl{p_i}, 'FontSize', 18, 'FontWeight', 'bold');
+    end
+    cb_cl = colorbar; cb_cl.Layout.Tile = 'east'; cb_cl.Label.String = 'Abs. Cosine Similarity'; cb_cl.FontSize = 14;
+    sgtitle(sprintf('Universal Basis Subject Clustering (%s): Cluster 1 (n=%d) vs. Cluster 2 (n=%d), Perm p = %.3f', ...
+        band_name, sum(clust_id==1), sum(clust_id==2), p_clust_perm), 'FontSize', 20, 'FontWeight', 'bold');
+    saveas(figClust, fullfile(group_dir, 'Deliverable_C_Clustered_Similarity_Xi1_Xi2.png'));
+    close(figClust);
+
+    % ------------------------------------------------------------------
+    %% SPLIT-HALF UNIVERSAL BASIS & UNBIASED CONDITION PROJECTIONS
+    % ------------------------------------------------------------------
+    G_splits     = nan(length(cfg.all_conds), cfg.nRep, num_subjects);
+    log_r_splits = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
+    lat_splits   = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
+    sust_splits  = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
+    traj_splits  = nan(length(cfg.all_conds), cfg.m, num_windows, cfg.nRep, num_subjects);
+
+    for subj = valid_retained_subjs
+        subj_dir = fullfile(output_path, sprintf('subj%02d', subj), band_name, cfg.ref_cond);
+        if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
+        save(fullfile(subj_dir, 'cfg.mat'), 'cfg');
+        
+        Xi_stable = Xi_aligned(:, :, subj);
+        
+        for rep = 1:cfg.nRep
+            rng(cfg.seed + rep + subj*1000); 
+            
+            % Partition every condition into non-overlapping Half A (10 trials for basis) & Half B (10 trials for test)
+            halfA_idx      = struct();
+            halfB_idx      = struct();
+            X_concat_rep_A = [];
+            
+            for c_p = 1:length(cfg.all_conds)
+                cond_p = cfg.all_conds{c_p};
+                if ~isfield(current_data, cond_p), continue; end
+                raw_cp   = current_data.(cond_p){subj};
+                valid_cp = find(~isnan(squeeze(raw_cp(1, 1, :))));
+                perm_cp  = valid_cp(randperm(length(valid_cp)));
+                
+                % Strictly non-overlapping 10 trials for Half A and 10 trials for Half B
+                n_sub = min(n_sub_half, floor(length(valid_cp) / 2));
+                halfA_idx.(cond_p) = perm_cp(1:n_sub);
+                halfB_idx.(cond_p) = perm_cp(n_sub + (1:n_sub));
+                
+                erp_cpA  = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
+                b_cpA    = mean(erp_cpA(:, iBase), 2, 'omitnan');
+                X_cpA_bc = erp_cpA(:, iWin) - b_cpA;
+                
+                if strcmpi(cfg.basis_mode, 'universal')
+                    X_concat_rep_A = [X_concat_rep_A, X_cpA_bc]; %#ok<AGROW>
+                elseif strcmp(cond_p, cfg.ref_cond)
+                    X_concat_rep_A = X_cpA_bc;
+                end
+            end
+            
+            C_A_cent = covCentered(X_concat_rep_A, zeros(cfg.num_ch, 1));
+            [V, D]   = eig(C_A_cent, 'vector');
+            [lam, ord] = sort(D, 'descend');
+            V = V(:, ord);
+            Xi_rep = V(:, 1:cfg.m);
+            lam_frac_rep = lam(1:cfg.m) / sum(lam);
+            gap_rep = (lam(1:cfg.m-1) - lam(2:cfg.m)) ./ lam(1:cfg.m-1);
+            
+            for k = 1:cfg.m
+                if dot(Xi_rep(:, k), Xi_stable(:, k)) < 0
+                    Xi_rep(:, k) = -Xi_rep(:, k);
+                end
+            end
+            
+            basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep);
+            
+            % Reference ceiling from held-out Half B of Cued (P1)
+            raw_ref = current_data.(cfg.ref_cond){subj};
+            iA      = halfA_idx.(cfg.ref_cond);
+            iB      = halfB_idx.(cfg.ref_cond);
+            erpB    = mean(raw_ref(:, :, iB), 3, 'omitnan');
+            bB      = mean(erpB(:, iBase), 2, 'omitnan');
+            XB      = erpB(:, iWin) - bB;
+            
+            v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win;
+            V_ceil = sum(v_ceil);
+            
+            proj_B = Xi_rep' * XB; 
+            [~, max_idx_B] = max(abs(proj_B), [], 2);
+            t_lat_ceil = t_eval(max_idx_B); 
+            
+            split_vars = struct('iA', iA, 'iB', iB);
+            proj_vars  = struct('v_ceil', v_ceil);
+            
+            for c = 1:length(cfg.all_conds)
+                cond = cfg.all_conds{c};
+                if ~isfield(current_data, cond), continue; end
+                
+                % Strictly use the held-out Half B (10 trials) for every condition!
+                raw_cond = current_data.(cond){subj};
+                idx_k    = halfB_idx.(cond);
+                erp_k    = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
+                bk       = mean(erp_k(:, iBase), 2, 'omitnan');
+                Xk       = erp_k(:, iWin) - bk;
+                
+                split_vars.(cond) = idx_k;
+                v_k = sum((Xi_rep' * Xk).^2, 2) / T_win;
+                V_k = sum(v_k);
+                G_k = V_k / V_ceil;
+                r_k = v_k ./ v_ceil;
+                log_r_k = log(r_k);
+                
+                proj_vars.(cond) = struct('v_k', v_k, 'G', G_k, 's_k', v_k/V_k, 'r', r_k, 'log_r', log_r_k);
+                
+                G_splits(c, rep, subj)        = G_k;
+                log_r_splits(c, :, rep, subj) = log_r_k;
+                
+                proj_k = Xi_rep' * Xk; 
+                [~, max_idx_k] = max(abs(proj_k), [], 2);
+                lat_splits(c, :, rep, subj) = (t_eval(max_idx_k) - t_lat_ceil)' * 1000;
+                
+                xbar = mean(Xk, 2); Xd = Xk - xbar;
+                v_sust = (Xi_rep' * xbar).^2;
+                v_dyn  = sum((Xi_rep' * Xd).^2, 2) / T_win;
+                sust_splits(c, :, rep, subj) = v_sust ./ (v_sust + v_dyn + eps);
+
+                for w = 1:num_windows
+                    w_mask = time_s >= t_starts(w) & time_s < (t_starts(w) + cfg.slide_win);
+                    if nnz(w_mask) > 0
+                        X_win = erp_k(:, w_mask) - bk;
+                        v_win = sum((Xi_rep' * X_win).^2, 2) / nnz(w_mask);
+                        traj_splits(c, :, w, rep, subj) = v_win;
+                    end
+                end
+            end
+            
+            rep_str = sprintf('%02d', rep);
+            save(fullfile(subj_dir, ['split_rep' rep_str '.mat']), '-struct', 'split_vars');
+            save(fullfile(subj_dir, ['basis_rep' rep_str '.mat']), '-struct', 'basis_vars');
+            save(fullfile(subj_dir, ['proj_rep' rep_str '.mat']), '-struct', 'proj_vars');
+        end
+    end
+
+    save(fullfile(group_dir, 'results.mat'), 'G_splits', 'log_r_splits', 'lat_splits', 'sust_splits', 'traj_splits', 'valid_retained_subjs');
+
+    % ------------------------------------------------------------------
+    %% CHECKPOINT 1 (B): Cross-Subject Consistency Permutation Test
+    % ------------------------------------------------------------------
+    for dest = dest_list
+        fprintf(dest, '\nRunning 1,000-iteration Spatial Permutation Test for Consistency...\n');
+    end
+    n_perms = 1000;
+    num_pairs = (n_ret * (n_ret - 1)) / 2;
+    true_mean_sim = zeros(cfg.m, 1);
+    null_mean_sim = zeros(cfg.m, n_perms);
+    p_vals        = zeros(cfg.m, 1);
+    thresh_95     = zeros(cfg.m, 1);
+    
+    for k = 1:cfg.m
+        pair_sims = zeros(num_pairs, 1);
+        idx = 1;
+        for i = 1:n_ret
+            s1 = valid_retained_subjs(i);
+            for j = (i+1):n_ret
+                s2 = valid_retained_subjs(j);
+                v1 = Xi_aligned(:, k, s1);
+                v2 = Xi_aligned(:, k, s2);
+                pair_sims(idx) = abs(dot(v1, v2)) / (norm(v1) * norm(v2));
+                idx = idx + 1;
+            end
+        end
+        true_mean_sim(k) = mean(pair_sims);
+    end
+    
+    for p_idx = 1:n_perms
+        for k = 1:cfg.m
+            shuffled_Xi = zeros(cfg.num_ch, n_ret);
+            for i = 1:n_ret
+                s = valid_retained_subjs(i);
+                shuff_idx = randperm(cfg.num_ch);
+                shuffled_Xi(:, i) = Xi_aligned(shuff_idx, k, s);
+            end
+            
+            pair_sims_null = zeros(num_pairs, 1);
+            idx = 1;
+            for i = 1:n_ret
+                for j = (i+1):n_ret
+                    v1 = shuffled_Xi(:, i);
+                    v2 = shuffled_Xi(:, j);
+                    pair_sims_null(idx) = abs(dot(v1, v2)) / (norm(v1) * norm(v2));
+                    idx = idx + 1;
+                end
+            end
+            null_mean_sim(k, p_idx) = mean(pair_sims_null);
+        end
+    end
+    
+    for dest = dest_list
+        fprintf(dest, '\n--- Cross-Subject Component Consistency ---\n');
+        fprintf(dest, 'Direction | True Sim | 95%% Null Thresh | p-value | Significance\n');
+        fprintf(dest, '---------------------------------------------------------------\n');
+    end
+    for k = 1:cfg.m
+        p_vals(k) = (1 + sum(null_mean_sim(k, :) >= true_mean_sim(k))) / (1 + n_perms);
+        thresh_95(k) = prctile(null_mean_sim(k, :), 95);
+        if p_vals(k) < 0.001, sig_str = '***';
+        elseif p_vals(k) < 0.01, sig_str = '**';
+        elseif p_vals(k) < 0.05, sig_str = '*';
+        else, sig_str = 'ns'; end
+        for dest = dest_list
+            fprintf(dest, 'Xi_%d      | %.3f    | %.3f           | %.4f  | %s\n', ...
+                k, true_mean_sim(k), thresh_95(k), p_vals(k), sig_str);
+        end
+    end
+    for dest = dest_list
         fprintf(dest, '---------------------------------------------------------------\n');
     end
     
@@ -1210,7 +1381,7 @@ for band_idx = 1:length(bands_to_process)
         sig_components = find(p_vals < 0.05)';
         if isempty(sig_components), sig_components = 1:cfg.m; end
         
-        for dest = [1, fid_sum]
+        for dest = dest_list
             fprintf(dest, '\n======================================================================\n');
             fprintf(dest, 'SUMMARY TABLE: %s REFERENCE (BAND: %s) [%s]\n', ...
                 cfg.ref_cond, upper(band_name), cohort_Vital{g});
@@ -1757,10 +1928,8 @@ min_val = min(all_means);
 max_val = max(all_means);
 y_span  = max_val - min_val;
 if y_span <= 0 || isnan(y_span), y_span = 2; end
-
 ylim_shared = [min_val - 0.24 * y_span, max_val + 0.15 * y_span];
 
-% Scalp map topoplots averaged across conditions for each panel
 topo_map_A = (erp_stats.P1.topo_32ch + erp_stats.P2_500.topo_32ch + erp_stats.P3_500.topo_32ch) / 3;
 topo_map_B = (erp_stats.P2_2000.topo_32ch + erp_stats.P3_missing.topo_32ch) / 2;
 
@@ -1776,36 +1945,35 @@ if isempty(max_topo) || max_topo <= 0 || isnan(max_topo), max_topo = 1; end
 c_lim_topo = [-max_topo, max_topo];
 
 % -------------------------------------------------------------------------
-% 6. RENDER PUBLICATION FIGURE
+% 6. RENDER PUBLICATION FIGURE WITH BALANCED FONTS & ADJUSTED SPACING
 % -------------------------------------------------------------------------
 fig1B = figure('Position', [50, 50, 1500, 660], 'Color', 'w', ...
     'Name', 'Figure 1B: Channel C3 ERPs with Topoplots & Wilcoxon Bars');
 
-% Main ERP Axes Positions [left, bottom, width, height]
-ax1_pos = [0.060, 0.13, 0.405, 0.54];
-ax2_pos = [0.550, 0.13, 0.405, 0.54];
+% Adjusted subplot coordinates to widen the inter-panel gap
+ax1_pos = [0.065, 0.13, 0.380, 0.54];
+ax2_pos = [0.575, 0.13, 0.380, 0.54];
 
 % ==================== SUBPLOT 1: STIMULUS DELIVERED ====================
 ax1 = axes('Position', ax1_pos); hold(ax1, 'on');
-set(ax1, 'FontSize', 26, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+% Decreased axis font size from 26 to 18 to prevent tick collisions and auto-rotation
+set(ax1, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
 box(ax1, 'off');
 
 yline(ax1, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
 xline(ax1, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
-% Vertical dotted connector lines at 150, 400, 900 ms extending toward topoplots
 for k = 1:length(topo_times)
     tk = topo_times(k);
     plot(ax1, [tk, tk], [ylim_shared(1), ylim_shared(2) * 1.05], 'k:', ...
         'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
 end
 
-% Mean Traces (No standard deviation ribbons)
 plot(ax1, t_eval, erp_stats.P1.mean,     'Color', c_P1,     'LineWidth', 2.6, 'DisplayName', 'Cued (P1)');
 plot(ax1, t_eval, erp_stats.P2_500.mean, 'Color', c_P2_500, 'LineWidth', 2.6, 'DisplayName', 'Unpred 500 (P2-500)');
 plot(ax1, t_eval, erp_stats.P3_500.mean, 'Color', c_P3_500, 'LineWidth', 2.6, 'DisplayName', 'Rand 500 (P3-500)');
 
-% Wilcoxon Significance Bars along Bottom
+% Wilcoxon Significance Bars
 y_bar_base = ylim_shared(1) + 0.04 * (ylim_shared(2) - ylim_shared(1));
 y_bar_step = 0.045 * (ylim_shared(2) - ylim_shared(1));
 
@@ -1823,19 +1991,21 @@ else
         'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
 end
 
-text(ax1, 0.82, ylim_shared(2)*0.86, 'P1',     'Color', c_P1,     'FontSize', 23, 'FontWeight', 'bold');
-text(ax1, 0.82, ylim_shared(2)*0.72, 'P2-500', 'Color', c_P2_500, 'FontSize', 23, 'FontWeight', 'bold');
-text(ax1, 0.82, ylim_shared(2)*0.58, 'P3-500', 'Color', c_P3_500, 'FontSize', 23, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.86, 'P1',     'Color', c_P1,     'FontSize', 19, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.72, 'P2-500', 'Color', c_P2_500, 'FontSize', 19, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.58, 'P3-500', 'Color', c_P3_500, 'FontSize', 19, 'FontWeight', 'bold');
 
 xlim(ax1, time_win); ylim(ax1, ylim_shared);
 xticks(ax1, -0.2 : 0.2 : 1.0);
 xticklabels(ax1, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
-xlabel(ax1, 'Time after expected stimulus (ms)', 'FontSize', 16, 'FontWeight', 'bold');
-ylabel(ax1, y_label_str, 'FontSize', 24, 'FontWeight', 'bold');
+xtickangle(ax1, 0); % Enforce horizontal x-axis tick labels
+xlabel(ax1, 'Time after expected stimulus (ms)', 'FontSize', 18, 'FontWeight', 'bold');
+ylabel(ax1, y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
 % ==================== SUBPLOT 2: STIMULUS OMITTED / DELAYED ====================
 ax2 = axes('Position', ax2_pos); hold(ax2, 'on');
-set(ax2, 'FontSize', 15, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+% Increased axis font size from 15 to 18 to match the left subplot perfectly
+set(ax2, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
 box(ax2, 'off');
 
 yline(ax2, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -1865,22 +2035,23 @@ else
         'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
 end
 
-text(ax2, 0.80, ylim_shared(2)*0.86, 'P1',      'Color', c_P1,      'FontSize', 23, 'FontWeight', 'bold');
-text(ax2, 0.80, ylim_shared(2)*0.72, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 23, 'FontWeight', 'bold');
-text(ax2, 0.80, ylim_shared(2)*0.58, 'P3-null', 'Color', c_P3_null, 'FontSize', 23, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.86, 'P1',      'Color', c_P1,      'FontSize', 19, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.72, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 19, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.58, 'P3-null', 'Color', c_P3_null, 'FontSize', 19, 'FontWeight', 'bold');
 
 xlim(ax2, time_win); ylim(ax2, ylim_shared);
 xticks(ax2, -0.2 : 0.2 : 1.0);
 xticklabels(ax2, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
-xlabel(ax2, 'Time after expected stimulus (ms)', 'FontSize', 16, 'FontWeight', 'bold');
-ylabel(ax2, y_label_str, 'FontSize', 24, 'FontWeight', 'bold');
+xtickangle(ax2, 0); % Enforce horizontal x-axis tick labels
+xlabel(ax2, 'Time after expected stimulus (ms)', 'FontSize', 18, 'FontWeight', 'bold');
+ylabel(ax2, y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
 % -------------------------------------------------------------------------
-% 7. ADD FLOATING TOPOPLOTS AT 150, 400, 900 MS ABOVE EACH PANEL
+% 7. FLOATING TOPOPLOTS & NON-OVERLAPPING COLORBAR
 % -------------------------------------------------------------------------
-topo_w = 0.076;                           % Calibrated width so 150 & 400 ms topoplots do not collide
+topo_w = 0.076;                           
 topo_h = 0.175;                           
-topo_y = ax1_pos(2) + ax1_pos(4) + 0.015; % Directly above the top axis boundary
+topo_y = ax1_pos(2) + ax1_pos(4) + 0.015; 
 t_span = time_win(2) - time_win(1);
 
 % Panel A Topoplots (150, 400, 900 ms)
@@ -1905,10 +2076,10 @@ for k = 1:length(topo_times)
     title(ax_tB, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 11, 'FontWeight', 'bold');
 end
 
-% Shared Center Colorbar
-ax_cb = axes('Position', [0.490, 0.48, 0.014, 0.18], 'Visible', 'off');
+% Colorbar shifted left to x = 0.468 to eliminate overlap with ax2 y-axis label
+ax_cb = axes('Position', [0.468, 0.48, 0.012, 0.18], 'Visible', 'off');
 colormap(ax_cb, 'jet'); clim(ax_cb, c_lim_topo);
-cb = colorbar(ax_cb, 'Position', [0.492, 0.48, 0.012, 0.18]);
+cb = colorbar(ax_cb, 'Position', [0.468, 0.48, 0.012, 0.18]);
 cb.FontSize = 11;
 cb.Title.String = cb_unit_str;
 cb.Title.FontSize = 12;
@@ -1917,14 +2088,13 @@ cb.Title.FontWeight = 'bold';
 % Panel Titles
 ax_title = axes('Position', [0, 0, 1, 1], 'Visible', 'off');
 text(ax_title, ax1_pos(1) + ax1_pos(3)/2, 0.965, 'Stimulus Delivered (C3)', ...
-    'HorizontalAlignment', 'center', 'FontSize', 27, 'FontWeight', 'bold');
+    'HorizontalAlignment', 'center', 'FontSize', 22, 'FontWeight', 'bold');
 text(ax_title, ax2_pos(1) + ax2_pos(3)/2, 0.965, 'Stimulus Omitted / Delayed (C3)', ...
-    'HorizontalAlignment', 'center', 'FontSize', 27, 'FontWeight', 'bold');
+    'HorizontalAlignment', 'center', 'FontSize', 22, 'FontWeight', 'bold');
 
 % -------------------------------------------------------------------------
 % 8. EXPORT 600 PPI PUBLICATION IMAGE
 % -------------------------------------------------------------------------
-% Changed destination from screening_fig_dir to output_path
 fig1B_out_png = fullfile(output_path, 'Figure_1B_Channel_C3_Dynamics_600ppi.png');
 fig1B_out_svg = fullfile(output_path, 'Figure_1B_Channel_C3_Dynamics.svg');
 
@@ -2889,7 +3059,7 @@ for g = 1:length(subj_group_names)
     xticks(1:length(plot_bands));
     xticklabels({'Raw', 'Alpha', 'Beta', 'Beta/Alpha Ratio'});
     ylabel('Sustained Variance (%)', 'FontSize', 24, 'FontWeight', 'bold');
-    title(sprintf('Tonic vs. Phasic Stability (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
+    title(sprintf('Sustained vs. Phasic Stability (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
     
     lgd = legend('Location', 'north');
     lgd.FontSize = 18;
@@ -3007,6 +3177,59 @@ for g = 1:length(subj_group_names)
     close(fig5D);
 end
 disp('All analyses completed successfully (All Retained Subjects, excluding S3 & S14).');
+
+%% =========================================================================
+%% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE
+%% =========================================================================
+fprintf('\n=========================================================================================================\n');
+fprintf(' PNAS TABLE 1: FREQUENCY-SPECIFIC DIVISION OF LABOR ACROSS GAIN, GEOMETRY, TIMING & SUSTAINED SHARE\n');
+fprintf('=========================================================================================================\n');
+
+t1_band = {}; t1_cond = {}; t1_gain = {}; t1_geom = {}; t1_lat = {}; t1_sust = {};
+for b = 1:length(plot_bands)
+    b_name = plot_bands{b};
+    G_mat  = aggregate_G.(b_name).cohort(1).subj_data;    % [5 x n_ret]
+    LR_mat = aggregate_log_r.(b_name).cohort(1).subj_data;% [5 x 6 x n_ret]
+    LT_mat = aggregate_lat.(b_name).cohort(1).subj_data;  % [5 x n_ret]
+    SU_mat = aggregate_sust.(b_name).cohort(1).subj_data; % [5 x n_ret]
+    
+    for c_i = 1:length(cfg.all_conds)
+        c_str = cfg.all_conds{c_i};
+        
+        % 1. Gain (G +/- SEM, signrank p vs P1)
+        g_vals = G_mat(c_i, :);
+        p_g    = 1; if c_i > 1, p_g = signrank(g_vals, G_mat(1, :)); end
+        g_str  = sprintf('%.2f +/- %.2f (p=%.3f)', mean(g_vals,'omitnan'), std(g_vals,0,'omitnan')/sqrt(length(g_vals)), p_g);
+        
+        % 2. Geometry range across Xi_1..Xi_6
+        lr_means = mean(squeeze(LR_mat(c_i, :, :)), 2, 'omitnan');
+        geom_str = sprintf('[%+.2f, %+.2f]', min(lr_means), max(lr_means));
+        
+        % 3. Latency shift (only for stimulus-delivered P1, P2_500, P3_500)
+        if ismember(c_str, {'P1', 'P2_500', 'P3_500'})
+            lt_vals = LT_mat(c_i, :);
+            p_lt    = 1; if c_i > 1, p_lt = signrank(lt_vals, 0); end
+            lat_str = sprintf('%+.1f +/- %.1f ms (p=%.3f)', mean(lt_vals,'omitnan'), std(lt_vals,0,'omitnan')/sqrt(length(lt_vals)), p_lt);
+        else
+            lat_str = 'N/A (Withheld)';
+        end
+        
+        % 4. Sustained Share (%)
+        su_vals  = SU_mat(c_i, :);
+        p_su     = 1; if c_i > 1, p_su = signrank(su_vals, SU_mat(1, :)); end
+        sust_str = sprintf('%.2f +/- %.2f%% (p=%.3f)', mean(su_vals,'omitnan'), std(su_vals,0,'omitnan')/sqrt(length(su_vals)), p_su);
+        
+        t1_band{end+1,1} = b_name; t1_cond{end+1,1} = c_str;
+        t1_gain{end+1,1} = g_str;  t1_geom{end+1,1} = geom_str;
+        t1_lat{end+1,1}  = lat_str; t1_sust{end+1,1} = sust_str;
+        
+        fprintf('%-14s | %-10s | Gain: %-24s | Geom: %-14s | Lat: %-26s | Sust: %s\n', ...
+            b_name, c_str, g_str, geom_str, lat_str, sust_str);
+    end
+end
+Table1_PNAS = table(t1_band, t1_cond, t1_gain, t1_geom, t1_lat, t1_sust, ...
+    'VariableNames', {'Band', 'Condition', 'Global_Gain_G', 'Geometry_LogR_Range', 'Delta_Latency_ms', 'Sustained_Share_Pct'});
+writetable(Table1_PNAS, fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv'));
 
 %% =========================================================================
 %% BAYES FACTOR (BF01) & TOST EQUIVALENCE CHECK FOR BETA GAIN & GEOMETRY
