@@ -175,6 +175,7 @@ cfg.m             = 6;
 cfg.seed          = 20260910;
 cfg.slide_win     = 0.100;
 cfg.slide_step    = 0.025;
+cfg.basis_mode = 'universal';
 
 clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(strrep(c, ...
     'BLT', 'Tactile (BLT)'), 'BLA', 'Auditory (BLA)'), 'P1', 'Cued (P1)'), ...
@@ -740,23 +741,43 @@ for band_idx = 1:length(bands_to_process)
     group_dir = fullfile(output_path, 'group', band_name, cfg.ref_cond);
     if ~exist(group_dir, 'dir'), mkdir(group_dir); end
 
+    % --- BASIS MODE SELECTION ('universal' or 'P1') ---
+    if ~isfield(cfg, 'basis_mode'), cfg.basis_mode = 'universal'; end
+
     Xi_all_subjs = nan(cfg.num_ch, cfg.m, num_subjects);
     lam_frac_all = nan(cfg.m, num_subjects);
     gap_all      = nan(cfg.m - 1, num_subjects);
     lam_full_all = nan(cfg.num_ch, num_subjects); 
     
     for s = valid_retained_subjs
-        raw_ref = current_data.(cfg.ref_cond){s};
-        valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
-        
         rng(cfg.seed + s);
-        perm = valid_ref_idx(randperm(length(valid_ref_idx)));
-        n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
-        iA = perm(1:n_half);
-        
-        erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
-        bA   = mean(erpA(:, iBase), 2, 'omitnan');
-        C_A_cent = covCentered(erpA(:, iWin), bA);
+        if strcmpi(cfg.basis_mode, 'universal')
+            % Pool dynamic covariance equally across all 5 conditions (Half A of each)
+            C_pool = zeros(cfg.num_ch, cfg.num_ch);
+            n_cond_pool = 0;
+            for c_p = 1:length(cfg.all_conds)
+                c_pname = cfg.all_conds{c_p};
+                if ~isfield(current_data, c_pname), continue; end
+                raw_c = current_data.(c_pname){s};
+                valid_c = find(~isnan(squeeze(raw_c(1, 1, :))));
+                perm_c = valid_c(randperm(length(valid_c)));
+                n_h = min(floor(cfg.nTrialMatch / 2), floor(length(valid_c) / 2));
+                erp_cA = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
+                b_cA   = mean(erp_cA(:, iBase), 2, 'omitnan');
+                C_pool = C_pool + covCentered(erp_cA(:, iWin), b_cA);
+                n_cond_pool = n_cond_pool + 1;
+            end
+            C_A_cent = C_pool / max(1, n_cond_pool);
+        else
+            % Original P1-only basis
+            raw_ref = current_data.(cfg.ref_cond){s};
+            valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
+            perm = valid_ref_idx(randperm(length(valid_ref_idx)));
+            n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
+            erpA = mean(raw_ref(:, :, perm(1:n_half)), 3, 'omitnan');
+            bA   = mean(erpA(:, iBase), 2, 'omitnan');
+            C_A_cent = covCentered(erpA(:, iWin), bA);
+        end
         
         [V, D] = eig(C_A_cent, 'vector');
         [lam, ord] = sort(D, 'descend');
@@ -815,13 +836,13 @@ for band_idx = 1:length(bands_to_process)
             end
             
             if r_idx == 1
-                title(sprintf('\\xi_%d', k), 'FontSize', 18, 'FontWeight', 'bold');
+                title(sprintf('\\xi_%d', k), 'FontSize', 26, 'FontWeight', 'bold');
             end
             
             if k == 1
                 text(-0.75, 0, sprintf('Subj %d', s), 'Rotation', 90, ...
                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
-                    'FontSize', 14, 'FontWeight', 'bold');
+                    'FontSize', 22, 'FontWeight', 'bold');
             end
         end
     end
@@ -830,9 +851,9 @@ for band_idx = 1:length(bands_to_process)
     cb_B.Limits = [-0.4, 0.4];
     cb_B.Ticks  = -0.4 : 0.2 : 0.4;
     cb_B.Label.String   = 'Spatial Weight (a.u.)';
-    cb_B.Label.FontSize = 14;
+    cb_B.Label.FontSize = 22;
     cb_B.Label.FontWeight = 'bold';
-    cb_B.FontSize = 12;
+    cb_B.FontSize = 20;
     
     save_file_B = fullfile(group_dir, 'Deliverable_B_Topos');
     try saveas(figB, [save_file_B, '.png']); saveas(figB, [save_file_B, '.svg']); catch, end
@@ -855,16 +876,16 @@ for band_idx = 1:length(bands_to_process)
         nexttile;
         imagesc(subj_subj_sim(:, :, k));
         colormap('jet'); clim([0 1]); axis square;
-        title(sprintf('\\xi_%d', k), 'FontSize', 18, 'FontWeight', 'bold');
+        title(sprintf('\\xi_%d', k), 'FontSize', 28, 'FontWeight', 'bold');
         
-        if k == 1, ylabel('Retained Subject Index', 'FontSize', 12, 'FontWeight', 'bold'); end
-        xlabel('Retained Subject Index', 'FontSize', 12, 'FontWeight', 'bold');
+        if k == 1, ylabel('Retained Subject Index', 'FontSize', 22, 'FontWeight', 'bold'); end
+        xlabel('Retained Subject Index', 'FontSize', 22, 'FontWeight', 'bold');
         xticks([1, n_ret]); yticks([1, n_ret]);
     end
     
     cb = colorbar; cb.Layout.Tile = 'east'; 
     cb.Label.String = 'Absolute Cosine Similarity'; cb.Label.FontSize = 14;
-    sgtitle(sprintf('Cross-Subject Component Consistency (%s %s, n=%d)', band_name, cfg.ref_cond, n_ret), 'FontSize', 20, 'FontWeight', 'bold');
+    sgtitle(sprintf('Cross-Subject Component Consistency (%s %s, n=%d)', band_name, cfg.ref_cond, n_ret), 'FontSize', 28, 'FontWeight', 'bold');
     
     save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim', 'valid_retained_subjs');
     saveas(figC, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); close(figC);
@@ -885,17 +906,38 @@ for band_idx = 1:length(bands_to_process)
         for rep = 1:cfg.nRep
             rng(cfg.seed + rep + subj*1000); 
             
-            raw_ref = current_data.(cfg.ref_cond){subj};
-            valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
-            perm = valid_ref_idx(randperm(length(valid_ref_idx)));
-            n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
-            iA = perm(1:n_half);
-            iB = perm(n_half + (1:n_half));
+            % Partition every condition into non-overlapping Half A (basis) and Half B (test projection)
+            halfA_idx = struct();
+            halfB_idx = struct();
+            C_pool_rep = zeros(cfg.num_ch, cfg.num_ch);
+            n_pool_rep = 0;
             
-            erpA = mean(raw_ref(:, :, iA), 3, 'omitnan');
-            bA   = mean(erpA(:, iBase), 2, 'omitnan');
-            C_A_cent = covCentered(erpA(:, iWin), bA);
+            for c_p = 1:length(cfg.all_conds)
+                cond_p = cfg.all_conds{c_p};
+                if ~isfield(current_data, cond_p), continue; end
+                raw_cp = current_data.(cond_p){subj};
+                valid_cp = find(~isnan(squeeze(raw_cp(1, 1, :))));
+                perm_cp  = valid_cp(randperm(length(valid_cp)));
+                
+                % Use 12 trials for Half A and 12 trials for Half B (since min_keep >= 24)
+                n_sub = min(12, floor(length(valid_cp) / 2));
+                halfA_idx.(cond_p) = perm_cp(1:n_sub);
+                halfB_idx.(cond_p) = perm_cp(n_sub + (1:n_sub));
+                
+                erp_cpA = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
+                b_cpA   = mean(erp_cpA(:, iBase), 2, 'omitnan');
+                C_cpA   = covCentered(erp_cpA(:, iWin), b_cpA);
+                
+                if strcmpi(cfg.basis_mode, 'universal')
+                    C_pool_rep = C_pool_rep + C_cpA;
+                    n_pool_rep = n_pool_rep + 1;
+                elseif strcmp(cond_p, cfg.ref_cond)
+                    C_pool_rep = C_cpA;
+                    n_pool_rep = 1;
+                end
+            end
             
+            C_A_cent = C_pool_rep / max(1, n_pool_rep);
             [V, D] = eig(C_A_cent, 'vector');
             [lam, ord] = sort(D, 'descend');
             V = V(:, ord);
@@ -911,6 +953,10 @@ for band_idx = 1:length(bands_to_process)
             
             basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep);
             
+            % Reference ceiling from held-out Half B of Cued (P1)
+            raw_ref = current_data.(cfg.ref_cond){subj};
+            iA = halfA_idx.(cfg.ref_cond);
+            iB = halfB_idx.(cfg.ref_cond);
             erpB = mean(raw_ref(:, :, iB), 3, 'omitnan');
             bB   = mean(erpB(:, iBase), 2, 'omitnan');
             XB   = erpB(:, iWin) - bB;
@@ -930,6 +976,10 @@ for band_idx = 1:length(bands_to_process)
                 if ~isfield(current_data, cond), continue; end
                 
                 raw_cond = current_data.(cond){subj};
+                idx_k = halfB_idx.(cond); % Held-out Half B for ALL conditions!
+                erp_k = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
+                bk    = mean(erp_k(:, iBase), 2, 'omitnan');
+                Xk    = erp_k(:, iWin) - bk;
                 if strcmp(cond, cfg.ref_cond)
                     Xk = XB; bk = bB; idx_k = iB;
                     erp_k = erpB; 
@@ -1057,17 +1107,16 @@ for band_idx = 1:length(bands_to_process)
     
     figC = figure('Position', [150, 150, 1400, 600], 'Name', sprintf('Permutation Test: %s', band_name), 'Visible', 'off');
     t = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
-    title(t, sprintf('Cross-Subject Consistency: Null vs True (%s | %s, n=%d)', band_name, cfg.ref_cond, n_ret), 'FontSize', 18, 'FontWeight', 'bold');
+    title(t, sprintf('Cross-Subject Consistency: Null vs True (%s | %s, n=%d)', band_name, cfg.ref_cond, n_ret), 'FontSize', 26, 'FontWeight', 'bold');
     
     for k = 1:cfg.m
         nexttile; hold on;
         histogram(null_mean_sim(k, :), 30, 'Normalization', 'probability', 'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none');
-        xline(thresh_95(k), 'k--', 'LineWidth', 1.5, 'Label', '95% Thresh', 'LabelOrientation', 'horizontal', 'FontSize', 10);
+        xline(thresh_95(k), 'k--', 'LineWidth', 1.5, 'Label', '95% Thresh', 'LabelOrientation', 'horizontal', 'FontSize', 18);
         if p_vals(k) < 0.05, line_color = [0.8 0.1 0.1]; else, line_color = [0.2 0.2 0.2]; end
-        xline(true_mean_sim(k), '-', 'Color', line_color, 'LineWidth', 2.5, 'Label', 'True Sim', 'LabelOrientation', 'horizontal', 'FontSize', 10);
-        title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 16, 'FontWeight', 'bold');
-        xlabel('Mean Abs. Cosine Similarity', 'FontSize', 12);
-        if ismember(k, [1, 4]), ylabel('Probability', 'FontSize', 12); end
+        xline(true_mean_sim(k), '-', 'Color', line_color, 'LineWidth', 2.5, 'Label', 'True Sim', 'LabelOrientation', 'horizontal', 'FontSize', 18);
+        title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 24);
+        if ismember(k, [1, 4]), ylabel('Probability', 'FontSize', 20); end
         xlim([0, max(max(null_mean_sim(k, :)), true_mean_sim(k)) * 1.1]);
         grid on; box on;
     end
@@ -1738,7 +1787,7 @@ ax2_pos = [0.550, 0.13, 0.405, 0.54];
 
 % ==================== SUBPLOT 1: STIMULUS DELIVERED ====================
 ax1 = axes('Position', ax1_pos); hold(ax1, 'on');
-set(ax1, 'FontSize', 15, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+set(ax1, 'FontSize', 26, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
 box(ax1, 'off');
 
 yline(ax1, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -1774,15 +1823,15 @@ else
         'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
 end
 
-text(ax1, 0.82, ylim_shared(2)*0.86, 'P1',     'Color', c_P1,     'FontSize', 15, 'FontWeight', 'bold');
-text(ax1, 0.82, ylim_shared(2)*0.72, 'P2-500', 'Color', c_P2_500, 'FontSize', 15, 'FontWeight', 'bold');
-text(ax1, 0.82, ylim_shared(2)*0.58, 'P3-500', 'Color', c_P3_500, 'FontSize', 15, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.86, 'P1',     'Color', c_P1,     'FontSize', 23, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.72, 'P2-500', 'Color', c_P2_500, 'FontSize', 23, 'FontWeight', 'bold');
+text(ax1, 0.82, ylim_shared(2)*0.58, 'P3-500', 'Color', c_P3_500, 'FontSize', 23, 'FontWeight', 'bold');
 
 xlim(ax1, time_win); ylim(ax1, ylim_shared);
 xticks(ax1, -0.2 : 0.2 : 1.0);
 xticklabels(ax1, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
 xlabel(ax1, 'Time after expected stimulus (ms)', 'FontSize', 16, 'FontWeight', 'bold');
-ylabel(ax1, y_label_str, 'FontSize', 16, 'FontWeight', 'bold');
+ylabel(ax1, y_label_str, 'FontSize', 24, 'FontWeight', 'bold');
 
 % ==================== SUBPLOT 2: STIMULUS OMITTED / DELAYED ====================
 ax2 = axes('Position', ax2_pos); hold(ax2, 'on');
@@ -1816,15 +1865,15 @@ else
         'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
 end
 
-text(ax2, 0.80, ylim_shared(2)*0.86, 'P1',      'Color', c_P1,      'FontSize', 15, 'FontWeight', 'bold');
-text(ax2, 0.80, ylim_shared(2)*0.72, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 15, 'FontWeight', 'bold');
-text(ax2, 0.80, ylim_shared(2)*0.58, 'P3-null', 'Color', c_P3_null, 'FontSize', 15, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.86, 'P1',      'Color', c_P1,      'FontSize', 23, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.72, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 23, 'FontWeight', 'bold');
+text(ax2, 0.80, ylim_shared(2)*0.58, 'P3-null', 'Color', c_P3_null, 'FontSize', 23, 'FontWeight', 'bold');
 
 xlim(ax2, time_win); ylim(ax2, ylim_shared);
 xticks(ax2, -0.2 : 0.2 : 1.0);
 xticklabels(ax2, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
 xlabel(ax2, 'Time after expected stimulus (ms)', 'FontSize', 16, 'FontWeight', 'bold');
-ylabel(ax2, y_label_str, 'FontSize', 16, 'FontWeight', 'bold');
+ylabel(ax2, y_label_str, 'FontSize', 24, 'FontWeight', 'bold');
 
 % -------------------------------------------------------------------------
 % 7. ADD FLOATING TOPOPLOTS AT 150, 400, 900 MS ABOVE EACH PANEL
@@ -1868,9 +1917,9 @@ cb.Title.FontWeight = 'bold';
 % Panel Titles
 ax_title = axes('Position', [0, 0, 1, 1], 'Visible', 'off');
 text(ax_title, ax1_pos(1) + ax1_pos(3)/2, 0.965, 'Stimulus Delivered (C3)', ...
-    'HorizontalAlignment', 'center', 'FontSize', 19, 'FontWeight', 'bold');
+    'HorizontalAlignment', 'center', 'FontSize', 27, 'FontWeight', 'bold');
 text(ax_title, ax2_pos(1) + ax2_pos(3)/2, 0.965, 'Stimulus Omitted / Delayed (C3)', ...
-    'HorizontalAlignment', 'center', 'FontSize', 19, 'FontWeight', 'bold');
+    'HorizontalAlignment', 'center', 'FontSize', 27, 'FontWeight', 'bold');
 
 % -------------------------------------------------------------------------
 % 8. EXPORT 600 PPI PUBLICATION IMAGE
@@ -2032,7 +2081,7 @@ for col = 1:5
     c_color = colors_1c{col};
     c_title = names_1c{col};
     
-    ax = nexttile(col); hold on; set(gca, 'FontSize', 14, 'LineWidth', 1.5);
+    ax = nexttile(col); hold on; set(gca, 'FontSize', 22, 'LineWidth', 1.5);
     box off;
     
     xline(-0.5, 'k--', 'LineWidth', 1.4, 'Alpha', 0.75, 'HandleVisibility', 'off');
@@ -2068,23 +2117,23 @@ for col = 1:5
     yticks(sort(y_offsets));
     if col == 1
         yticklabels(fliplr(plot_chan_labels));
-        ylabel('Channels (stacked)', 'FontSize', 18, 'FontWeight', 'bold');
+        ylabel('Channels (stacked)', 'FontSize', 26, 'FontWeight', 'bold');
     else
         yticklabels({});
     end
     
-    title(c_title, 'FontSize', 18, 'FontWeight', 'bold', 'Color', c_color);
-    xlabel('Time (s)', 'FontSize', 16, 'FontWeight', 'bold');
+    title(c_title, 'FontSize', 26, 'FontWeight', 'bold', 'Color', c_color);
+    xlabel('Time (s)', 'FontSize', 26, 'FontWeight', 'bold');
     grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
 end
 
 if isnumeric(subj_to_plot)
     title(t_layout, sprintf('Subject %d: Multi-Channel ERP Dynamics (Trial Average \\pm 1 SD)', subj_to_plot), ...
-        'FontSize', 22, 'FontWeight', 'bold');
+        'FontSize', 28, 'FontWeight', 'bold');
     out_tag = sprintf('Subj%02d', subj_to_plot);
 else
     title(t_layout, 'Grand Average: Multi-Channel ERP Dynamics (Mean \\pm 1 SD across Subjects)', ...
-        'FontSize', 22, 'FontWeight', 'bold');
+        'FontSize', 28, 'FontWeight', 'bold');
     out_tag = 'GrandAvg';
 end
 
@@ -2198,10 +2247,10 @@ plot(cfg.m, 85, 'rp', 'MarkerSize', 15, 'MarkerFaceColor', 'r', 'HandleVisibilit
 
 xline(2, ':', 'Color', [0.4940 0.1840 0.5560], 'LineWidth', 2, 'HandleVisibility', 'off');
 text(2.2, 50, 'Beta/Alpha intrinsic 2D manifold (p < 0.05)', ...
-    'FontSize', 18, 'Color', [0.4940 0.1840 0.5560], 'FontWeight', 'bold', 'BackgroundColor', 'w');
+    'FontSize', 26, 'Color', [0.4940 0.1840 0.5560], 'FontWeight', 'bold', 'BackgroundColor', 'w');
     
 text(cfg.m + 0.2, 70, sprintf('Truncation at m=%d\n(>85%% variance)', cfg.m), ...
-    'FontSize', 18, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w');
+    'FontSize', 26, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w');
     
 xlim([0.5, 15]); xticks(1:15); ylim([0, 100]); yticks(0:10:100);
 xlabel('Number of Components (Spatial Directions)', 'FontSize', 24, 'FontWeight', 'bold');
@@ -2751,11 +2800,17 @@ for g = 1:length(subj_group_names)
             plot([i-0.3, i+0.3], [mean_val, mean_val], '-', 'Color', colors_conds(c_idx, :), 'LineWidth', 4, 'HandleVisibility', 'off');
             
             if c_idx ~= find(strcmp(cfg.all_conds, 'P1'))
+                % Subject-level latency shifts across the n=12 retained subjects
                 lat_data = aggregate_lat.(b_name).cohort(g).subj_data(c_idx, :);
-                [~, p_val] = ttest(lat_data, 0); 
+                lat_data_clean = lat_data(~isnan(lat_data));
+                if length(lat_data_clean) > 1
+                    p_val = signrank(lat_data_clean, 0); % Non-parametric Wilcoxon signed-rank test
+                else
+                    p_val = 1;
+                end
                 if p_val < 0.05
                     star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                    test_mean = mean(lat_data, 'omitnan');
+                    test_mean = mean(lat_m(c_idx, :), 'omitnan');
                     if test_mean > 0
                         y_star = max(lat_m(c_idx, :)) + y_bound * 0.08;
                     else
@@ -2952,3 +3007,19 @@ for g = 1:length(subj_group_names)
     close(fig5D);
 end
 disp('All analyses completed successfully (All Retained Subjects, excluding S3 & S14).');
+
+%% =========================================================================
+%% BAYES FACTOR (BF01) & TOST EQUIVALENCE CHECK FOR BETA GAIN & GEOMETRY
+%% =========================================================================
+fprintf('\n--- BAYES FACTOR (BF_01, Evidence for Null Stability) IN BETA BAND ---\n');
+G_beta_subjs = aggregate_G.Beta.cohort(1).subj_data; % [5 conds x 12 subjs]
+n_s = size(G_beta_subjs, 2);
+for c_i = 2:length(cfg.all_conds)
+    diff_G = G_beta_subjs(c_i, :) - G_beta_subjs(1, :);
+    [~, p_t, ~, stats_t] = ttest(diff_G, 0);
+    p_sr = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :));
+    %BIC / JZS approximation for BF01 (Rouder et al., 2009; Wagenmakers, 2007)
+    bf01_G = sqrt(n_s) * (1 + (stats_t.tstat^2) / (n_s - 1))^(-n_s / 2);
+    fprintf('Beta Gain %-12s vs P1: Mean G = %.3f | signrank p = %.3f | t = %+.2f | BF_01 = %.2f\n', ...
+        cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr, stats_t.tstat, bf01_G);
+end
