@@ -162,20 +162,22 @@ for c = 1:length(cond_names)
 end
 disp('Filtering and Beta/Alpha Ratio computation complete.');
 
-%% 1. Configuration Parameters
+%% =========================================================================
+%% SECTION 1: SYSTEM CONFIGURATION (SET TO 5 STATISTICALLY VALIDATED DIRECTIONS)
+%% =========================================================================
 cfg = struct();
 cfg.num_ch        = 32;
 cfg.fs            = fs;                
 cfg.tStart        = -1.000;            
 cfg.win           = [0.000, 1.000];    
-cfg.base          = [-1.000, -0.500];  % 500 ms pre-cue baseline [-1.0, -0.5 s]
+cfg.base          = [-1.000, -0.500];  % 500 ms pre-cue baseline window [-1.0, -0.5 s]
 cfg.nTrialMatch   = 20;                % Matched clean trial subsampling floor
-cfg.nRep          = 50;                
-cfg.m             = 6;                 
+cfg.nRep          = 50;                % Split-half Monte Carlo resampling repetitions
+cfg.m             = 5;                 % TRUNCATED TO 5 VALIDATED MANIFOLD DIRECTIONS (p < 0.05)
 cfg.seed          = 20260910;
-cfg.slide_win     = 0.100;
-cfg.slide_step    = 0.025;
-cfg.basis_mode = 'universal';
+cfg.slide_win     = 0.100;             % 100 ms sliding trajectory window
+cfg.slide_step    = 0.025;             % 25 ms step size
+cfg.basis_mode    = 'universal';       % Concatenated Universal Basis
 
 clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(strrep(c, ...
     'BLT', 'Tactile (BLT)'), 'BLA', 'Auditory (BLA)'), 'P1', 'Cued (P1)'), ...
@@ -695,7 +697,7 @@ end
 save(fullfile(screening_fig_dir, 'all_subjects_screening_stats.mat'), 'screening_stats', 'Outlier_Summary_Table', 'subj_excluded_2_3');
 
 %% =========================================================================
-%% MASTER LOOP: PROCESS FREQUENCY BANDS (ALL RETAINED SUBJECTS ONLY, EX. S3 & S14)
+%% MASTER LOOP: 5-DIMENSIONAL CONCATENATED UNIVERSAL BASIS & UNBIASED PROJECTION
 %% =========================================================================
 bands_to_process = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 cfg.ref_cond = 'P1';
@@ -743,17 +745,13 @@ for band_idx = 1:length(bands_to_process)
     num_subjects = length(current_data.(cfg.ref_cond));
     
     for dest = dest_list
-        fprintf(dest, '\n\n======================================================\n');
-        fprintf(dest, '   BAND: %s | REFERENCE: %s (INDIVIDUAL COMPONENTS)\n', upper(band_name), cfg.ref_cond);
-        fprintf(dest, '======================================================\n');
+        fprintf(dest, '\n\n==================================================================================\n');
+        fprintf(dest, '   BAND: %s | UNIVERSAL BASIS (m = %d VALIDATED DIRECTIONS)\n', upper(band_name), cfg.m);
+        fprintf(dest, '==================================================================================\n');
     end
     
-    group_dir = fullfile(output_path, 'group', band_name, cfg.ref_cond);
+    group_dir = fullfile(output_path, 'group', band_name, 'Universal_5D');
     if ~exist(group_dir, 'dir'), mkdir(group_dir); end
-
-    % --- BASIS MODE SELECTION ('universal' concatenated or 'P1') ---
-    if ~isfield(cfg, 'basis_mode'), cfg.basis_mode = 'universal'; end
-    n_sub_half = 10; % 10 clean trials for Half A (basis) and 10 for Half B (projection)
 
     Xi_all_subjs = nan(cfg.num_ch, cfg.m, num_subjects);
     lam_frac_all = nan(cfg.m, num_subjects);
@@ -762,38 +760,31 @@ for band_idx = 1:length(bands_to_process)
     
     for s = valid_retained_subjs
         rng(cfg.seed + s);
-        if strcmpi(cfg.basis_mode, 'universal')
-            % Concatenate baseline-corrected Half-A ERPs (10 trials each) across all 5 conditions
-            X_concat_A = [];
-            for c_p = 1:length(cfg.all_conds)
-                c_pname = cfg.all_conds{c_p};
-                if ~isfield(current_data, c_pname), continue; end
-                raw_c   = current_data.(c_pname){s};
-                valid_c = find(~isnan(squeeze(raw_c(1, 1, :))));
-                perm_c  = valid_c(randperm(length(valid_c)));
-                n_h     = min(n_sub_half, floor(length(valid_c) / 2));
-                
-                erp_cA  = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
-                b_cA    = mean(erp_cA(:, iBase), 2, 'omitnan');
-                X_cA_bc = erp_cA(:, iWin) - b_cA; % Baseline-corrected ERP over iWin
-                X_concat_A = [X_concat_A, X_cA_bc]; %#ok<AGROW>
-            end
-            C_A_cent = covCentered(X_concat_A, zeros(cfg.num_ch, 1));
-        else
-            % P1-only basis
-            raw_ref = current_data.(cfg.ref_cond){s};
-            valid_ref_idx = find(~isnan(squeeze(raw_ref(1, 1, :))));
-            perm = valid_ref_idx(randperm(length(valid_ref_idx)));
-            n_half = min(cfg.nTrialMatch, floor(length(valid_ref_idx) / 2));
-            erpA = mean(raw_ref(:, :, perm(1:n_half)), 3, 'omitnan');
-            bA   = mean(erpA(:, iBase), 2, 'omitnan');
-            C_A_cent = covCentered(erpA(:, iWin), bA);
+        
+        % 1. Concatenate baseline-corrected Half-A ERPs (10 trials each) across all 5 conditions
+        X_concat_A = [];
+        for c_p = 1:length(cfg.all_conds)
+            c_pname = cfg.all_conds{c_p};
+            if ~isfield(current_data, c_pname), continue; end
+            raw_c   = current_data.(c_pname){s};
+            valid_c = find(~isnan(squeeze(raw_c(1, 1, :))));
+            perm_c  = valid_c(randperm(length(valid_c)));
+            n_h     = min(n_sub_half, floor(length(valid_c) / 2));
+            
+            erp_cA  = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
+            b_cA    = mean(erp_cA(:, iBase), 2, 'omitnan');
+            X_cA_bc = erp_cA(:, iWin) - b_cA;
+            X_concat_A = [X_concat_A, X_cA_bc]; %#ok<AGROW>
         end
+        
+        % 2. Centered dynamic covariance across the concatenated 5-condition matrix
+        C_A_cent = covCentered(X_concat_A, zeros(cfg.num_ch, 1));
         
         [V, D] = eig(C_A_cent, 'vector');
         [lam, ord] = sort(D, 'descend');
         V = V(:, ord);
         
+        % Retain exactly m = 5 orthogonal spatial modes
         Xi_all_subjs(:, :, s) = V(:, 1:cfg.m);
         lam_frac_all(:, s)    = lam(1:cfg.m) / sum(lam);
         gap_all(:, s)         = (lam(1:cfg.m-1) - lam(2:cfg.m)) ./ lam(1:cfg.m-1);
@@ -802,6 +793,7 @@ for band_idx = 1:length(bands_to_process)
     
     aggregate_spectra.(band_name) = mean(cumsum(lam_full_all(:, valid_retained_subjs), 1), 2, 'omitnan') * 100;
     
+    % Sign-align eigenvectors across participants against Subject 1
     Xi_aligned = Xi_all_subjs;
     ref_align_subj = valid_retained_subjs(1);
     for s = valid_retained_subjs(2:end)
@@ -814,18 +806,10 @@ for band_idx = 1:length(bands_to_process)
     
     save(fullfile(group_dir, 'spectra.mat'), 'lam_frac_all', 'gap_all', 'valid_retained_subjs');
     
-    figA = figure('Position', [100, 100, 1000, 400], 'Visible', 'off');
-    subplot(1, 2, 1); plot(1:cfg.m, lam_frac_all(:, valid_retained_subjs), '-o', 'LineWidth', 1.5); grid on;
-    xlabel('Direction Index'); ylabel('Fraction of Total Variance'); title(sprintf('Eigenvalue Spectra [%s|%s]', band_name, cfg.basis_mode));
-    subplot(1, 2, 2); bar(mean(gap_all(:, valid_retained_subjs), 2, 'omitnan')); hold on;
-    errorbar(1:cfg.m-1, mean(gap_all(:, valid_retained_subjs), 2, 'omitnan'), std(gap_all(:, valid_retained_subjs), 0, 2, 'omitnan'), 'k.', 'LineWidth', 1.2);
-    grid on; xlabel('Gap Index'); ylabel('Relative Gap'); title('Mean Subspace Gaps');
-    saveas(figA, fullfile(group_dir, 'Deliverable_A_Spectra.png')); close(figA);
-    
     % ------------------------------------------------------------------
-    %% CHECKPOINT 1 (A): Deliverable B - Spatial Eigenvector Topographies
+    %% DELIVERABLE B: SPATIAL TOPOGRAPHIES (1x5 SUBPLOTS PER SUBJECT)
     % ------------------------------------------------------------------
-    subjs_topo = valid_retained_subjs(1:min(4, length(valid_retained_subjs))); % First 4 retained subjects
+    subjs_topo = valid_retained_subjs(1:min(4, length(valid_retained_subjs)));
     n_rows_B   = length(subjs_topo);
     
     figB = figure('Position', [100, 100, 220 * cfg.m + 120, 210 * n_rows_B], 'Color', 'w', 'Visible', 'off');
@@ -833,23 +817,18 @@ for band_idx = 1:length(bands_to_process)
         s = subjs_topo(r_idx);
         for k = 1:cfg.m
             ax_b = subplot(n_rows_B, cfg.m, (r_idx - 1) * cfg.m + k);
-            
             pos_b = get(ax_b, 'Position');
             pos_b(1) = pos_b(1) * 0.92;
             pos_b(3) = pos_b(3) * 0.92;
             set(ax_b, 'Position', pos_b);
             
-            if exist('EEG', 'var') && isfield(EEG, 'chanlocs') && ~isempty(EEG.chanlocs)
-                topoplot(Xi_aligned(:, k, s), EEG.chanlocs, 'maplimits', [-0.4, 0.4], ...
-                    'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-                colormap(ax_b, 'jet');
-                clim(ax_b, [-0.4, 0.4]);
-            end
+            topoplot(Xi_aligned(:, k, s), EEG.chanlocs, 'maplimits', [-0.4, 0.4], ...
+                'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+            colormap(ax_b, 'jet'); clim(ax_b, [-0.4, 0.4]);
             
             if r_idx == 1
                 title(sprintf('\\xi_%d', k), 'FontSize', 26, 'FontWeight', 'bold');
             end
-            
             if k == 1
                 text(-0.75, 0, sprintf('Subj %d', s), 'Rotation', 90, ...
                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
@@ -858,22 +837,19 @@ for band_idx = 1:length(bands_to_process)
         end
     end
     
-    cb_B = colorbar('Position', [0.90, 0.15, 0.02, 0.72]);
-    cb_B.Limits = [-0.4, 0.4];
-    cb_B.Ticks  = -0.4 : 0.2 : 0.4;
-    cb_B.Label.String     = 'Spatial Weight (a.u.)';
-    cb_B.Label.FontSize   = 22;
-    cb_B.Label.FontWeight = 'bold';
-    cb_B.FontSize         = 20;
+    cb_B = colorbar('Position', [0.91, 0.15, 0.018, 0.72]);
+    cb_B.Limits = [-0.4, 0.4]; cb_B.Ticks = -0.4 : 0.2 : 0.4;
+    cb_B.Label.String = 'Spatial Weight (a.u.)'; cb_B.Label.FontSize = 22;
+    cb_B.Label.FontWeight = 'bold'; cb_B.FontSize = 18;
     
     save_file_B = fullfile(group_dir, 'Deliverable_B_Topos');
     try saveas(figB, [save_file_B, '.png']); saveas(figB, [save_file_B, '.svg']); catch, end
     close(figB);
 
     % ------------------------------------------------------------------
-    %% 1. COMPUTE PAIRWISE COSINE SIMILARITY & DELIVERABLE C HEATMAPS
+    %% DELIVERABLE C: PAIRWISE COSINE SIMILARITY HEATMAPS (1x5 GRID)
     % ------------------------------------------------------------------
-    n_ret = length(valid_retained_subjs); % <--- DEFINES n_ret HERE
+    n_ret = length(valid_retained_subjs);
     subj_subj_sim = nan(n_ret, n_ret, cfg.m);
     
     for k = 1:cfg.m
@@ -886,8 +862,7 @@ for band_idx = 1:length(bands_to_process)
         end
     end
     
-    % Render 6-panel similarity figure (Deliverable C)
-    figC_sim = figure('Position', [100, 100, 320 * cfg.m + 120, 420], 'Color', 'w', 'Visible', 'off');
+    figC_sim = figure('Position', [100, 100, 310 * cfg.m + 120, 420], 'Color', 'w', 'Visible', 'off');
     tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
     
     for k = 1:cfg.m
@@ -906,48 +881,39 @@ for band_idx = 1:length(bands_to_process)
         xticks([1, n_ret]); yticks([1, n_ret]);
     end
     
-    cb_sim = colorbar; 
-    cb_sim.Layout.Tile      = 'east'; 
-    cb_sim.FontSize         = 18;
-    cb_sim.Label.String     = 'Absolute Cosine Similarity'; 
-    cb_sim.Label.FontSize   = 22;
-    cb_sim.Label.FontWeight = 'bold';
-    
-    sgtitle(sprintf('Cross-Subject Component Consistency (%s Universal Basis, n=%d)', ...
-        band_name, n_ret), 'FontSize', 26, 'FontWeight', 'bold');
+    cb_sim = colorbar; cb_sim.Layout.Tile = 'east'; cb_sim.FontSize = 18;
+    cb_sim.Label.String = 'Absolute Cosine Similarity'; cb_sim.Label.FontSize = 22; cb_sim.Label.FontWeight = 'bold';
+    sgtitle(sprintf('Cross-Subject Component Consistency (%s Universal Basis, n=%d)', band_name, n_ret), ...
+        'FontSize', 26, 'FontWeight', 'bold');
     
     save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim', 'valid_retained_subjs', 'Xi_aligned');
     saveas(figC_sim, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); 
     close(figC_sim);
 
     % ------------------------------------------------------------------
-    %% 2. K-MEANS CLUSTERING (k=2 vs. k=3 ON DIRECTIONS 1 & 2)
+    %% DELIVERABLE C (AUDIT): K-MEANS CLUSTERING (k=2 vs. k=3 ON DIRECTIONS 1 & 2)
     % ------------------------------------------------------------------
-    % Extract 64-dimensional spatial features for each subject [Xi_1; Xi_2]
     X_feat = zeros(n_ret, 2 * cfg.num_ch);
     for i = 1:n_ret
         s = valid_retained_subjs(i);
         X_feat(i, :) = [Xi_aligned(:, 1, s)', Xi_aligned(:, 2, s)'];
     end
     
-    % Combined pairwise similarity matrix for Directions 1 and 2
     sim_xi12 = 0.5 * (subj_subj_sim(:, :, 1) + subj_subj_sim(:, :, 2));
     
-    % K-Means for k = 2
-    rng(42); % Seed for reproducible centroids
+    rng(42);
     [idx_k2, ~] = kmeans(X_feat, 2, 'Replicates', 50, 'Distance', 'sqeuclidean');
-    if sum(idx_k2 == 1) < sum(idx_k2 == 2), idx_k2 = 3 - idx_k2; end % Cluster 1 = majority
+    if sum(idx_k2 == 1) < sum(idx_k2 == 2), idx_k2 = 3 - idx_k2; end
     sil_k2 = mean(silhouette(X_feat, idx_k2));
     
-    % K-Means for k = 3
     rng(42);
     [idx_k3, ~] = kmeans(X_feat, 3, 'Replicates', 50, 'Distance', 'sqeuclidean');
     [~, count_ord] = sort(histcounts(idx_k3, 1:4), 'descend');
     remap = zeros(3, 1); for r_i = 1:3, remap(count_ord(r_i)) = r_i; end
-    idx_k3 = remap(idx_k3); % Cluster 1 = largest
+    idx_k3 = remap(idx_k3);
     sil_k3 = mean(silhouette(X_feat, idx_k3));
     
-    % Permutation test for k=2 cluster separation (Between vs. Within Similarity)
+    % Permutation test for k=2 modular separation
     same_m2 = (idx_k2 == idx_k2') & ~eye(n_ret);
     diff_m2 = (idx_k2 ~= idx_k2');
     obs_diff_k2 = mean(sim_xi12(same_m2)) - mean(sim_xi12(diff_m2));
@@ -971,41 +937,29 @@ for band_idx = 1:length(bands_to_process)
         fprintf(dest, '      Cluster 3 (n=%d): Subjects %s\n', sum(idx_k3==3), mat2str(valid_retained_subjs(idx_k3==3)));
     end
     
-    % --- RENDER 3-PANEL FIGURE FOR AUDREY & ESLAM ---
     figKMeans = figure('Position', [100, 100, 1550, 480], 'Color', 'w', 'Visible', 'off');
     tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
     
-    % Panel 1: K=2 Clustered Similarity Matrix
-    [~, ord_k2] = sort(idx_k2, 'ascend');
-    subjs_k2    = valid_retained_subjs(ord_k2);
-    nexttile; hold on;
-    imagesc(sim_xi12(ord_k2, ord_k2)); colormap('jet'); clim([0 1]); axis square;
+    [~, ord_k2] = sort(idx_k2, 'ascend'); subjs_k2 = valid_retained_subjs(ord_k2);
+    nexttile; hold on; imagesc(sim_xi12(ord_k2, ord_k2)); colormap('jet'); clim([0 1]); axis square;
     set(gca, 'YDir', 'reverse', 'FontSize', 12, 'FontWeight', 'bold');
-    xline(sum(idx_k2==1) + 0.5, 'w--', 'LineWidth', 2.5);
-    yline(sum(idx_k2==1) + 0.5, 'w--', 'LineWidth', 2.5);
+    xline(sum(idx_k2==1) + 0.5, 'w--', 'LineWidth', 2.5); yline(sum(idx_k2==1) + 0.5, 'w--', 'LineWidth', 2.5);
     xticks(1:n_ret); xticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k2, 'UniformOutput', false)); xtickangle(45);
     yticks(1:n_ret); yticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k2, 'UniformOutput', false));
     title(sprintf('K=2 Clustered Sim (Sil = %.2f)', sil_k2), 'FontSize', 16, 'FontWeight', 'bold');
     
-    % Panel 2: K=3 Clustered Similarity Matrix
-    [~, ord_k3] = sort(idx_k3, 'ascend');
-    subjs_k3    = valid_retained_subjs(ord_k3);
-    nexttile; hold on;
-    imagesc(sim_xi12(ord_k3, ord_k3)); colormap('jet'); clim([0 1]); axis square;
+    [~, ord_k3] = sort(idx_k3, 'ascend'); subjs_k3 = valid_retained_subjs(ord_k3);
+    nexttile; hold on; imagesc(sim_xi12(ord_k3, ord_k3)); colormap('jet'); clim([0 1]); axis square;
     set(gca, 'YDir', 'reverse', 'FontSize', 12, 'FontWeight', 'bold');
-    xline(sum(idx_k3==1) + 0.5, 'w--', 'LineWidth', 2.5);
-    yline(sum(idx_k3==1) + 0.5, 'w--', 'LineWidth', 2.5);
-    xline(sum(idx_k3<=2) + 0.5, 'w--', 'LineWidth', 2.5);
-    yline(sum(idx_k3<=2) + 0.5, 'w--', 'LineWidth', 2.5);
+    xline(sum(idx_k3==1) + 0.5, 'w--', 'LineWidth', 2.5); yline(sum(idx_k3==1) + 0.5, 'w--', 'LineWidth', 2.5);
+    xline(sum(idx_k3<=2) + 0.5, 'w--', 'LineWidth', 2.5); yline(sum(idx_k3<=2) + 0.5, 'w--', 'LineWidth', 2.5);
     xticks(1:n_ret); xticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k3, 'UniformOutput', false)); xtickangle(45);
     yticks(1:n_ret); yticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k3, 'UniformOutput', false));
     title(sprintf('K=3 Clustered Sim (Sil = %.2f)', sil_k3), 'FontSize', 16, 'FontWeight', 'bold');
     
-    % Panel 3: 2D Spatial Embedding Scatter Plot (PCA of X_feat)
     [~, score_2d] = pca(X_feat, 'NumComponents', 2);
-    nexttile; hold on; box on; grid on;
-    set(gca, 'FontSize', 14, 'FontWeight', 'bold');
-    c_k2 = {[0.12 0.47 0.71], [0.84 0.15 0.16]}; % Blue = Majority, Red = Divergent
+    nexttile; hold on; box on; grid on; set(gca, 'FontSize', 14, 'FontWeight', 'bold');
+    c_k2 = {[0.12 0.47 0.71], [0.84 0.15 0.16]};
     for i = 1:n_ret
         s_id = valid_retained_subjs(i);
         scatter(score_2d(i, 1), score_2d(i, 2), 140, 'filled', ...
@@ -1017,149 +971,14 @@ for band_idx = 1:length(bands_to_process)
     ylabel('Spatial Component 2', 'FontSize', 14, 'FontWeight', 'bold');
     title('2D Embedding (\xi_1 & \xi_2)', 'FontSize', 16, 'FontWeight', 'bold');
     
-    cb_km = colorbar; cb_km.Layout.Tile = 'east'; 
-    cb_km.Label.String = 'Absolute Cosine Similarity'; cb_km.FontSize = 14;
+    cb_km = colorbar; cb_km.Layout.Tile = 'east'; cb_km.Label.String = 'Absolute Cosine Similarity'; cb_km.FontSize = 14;
     sgtitle(sprintf('Universal Basis Subject Clustering: K-Means (k=2 vs. k=3, %s)', band_name), ...
         'FontSize', 20, 'FontWeight', 'bold');
-    
     saveas(figKMeans, fullfile(group_dir, 'Deliverable_C_KMeans_Clustering_K2_K3.png'));
     close(figKMeans);
 
     % ------------------------------------------------------------------
-    %% 3. CROSS-SUBJECT CONSISTENCY PERMUTATION TEST
-    % ------------------------------------------------------------------
-    for dest = dest_list
-        fprintf(dest, '\nRunning 1,000-iteration Spatial Permutation Test for Consistency...\n');
-    end
-    n_perms       = 1000;
-    num_pairs     = (n_ret * (n_ret - 1)) / 2;
-    true_mean_sim = zeros(cfg.m, 1);
-    null_mean_sim = zeros(cfg.m, n_perms);
-    p_vals        = zeros(cfg.m, 1);
-    thresh_95     = zeros(cfg.m, 1);
-    
-    for k = 1:cfg.m
-        pair_sims = zeros(num_pairs, 1);
-        idx = 1;
-        for i = 1:n_ret
-            s1 = valid_retained_subjs(i);
-            for j = (i+1):n_ret
-                s2 = valid_retained_subjs(j);
-                v1 = Xi_aligned(:, k, s1);
-                v2 = Xi_aligned(:, k, s2);
-                pair_sims(idx) = abs(dot(v1, v2)) / (norm(v1) * norm(v2));
-                idx = idx + 1;
-            end
-        end
-        true_mean_sim(k) = mean(pair_sims);
-    end
-    
-    for p_idx = 1:n_perms
-        for k = 1:cfg.m
-            shuffled_Xi = zeros(cfg.num_ch, n_ret);
-            for i = 1:n_ret
-                s = valid_retained_subjs(i);
-                shuff_idx = randperm(cfg.num_ch);
-                shuffled_Xi(:, i) = Xi_aligned(shuff_idx, k, s);
-            end
-            
-            pair_sims_null = zeros(num_pairs, 1);
-            idx = 1;
-            for i = 1:n_ret
-                for j = (i+1):n_ret
-                    v1 = shuffled_Xi(:, i);
-                    v2 = shuffled_Xi(:, j);
-                    pair_sims_null(idx) = abs(dot(v1, v2)) / (norm(v1) * norm(v2));
-                    idx = idx + 1;
-                end
-            end
-            null_mean_sim(k, p_idx) = mean(pair_sims_null);
-        end
-    end
-    
-    for dest = dest_list
-        fprintf(dest, '\n--- Cross-Subject Component Consistency ---\n');
-        fprintf(dest, 'Direction | True Sim | 95%% Null Thresh | p-value | Significance\n');
-        fprintf(dest, '---------------------------------------------------------------\n');
-    end
-    for k = 1:cfg.m
-        p_vals(k) = (1 + sum(null_mean_sim(k, :) >= true_mean_sim(k))) / (1 + n_perms);
-        thresh_95(k) = prctile(null_mean_sim(k, :), 95);
-        if p_vals(k) < 0.001, sig_str = '***';
-        elseif p_vals(k) < 0.01, sig_str = '**';
-        elseif p_vals(k) < 0.05, sig_str = '*';
-        else, sig_str = 'ns'; end
-        for dest = dest_list
-            fprintf(dest, 'Xi_%d      | %.3f    | %.3f           | %.4f  | %s\n', ...
-                k, true_mean_sim(k), thresh_95(k), p_vals(k), sig_str);
-        end
-    end
-    for dest = dest_list
-        fprintf(dest, '---------------------------------------------------------------\n');
-    end
-    
-    % Render 6-panel Permutation Test Figure with non-overlapping labels
-    figC_perm = figure('Position', [150, 150, 1500, 700], 'Color', 'w', ...
-        'Name', sprintf('Permutation Test: %s', band_name), 'Visible', 'off');
-    t_perm = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
-    title(t_perm, sprintf('Cross-Subject Consistency: Null vs True (%s Universal Basis, n=%d)', ...
-        band_name, n_ret), 'FontSize', 24, 'FontWeight', 'bold');
-    
-    for k = 1:cfg.m
-        nexttile; hold on;
-        set(gca, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.2, 'TickDir', 'out');
-        
-        histogram(null_mean_sim(k, :), 30, 'Normalization', 'probability', ...
-            'FaceColor', [0.72 0.72 0.72], 'EdgeColor', 'none');
-        
-        % 95% Null line (Label at TOP, aligned to LEFT of line)
-        xline(thresh_95(k), 'k--', ...
-            'LineWidth', 1.8, ...
-            'Label', '95% Thresh', ...
-            'LabelOrientation', 'horizontal', ...
-            'LabelVerticalAlignment', 'top', ...
-            'LabelHorizontalAlignment', 'left', ...
-            'FontSize', 15);
-        
-        % True Sim line (Label LOWERED to MIDDLE, aligned to RIGHT of line)
-        if p_vals(k) < 0.05
-            line_color = [0.82 0.12 0.12];
-        else
-            line_color = [0.25 0.25 0.25];
-        end
-        xline(true_mean_sim(k), '-', ...
-            'Color', line_color, ...
-            'LineWidth', 2.6, ...
-            'Label', 'True Sim', ...
-            'LabelOrientation', 'horizontal', ...
-            'LabelVerticalAlignment', 'middle', ...
-            'LabelHorizontalAlignment', 'right', ...
-            'FontSize', 15);
-        
-        title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 20, 'FontWeight', 'bold');
-        
-        if k >= 4
-            xlabel('Mean Abs. Cosine Similarity', 'FontSize', 17, 'FontWeight', 'bold');
-        end
-        if ismember(k, [1, 4])
-            ylabel('Probability', 'FontSize', 18, 'FontWeight', 'bold');
-        end
-        
-        xlim([0, max(max(null_mean_sim(k, :)), true_mean_sim(k)) * 1.15]);
-        grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
-        box on;
-    end
-    
-    save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
-    try
-        exportgraphics(figC_perm, save_file_perm, 'Resolution', 600);
-    catch
-        saveas(figC_perm, save_file_perm);
-    end
-    close(figC_perm);
-
-    % ------------------------------------------------------------------
-    %% SPLIT-HALF UNIVERSAL BASIS & UNBIASED CONDITION PROJECTIONS
+    %% 5-DIMENSIONAL SPLIT-HALF RESAMPLING & CONDITION PROJECTIONS
     % ------------------------------------------------------------------
     G_splits     = nan(length(cfg.all_conds), cfg.nRep, num_subjects);
     log_r_splits = nan(length(cfg.all_conds), cfg.m, cfg.nRep, num_subjects);
@@ -1168,7 +987,7 @@ for band_idx = 1:length(bands_to_process)
     traj_splits  = nan(length(cfg.all_conds), cfg.m, num_windows, cfg.nRep, num_subjects);
 
     for subj = valid_retained_subjs
-        subj_dir = fullfile(output_path, sprintf('subj%02d', subj), band_name, cfg.ref_cond);
+        subj_dir = fullfile(output_path, sprintf('subj%02d', subj), band_name, 'Universal_5D');
         if ~exist(subj_dir, 'dir'), mkdir(subj_dir); end
         save(fullfile(subj_dir, 'cfg.mat'), 'cfg');
         
@@ -1177,7 +996,6 @@ for band_idx = 1:length(bands_to_process)
         for rep = 1:cfg.nRep
             rng(cfg.seed + rep + subj*1000); 
             
-            % Partition every condition into non-overlapping Half A (10 trials for basis) & Half B (10 trials for test)
             halfA_idx      = struct();
             halfB_idx      = struct();
             X_concat_rep_A = [];
@@ -1189,7 +1007,6 @@ for band_idx = 1:length(bands_to_process)
                 valid_cp = find(~isnan(squeeze(raw_cp(1, 1, :))));
                 perm_cp  = valid_cp(randperm(length(valid_cp)));
                 
-                % Strictly non-overlapping 10 trials for Half A and 10 trials for Half B
                 n_sub = min(n_sub_half, floor(length(valid_cp) / 2));
                 halfA_idx.(cond_p) = perm_cp(1:n_sub);
                 halfB_idx.(cond_p) = perm_cp(n_sub + (1:n_sub));
@@ -1197,19 +1014,14 @@ for band_idx = 1:length(bands_to_process)
                 erp_cpA  = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
                 b_cpA    = mean(erp_cpA(:, iBase), 2, 'omitnan');
                 X_cpA_bc = erp_cpA(:, iWin) - b_cpA;
-                
-                if strcmpi(cfg.basis_mode, 'universal')
-                    X_concat_rep_A = [X_concat_rep_A, X_cpA_bc]; %#ok<AGROW>
-                elseif strcmp(cond_p, cfg.ref_cond)
-                    X_concat_rep_A = X_cpA_bc;
-                end
+                X_concat_rep_A = [X_concat_rep_A, X_cpA_bc]; %#ok<AGROW>
             end
             
             C_A_cent = covCentered(X_concat_rep_A, zeros(cfg.num_ch, 1));
             [V, D]   = eig(C_A_cent, 'vector');
             [lam, ord] = sort(D, 'descend');
             V = V(:, ord);
-            Xi_rep = V(:, 1:cfg.m);
+            Xi_rep = V(:, 1:cfg.m); % 5 directions
             lam_frac_rep = lam(1:cfg.m) / sum(lam);
             gap_rep = (lam(1:cfg.m-1) - lam(2:cfg.m)) ./ lam(1:cfg.m-1);
             
@@ -1221,7 +1033,7 @@ for band_idx = 1:length(bands_to_process)
             
             basis_vars = struct('Xi', Xi_rep, 'lam', lam, 'lam_frac', lam_frac_rep, 'gap', gap_rep);
             
-            % Reference ceiling from held-out Half B of Cued (P1)
+            % Held-out Half B of Cued (P1) computes reference ceiling across 5 dimensions
             raw_ref = current_data.(cfg.ref_cond){subj};
             iA      = halfA_idx.(cfg.ref_cond);
             iB      = halfB_idx.(cfg.ref_cond);
@@ -1229,8 +1041,8 @@ for band_idx = 1:length(bands_to_process)
             bB      = mean(erpB(:, iBase), 2, 'omitnan');
             XB      = erpB(:, iWin) - bB;
             
-            v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win;
-            V_ceil = sum(v_ceil);
+            v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win; % [5 x 1]
+            V_ceil = sum(v_ceil);                       % Scalar 5D ceiling
             
             proj_B = Xi_rep' * XB; 
             [~, max_idx_B] = max(abs(proj_B), [], 2);
@@ -1243,9 +1055,8 @@ for band_idx = 1:length(bands_to_process)
                 cond = cfg.all_conds{c};
                 if ~isfield(current_data, cond), continue; end
                 
-                % Strictly use the held-out Half B (10 trials) for every condition!
                 raw_cond = current_data.(cond){subj};
-                idx_k    = halfB_idx.(cond);
+                idx_k    = halfB_idx.(cond); % Clean held-out Half B
                 erp_k    = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
                 bk       = mean(erp_k(:, iBase), 2, 'omitnan');
                 Xk       = erp_k(:, iWin) - bk;
@@ -1290,97 +1101,71 @@ for band_idx = 1:length(bands_to_process)
 
     save(fullfile(group_dir, 'results.mat'), 'G_splits', 'log_r_splits', 'lat_splits', 'sust_splits', 'traj_splits', 'valid_retained_subjs');
 
-    % ------------------------------------------------------------------
-    %% CHECKPOINT 1 (B): Cross-Subject Consistency Permutation Test
-    % ------------------------------------------------------------------
-    for dest = dest_list
-        fprintf(dest, '\nRunning 1,000-iteration Spatial Permutation Test for Consistency...\n');
-    end
-    n_perms = 1000;
-    num_pairs = (n_ret * (n_ret - 1)) / 2;
-    true_mean_sim = zeros(cfg.m, 1);
-    null_mean_sim = zeros(cfg.m, n_perms);
-    p_vals        = zeros(cfg.m, 1);
-    thresh_95     = zeros(cfg.m, 1);
-    
-    for k = 1:cfg.m
-        pair_sims = zeros(num_pairs, 1);
-        idx = 1;
-        for i = 1:n_ret
-            s1 = valid_retained_subjs(i);
-            for j = (i+1):n_ret
-                s2 = valid_retained_subjs(j);
-                v1 = Xi_aligned(:, k, s1);
-                v2 = Xi_aligned(:, k, s2);
-                pair_sims(idx) = abs(dot(v1, v2)) / (norm(v1) * norm(v2));
-                idx = idx + 1;
-            end
-        end
-        true_mean_sim(k) = mean(pair_sims);
-    end
-    
-    for p_idx = 1:n_perms
-        for k = 1:cfg.m
-            shuffled_Xi = zeros(cfg.num_ch, n_ret);
-            for i = 1:n_ret
-                s = valid_retained_subjs(i);
-                shuff_idx = randperm(cfg.num_ch);
-                shuffled_Xi(:, i) = Xi_aligned(shuff_idx, k, s);
-            end
-            
-            pair_sims_null = zeros(num_pairs, 1);
-            idx = 1;
-            for i = 1:n_ret
-                for j = (i+1):n_ret
-                    v1 = shuffled_Xi(:, i);
-                    v2 = shuffled_Xi(:, j);
-                    pair_sims_null(idx) = abs(dot(v1, v2)) / (norm(v1) * norm(v2));
-                    idx = idx + 1;
-                end
-            end
-            null_mean_sim(k, p_idx) = mean(pair_sims_null);
-        end
-    end
-    
-    for dest = dest_list
-        fprintf(dest, '\n--- Cross-Subject Component Consistency ---\n');
-        fprintf(dest, 'Direction | True Sim | 95%% Null Thresh | p-value | Significance\n');
-        fprintf(dest, '---------------------------------------------------------------\n');
-    end
-    for k = 1:cfg.m
-        p_vals(k) = (1 + sum(null_mean_sim(k, :) >= true_mean_sim(k))) / (1 + n_perms);
-        thresh_95(k) = prctile(null_mean_sim(k, :), 95);
-        if p_vals(k) < 0.001, sig_str = '***';
-        elseif p_vals(k) < 0.01, sig_str = '**';
-        elseif p_vals(k) < 0.05, sig_str = '*';
-        else, sig_str = 'ns'; end
-        for dest = dest_list
-            fprintf(dest, 'Xi_%d      | %.3f    | %.3f           | %.4f  | %s\n', ...
-                k, true_mean_sim(k), thresh_95(k), p_vals(k), sig_str);
-        end
-    end
-    for dest = dest_list
-        fprintf(dest, '---------------------------------------------------------------\n');
-    end
-    
-    figC = figure('Position', [150, 150, 1400, 600], 'Name', sprintf('Permutation Test: %s', band_name), 'Visible', 'off');
-    t = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
-    title(t, sprintf('Cross-Subject Consistency: Null vs True (%s | %s, n=%d)', band_name, cfg.ref_cond, n_ret), 'FontSize', 26, 'FontWeight', 'bold');
+   % =====================================================================
+   %% CHECKPOINT 1 (B): PERMUTATION TEST FIGURE WITH NON-OVERLAPPING LABELS
+    % =====================================================================
+    figC_perm = figure('Position', [150, 150, 1550, 700], 'Color', 'w', ...
+        'Name', sprintf('Permutation Test: %s', band_name), 'Visible', 'off');
+    t_perm = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    title(t_perm, sprintf('Cross-Subject Consistency: Null vs True (%s Universal Basis, n=%d)', ...
+        band_name, n_ret), 'FontSize', 24, 'FontWeight', 'bold');
     
     for k = 1:cfg.m
         nexttile; hold on;
-        histogram(null_mean_sim(k, :), 30, 'Normalization', 'probability', 'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none');
-        xline(thresh_95(k), 'k--', 'LineWidth', 1.5, 'Label', '95% Thresh', 'LabelOrientation', 'horizontal', 'FontSize', 18);
-        if p_vals(k) < 0.05, line_color = [0.8 0.1 0.1]; else, line_color = [0.2 0.2 0.2]; end
-        xline(true_mean_sim(k), '-', 'Color', line_color, 'LineWidth', 2.5, 'Label', 'True Sim', 'LabelOrientation', 'horizontal', 'FontSize', 18);
-        title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 24);
-        if ismember(k, [1, 4]), ylabel('Probability', 'FontSize', 20); end
-        xlim([0, max(max(null_mean_sim(k, :)), true_mean_sim(k)) * 1.1]);
-        grid on; box on;
+        set(gca, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.2, 'TickDir', 'out');
+        
+        % 1. Null distribution histogram across 1,000 electrode permutations
+        histogram(null_mean_sim(k, :), 30, 'Normalization', 'probability', ...
+            'FaceColor', [0.72 0.72 0.72], 'EdgeColor', 'none');
+        
+        % 2. 95% One-tailed Null Threshold: Positioned strictly at TOP, LEFT of dashed line
+        xline(thresh_95(k), 'k--', ...
+            'LineWidth', 1.8, ...
+            'Label', '95% Thresh', ...
+            'LabelOrientation', 'horizontal', ...
+            'LabelVerticalAlignment', 'top', ...
+            'LabelHorizontalAlignment', 'left', ...
+            'FontSize', 15);
+        
+        % 3. True Observed Mean Similarity: Shifted DOWN to MIDDLE, LEFT of solid line
+        if p_vals(k) < 0.05
+            line_color = [0.82 0.12 0.12]; % Crimson Red for statistically significant modes
+        else
+            line_color = [0.25 0.25 0.25]; % Charcoal Gray for non-significant modes
+        end
+        
+        xline(true_mean_sim(k), '-', ...
+            'Color', line_color, ...
+            'LineWidth', 2.6, ...
+            'Label', 'True Sim', ...
+            'LabelOrientation', 'horizontal', ...
+            'LabelVerticalAlignment', 'middle', ...
+            'LabelHorizontalAlignment', 'left', ...
+            'FontSize', 15);
+        
+        title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 20, 'FontWeight', 'bold');
+        
+        % Axis typography
+        if k >= 4
+            xlabel('Mean Abs. Cosine Similarity', 'FontSize', 17, 'FontWeight', 'bold');
+        end
+        if ismember(k, [1, 4])
+            ylabel('Probability', 'FontSize', 18, 'FontWeight', 'bold');
+        end
+        
+        % Headroom ceiling preventing right-edge clipping
+        xlim([0, max([max(null_mean_sim(k, :)), true_mean_sim(k)]) * 1.18]);
+        grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
+        box on;
     end
+    
     save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
-    try saveas(figC, save_file_perm); catch, end
-    close(figC);
+    try
+        exportgraphics(figC_perm, save_file_perm, 'Resolution', 600);
+    catch
+        saveas(figC_perm, save_file_perm);
+    end
+    close(figC_perm);
 
     % ------------------------------------------------------------------
     %% CHECKPOINT 2, 3a & 3b: ALL RETAINED SUBJECTS TABLES & FIGURES
@@ -2500,7 +2285,9 @@ end
 
 xline(cfg.m, 'k--', 'LineWidth', 2, 'HandleVisibility', 'off');
 yline(85, 'r:', 'LineWidth', 2, 'DisplayName', '85% Variance Threshold');
-plot(cfg.m, 85, 'rp', 'MarkerSize', 15, 'MarkerFaceColor', 'r', 'HandleVisibility', 'off');
+plot(cfg.m, aggregate_spectra.Raw(cfg.m), 'rp', 'MarkerSize', 15, 'MarkerFaceColor', 'r', 'HandleVisibility', 'off');
+text(cfg.m + 0.2, 70, sprintf('Truncation at m=%d\n(p < 0.05 consistency)', cfg.m), ...
+    'FontSize', 22, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w');
 
 xline(2, ':', 'Color', [0.4940 0.1840 0.5560], 'LineWidth', 2, 'HandleVisibility', 'off');
 text(2.2, 50, 'Beta/Alpha intrinsic 2D manifold (p < 0.05)', ...
@@ -3048,7 +2835,7 @@ for g = 1:length(subj_group_names)
             c_idx = erp_conds_idx(i);
             
             rng(42); 
-            x_jitter = i + (rand(1, cfg.m) - 0.5) * 0.4; 
+            x_jitter = i + (rand(1, cfg.m) - 0.5) * 0.35; 
             
             scatter(x_jitter, lat_m(c_idx, :), 100, colors_conds(c_idx, :), 'filled', ...
                 'MarkerEdgeColor', 'k', 'DisplayName', clean_name(cfg.all_conds{c_idx}));
@@ -3289,7 +3076,7 @@ for b = 1:length(plot_bands)
         g_str  = sprintf('%.2f +/- %.2f (p=%.3f)', mean(g_vals,'omitnan'), std(g_vals,0,'omitnan')/sqrt(length(g_vals)), p_g);
         
         % 2. Geometry range across Xi_1..Xi_6
-        lr_means = mean(squeeze(LR_mat(c_i, :, :)), 2, 'omitnan');
+        lr_means = mean(squeeze(LR_mat(c_i, 1:cfg.m, :)), 2, 'omitnan');
         geom_str = sprintf('[%+.2f, %+.2f]', min(lr_means), max(lr_means));
         
         % 3. Latency shift (only for stimulus-delivered P1, P2_500, P3_500)
