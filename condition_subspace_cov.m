@@ -871,13 +871,168 @@ for band_idx = 1:length(bands_to_process)
     close(figB);
 
     % ------------------------------------------------------------------
-    %% CHECKPOINT 1 (B): Cross-Subject Consistency Permutation Test
+    %% 1. COMPUTE PAIRWISE COSINE SIMILARITY & DELIVERABLE C HEATMAPS
+    % ------------------------------------------------------------------
+    n_ret = length(valid_retained_subjs); % <--- DEFINES n_ret HERE
+    subj_subj_sim = nan(n_ret, n_ret, cfg.m);
+    
+    for k = 1:cfg.m
+        for idx1 = 1:n_ret
+            s1 = valid_retained_subjs(idx1);
+            for idx2 = 1:n_ret
+                s2 = valid_retained_subjs(idx2);
+                subj_subj_sim(idx1, idx2, k) = abs(dot(Xi_aligned(:, k, s1), Xi_aligned(:, k, s2)));
+            end
+        end
+    end
+    
+    % Render 6-panel similarity figure (Deliverable C)
+    figC_sim = figure('Position', [100, 100, 320 * cfg.m + 120, 420], 'Color', 'w', 'Visible', 'off');
+    tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
+    
+    for k = 1:cfg.m
+        nexttile;
+        imagesc(subj_subj_sim(:, :, k));
+        colormap('jet'); clim([0 1]); axis square;
+        set(gca, 'FontSize', 18, 'FontWeight', 'bold', 'LineWidth', 1.2);
+        title(sprintf('\\xi_%d', k), 'FontSize', 28, 'FontWeight', 'bold');
+        
+        if k == 1
+            ylabel('Subject Index', 'FontSize', 24, 'FontWeight', 'bold');
+        else
+            yticklabels({});
+        end
+        xlabel('Subject Index', 'FontSize', 24, 'FontWeight', 'bold');
+        xticks([1, n_ret]); yticks([1, n_ret]);
+    end
+    
+    cb_sim = colorbar; 
+    cb_sim.Layout.Tile      = 'east'; 
+    cb_sim.FontSize         = 18;
+    cb_sim.Label.String     = 'Absolute Cosine Similarity'; 
+    cb_sim.Label.FontSize   = 22;
+    cb_sim.Label.FontWeight = 'bold';
+    
+    sgtitle(sprintf('Cross-Subject Component Consistency (%s Universal Basis, n=%d)', ...
+        band_name, n_ret), 'FontSize', 26, 'FontWeight', 'bold');
+    
+    save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim', 'valid_retained_subjs', 'Xi_aligned');
+    saveas(figC_sim, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); 
+    close(figC_sim);
+
+    % ------------------------------------------------------------------
+    %% 2. K-MEANS CLUSTERING (k=2 vs. k=3 ON DIRECTIONS 1 & 2)
+    % ------------------------------------------------------------------
+    % Extract 64-dimensional spatial features for each subject [Xi_1; Xi_2]
+    X_feat = zeros(n_ret, 2 * cfg.num_ch);
+    for i = 1:n_ret
+        s = valid_retained_subjs(i);
+        X_feat(i, :) = [Xi_aligned(:, 1, s)', Xi_aligned(:, 2, s)'];
+    end
+    
+    % Combined pairwise similarity matrix for Directions 1 and 2
+    sim_xi12 = 0.5 * (subj_subj_sim(:, :, 1) + subj_subj_sim(:, :, 2));
+    
+    % K-Means for k = 2
+    rng(42); % Seed for reproducible centroids
+    [idx_k2, ~] = kmeans(X_feat, 2, 'Replicates', 50, 'Distance', 'sqeuclidean');
+    if sum(idx_k2 == 1) < sum(idx_k2 == 2), idx_k2 = 3 - idx_k2; end % Cluster 1 = majority
+    sil_k2 = mean(silhouette(X_feat, idx_k2));
+    
+    % K-Means for k = 3
+    rng(42);
+    [idx_k3, ~] = kmeans(X_feat, 3, 'Replicates', 50, 'Distance', 'sqeuclidean');
+    [~, count_ord] = sort(histcounts(idx_k3, 1:4), 'descend');
+    remap = zeros(3, 1); for r_i = 1:3, remap(count_ord(r_i)) = r_i; end
+    idx_k3 = remap(idx_k3); % Cluster 1 = largest
+    sil_k3 = mean(silhouette(X_feat, idx_k3));
+    
+    % Permutation test for k=2 cluster separation (Between vs. Within Similarity)
+    same_m2 = (idx_k2 == idx_k2') & ~eye(n_ret);
+    diff_m2 = (idx_k2 ~= idx_k2');
+    obs_diff_k2 = mean(sim_xi12(same_m2)) - mean(sim_xi12(diff_m2));
+    null_diff_k2 = zeros(1000, 1);
+    for p_c = 1:1000
+        shuf_c2 = idx_k2(randperm(n_ret));
+        s_m = (shuf_c2 == shuf_c2') & ~eye(n_ret);
+        d_m = (shuf_c2 ~= shuf_c2');
+        null_diff_k2(p_c) = mean(sim_xi12(s_m)) - mean(sim_xi12(d_m));
+    end
+    p_k2_perm = (1 + sum(null_diff_k2 >= obs_diff_k2)) / 1001;
+    
+    for dest = dest_list
+        fprintf(dest, '\n--- K-MEANS SUBJECT CLUSTERING (DIRECTIONS 1 & 2) [%s] ---\n', upper(band_name));
+        fprintf(dest, '  * K=2 Solution (Silhouette = %.3f, Permutation p = %.4f):\n', sil_k2, p_k2_perm);
+        fprintf(dest, '      Cluster 1 (n=%d): Subjects %s\n', sum(idx_k2==1), mat2str(valid_retained_subjs(idx_k2==1)));
+        fprintf(dest, '      Cluster 2 (n=%d): Subjects %s\n', sum(idx_k2==2), mat2str(valid_retained_subjs(idx_k2==2)));
+        fprintf(dest, '  * K=3 Solution (Silhouette = %.3f):\n', sil_k3);
+        fprintf(dest, '      Cluster 1 (n=%d): Subjects %s\n', sum(idx_k3==1), mat2str(valid_retained_subjs(idx_k3==1)));
+        fprintf(dest, '      Cluster 2 (n=%d): Subjects %s\n', sum(idx_k3==2), mat2str(valid_retained_subjs(idx_k3==2)));
+        fprintf(dest, '      Cluster 3 (n=%d): Subjects %s\n', sum(idx_k3==3), mat2str(valid_retained_subjs(idx_k3==3)));
+    end
+    
+    % --- RENDER 3-PANEL FIGURE FOR AUDREY & ESLAM ---
+    figKMeans = figure('Position', [100, 100, 1550, 480], 'Color', 'w', 'Visible', 'off');
+    tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    
+    % Panel 1: K=2 Clustered Similarity Matrix
+    [~, ord_k2] = sort(idx_k2, 'ascend');
+    subjs_k2    = valid_retained_subjs(ord_k2);
+    nexttile; hold on;
+    imagesc(sim_xi12(ord_k2, ord_k2)); colormap('jet'); clim([0 1]); axis square;
+    set(gca, 'YDir', 'reverse', 'FontSize', 12, 'FontWeight', 'bold');
+    xline(sum(idx_k2==1) + 0.5, 'w--', 'LineWidth', 2.5);
+    yline(sum(idx_k2==1) + 0.5, 'w--', 'LineWidth', 2.5);
+    xticks(1:n_ret); xticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k2, 'UniformOutput', false)); xtickangle(45);
+    yticks(1:n_ret); yticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k2, 'UniformOutput', false));
+    title(sprintf('K=2 Clustered Sim (Sil = %.2f)', sil_k2), 'FontSize', 16, 'FontWeight', 'bold');
+    
+    % Panel 2: K=3 Clustered Similarity Matrix
+    [~, ord_k3] = sort(idx_k3, 'ascend');
+    subjs_k3    = valid_retained_subjs(ord_k3);
+    nexttile; hold on;
+    imagesc(sim_xi12(ord_k3, ord_k3)); colormap('jet'); clim([0 1]); axis square;
+    set(gca, 'YDir', 'reverse', 'FontSize', 12, 'FontWeight', 'bold');
+    xline(sum(idx_k3==1) + 0.5, 'w--', 'LineWidth', 2.5);
+    yline(sum(idx_k3==1) + 0.5, 'w--', 'LineWidth', 2.5);
+    xline(sum(idx_k3<=2) + 0.5, 'w--', 'LineWidth', 2.5);
+    yline(sum(idx_k3<=2) + 0.5, 'w--', 'LineWidth', 2.5);
+    xticks(1:n_ret); xticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k3, 'UniformOutput', false)); xtickangle(45);
+    yticks(1:n_ret); yticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_k3, 'UniformOutput', false));
+    title(sprintf('K=3 Clustered Sim (Sil = %.2f)', sil_k3), 'FontSize', 16, 'FontWeight', 'bold');
+    
+    % Panel 3: 2D Spatial Embedding Scatter Plot (PCA of X_feat)
+    [~, score_2d] = pca(X_feat, 'NumComponents', 2);
+    nexttile; hold on; box on; grid on;
+    set(gca, 'FontSize', 14, 'FontWeight', 'bold');
+    c_k2 = {[0.12 0.47 0.71], [0.84 0.15 0.16]}; % Blue = Majority, Red = Divergent
+    for i = 1:n_ret
+        s_id = valid_retained_subjs(i);
+        scatter(score_2d(i, 1), score_2d(i, 2), 140, 'filled', ...
+            'MarkerFaceColor', c_k2{idx_k2(i)}, 'MarkerEdgeColor', 'k', 'LineWidth', 1.2);
+        text(score_2d(i, 1) + 0.02, score_2d(i, 2) + 0.02, sprintf('S%d', s_id), ...
+            'FontSize', 13, 'FontWeight', 'bold', 'Color', [0.15 0.15 0.15]);
+    end
+    xlabel('Spatial Component 1', 'FontSize', 14, 'FontWeight', 'bold');
+    ylabel('Spatial Component 2', 'FontSize', 14, 'FontWeight', 'bold');
+    title('2D Embedding (\xi_1 & \xi_2)', 'FontSize', 16, 'FontWeight', 'bold');
+    
+    cb_km = colorbar; cb_km.Layout.Tile = 'east'; 
+    cb_km.Label.String = 'Absolute Cosine Similarity'; cb_km.FontSize = 14;
+    sgtitle(sprintf('Universal Basis Subject Clustering: K-Means (k=2 vs. k=3, %s)', band_name), ...
+        'FontSize', 20, 'FontWeight', 'bold');
+    
+    saveas(figKMeans, fullfile(group_dir, 'Deliverable_C_KMeans_Clustering_K2_K3.png'));
+    close(figKMeans);
+
+    % ------------------------------------------------------------------
+    %% 3. CROSS-SUBJECT CONSISTENCY PERMUTATION TEST
     % ------------------------------------------------------------------
     for dest = dest_list
         fprintf(dest, '\nRunning 1,000-iteration Spatial Permutation Test for Consistency...\n');
     end
-    n_perms = 1000;
-    num_pairs = (n_ret * (n_ret - 1)) / 2;
+    n_perms       = 1000;
+    num_pairs     = (n_ret * (n_ret - 1)) / 2;
     true_mean_sim = zeros(cfg.m, 1);
     null_mean_sim = zeros(cfg.m, n_perms);
     p_vals        = zeros(cfg.m, 1);
@@ -943,22 +1098,21 @@ for band_idx = 1:length(bands_to_process)
         fprintf(dest, '---------------------------------------------------------------\n');
     end
     
-    % Enlarged figure canvas to [1500 x 700] for clean typography spacing
-    figC = figure('Position', [150, 150, 1500, 700], 'Color', 'w', ...
+    % Render 6-panel Permutation Test Figure with non-overlapping labels
+    figC_perm = figure('Position', [150, 150, 1500, 700], 'Color', 'w', ...
         'Name', sprintf('Permutation Test: %s', band_name), 'Visible', 'off');
-    t = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
-    title(t, sprintf('Cross-Subject Consistency: Null vs True (%s Universal Basis, n=%d)', ...
+    t_perm = tiledlayout(2, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
+    title(t_perm, sprintf('Cross-Subject Consistency: Null vs True (%s Universal Basis, n=%d)', ...
         band_name, n_ret), 'FontSize', 24, 'FontWeight', 'bold');
     
     for k = 1:cfg.m
         nexttile; hold on;
         set(gca, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.2, 'TickDir', 'out');
         
-        % Null distribution histogram
         histogram(null_mean_sim(k, :), 30, 'Normalization', 'probability', ...
             'FaceColor', [0.72 0.72 0.72], 'EdgeColor', 'none');
         
-        % 95% Null Threshold line (Label at TOP, aligned to LEFT of line)
+        % 95% Null line (Label at TOP, aligned to LEFT of line)
         xline(thresh_95(k), 'k--', ...
             'LineWidth', 1.8, ...
             'Label', '95% Thresh', ...
@@ -967,11 +1121,11 @@ for band_idx = 1:length(bands_to_process)
             'LabelHorizontalAlignment', 'left', ...
             'FontSize', 15);
         
-        % True Similarity line (Label LOWERED to MIDDLE, aligned to RIGHT of line)
+        % True Sim line (Label LOWERED to MIDDLE, aligned to RIGHT of line)
         if p_vals(k) < 0.05
-            line_color = [0.82 0.12 0.12]; % Crimson Red for significant
+            line_color = [0.82 0.12 0.12];
         else
-            line_color = [0.25 0.25 0.25]; % Dark Gray for non-significant
+            line_color = [0.25 0.25 0.25];
         end
         xline(true_mean_sim(k), '-', ...
             'Color', line_color, ...
@@ -984,12 +1138,9 @@ for band_idx = 1:length(bands_to_process)
         
         title(sprintf('\\xi_%d (p = %.3f)', k, p_vals(k)), 'FontSize', 20, 'FontWeight', 'bold');
         
-        % Add X-axis label on bottom row (k = 4, 5, 6)
         if k >= 4
             xlabel('Mean Abs. Cosine Similarity', 'FontSize', 17, 'FontWeight', 'bold');
         end
-        
-        % Add Y-axis label on left column (k = 1, 4)
         if ismember(k, [1, 4])
             ylabel('Probability', 'FontSize', 18, 'FontWeight', 'bold');
         end
@@ -1001,75 +1152,11 @@ for band_idx = 1:length(bands_to_process)
     
     save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
     try
-        exportgraphics(figC, save_file_perm, 'Resolution', 600);
+        exportgraphics(figC_perm, save_file_perm, 'Resolution', 600);
     catch
-        saveas(figC, save_file_perm);
+        saveas(figC_perm, save_file_perm);
     end
-    close(figC);
-
-    % ------------------------------------------------------------------
-    %% SUBJECT CLUSTERING ON DIRECTIONS 1 & 2 (FOR AUDREY & ESLAM REVIEW)
-    % ------------------------------------------------------------------
-    % Combine similarity across Directions 1 and 2
-    sim_xi12 = 0.5 * (subj_subj_sim(:, :, 1) + subj_subj_sim(:, :, 2));
-    dist_mat = 1 - sim_xi12;
-    dist_vec = squareform(dist_mat - diag(diag(dist_mat))); % Pairwise cosine distance vector
-    Z_link   = linkage(dist_vec, 'average');
-    clust_id = cluster(Z_link, 'maxclust', 2);
-    
-    % Ensure Cluster 1 is always the larger (normative majority) cluster
-    if sum(clust_id == 1) < sum(clust_id == 2)
-        clust_id = 3 - clust_id;
-    end
-    [~, ord_clust] = sort(clust_id, 'ascend');
-    subjs_ordered  = valid_retained_subjs(ord_clust);
-    
-    % Permutation test for within-cluster vs. between-cluster similarity
-    same_mask = (clust_id == clust_id') & ~eye(n_ret);
-    diff_mask = (clust_id ~= clust_id');
-    obs_clust_diff = mean(sim_xi12(same_mask)) - mean(sim_xi12(diff_mask));
-    null_clust_diff = zeros(1000, 1);
-    for p_c = 1:1000
-        perm_c = randperm(n_ret);
-        c_shuf = clust_id(perm_c);
-        s_m = (c_shuf == c_shuf') & ~eye(n_ret);
-        d_m = (c_shuf ~= c_shuf');
-        null_clust_diff(p_c) = mean(sim_xi12(s_m)) - mean(sim_xi12(d_m));
-    end
-    p_clust_perm = (1 + sum(null_clust_diff >= obs_clust_diff)) / 1001;
-    
-    for dest = dest_list
-        fprintf(dest, '\n--- UNIVERSAL BASIS SUBJECT CLUSTERING (DIRECTIONS 1 & 2) [%s] ---\n', upper(band_name));
-        fprintf(dest, '  * Cluster 1 (n=%d): Subjects %s\n', sum(clust_id==1), mat2str(valid_retained_subjs(clust_id==1)));
-        fprintf(dest, '  * Cluster 2 (n=%d): Subjects %s\n', sum(clust_id==2), mat2str(valid_retained_subjs(clust_id==2)));
-        fprintf(dest, '  * Within vs. Between Cluster Sim Diff = %+.3f (Permutation p = %.4f)\n', obs_clust_diff, p_clust_perm);
-    end
-    
-    % Plot Clustered Similarity Matrices for Audrey & Eslam
-    figClust = figure('Position', [100, 100, 1400, 450], 'Color', 'w', 'Visible', 'off');
-    tiledlayout(1, 3, 'TileSpacing', 'compact', 'Padding', 'normal');
-    titles_cl = {'\xi_1 Similarity (Clustered)', '\xi_2 Similarity (Clustered)', 'Combined (\xi_1+\xi_2)/2 (Clustered)'};
-    mats_cl   = {subj_subj_sim(ord_clust, ord_clust, 1), subj_subj_sim(ord_clust, ord_clust, 2), sim_xi12(ord_clust, ord_clust)};
-    n_c1      = sum(clust_id == 1);
-    
-    for p_i = 1:3
-        nexttile; hold on;
-        imagesc(mats_cl{p_i}); colormap('jet'); clim([0 1]); axis square; set(gca, 'YDir', 'reverse', 'FontSize', 14);
-        % Draw white boundary line separating Cluster 1 and Cluster 2
-        if n_c1 < n_ret
-            xline(n_c1 + 0.5, 'w--', 'LineWidth', 2.5);
-            yline(n_c1 + 0.5, 'w--', 'LineWidth', 2.5);
-        end
-        xticks(1:n_ret); xticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_ordered, 'UniformOutput', false)); xtickangle(45);
-        yticks(1:n_ret); yticklabels(arrayfun(@(x) sprintf('S%d', x), subjs_ordered, 'UniformOutput', false));
-        xlim([0.5, n_ret + 0.5]); ylim([0.5, n_ret + 0.5]);
-        title(titles_cl{p_i}, 'FontSize', 18, 'FontWeight', 'bold');
-    end
-    cb_cl = colorbar; cb_cl.Layout.Tile = 'east'; cb_cl.Label.String = 'Abs. Cosine Similarity'; cb_cl.FontSize = 14;
-    sgtitle(sprintf('Universal Basis Subject Clustering (%s): Cluster 1 (n=%d) vs. Cluster 2 (n=%d), Perm p = %.3f', ...
-        band_name, sum(clust_id==1), sum(clust_id==2), p_clust_perm), 'FontSize', 20, 'FontWeight', 'bold');
-    saveas(figClust, fullfile(group_dir, 'Deliverable_C_Clustered_Similarity_Xi1_Xi2.png'));
-    close(figClust);
+    close(figC_perm);
 
     % ------------------------------------------------------------------
     %% SPLIT-HALF UNIVERSAL BASIS & UNBIASED CONDITION PROJECTIONS
