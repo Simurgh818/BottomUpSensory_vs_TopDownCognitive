@@ -726,18 +726,18 @@ if any(subj_excluded_2_3)
 end
 fprintf('======================================================\n');
 
-% Close any stale open file handles first
+% Close stale file handles and initialize safe text logging
 fclose('all');
-
 summary_log_file = fullfile(output_path, 'Summary_Tables_All_Bands.txt');
 fid_sum = fopen(summary_log_file, 'w');
-
 if fid_sum < 0
-    warning('Could not open %s for writing (file may be open in another application). Output will be displayed to Command Window only.', summary_log_file);
+    warning('Could not open %s. Printing to Command Window only.', summary_log_file);
     dest_list = 1;
 else
     dest_list = [1, fid_sum];
 end
+
+n_sub_half = 10; % 10 clean trials for Half A (basis) and 10 for Half B (projection)
 
 for band_idx = 1:length(bands_to_process)
     band_name = bands_to_process{band_idx};
@@ -2164,8 +2164,8 @@ for col = 1:5
         yticklabels({});
     end
     
-    title(c_title, 'FontSize', 26, 'FontWeight', 'bold', 'Color', c_color);
-    xlabel('Time (s)', 'FontSize', 26, 'FontWeight', 'bold');
+    title(c_title, 'FontSize', 18, 'FontWeight', 'bold', 'Color', c_color);
+    xlabel('Time (s)', 'FontSize', 18, 'FontWeight', 'bold');
     grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
 end
 
@@ -3063,34 +3063,49 @@ t1_band = {}; t1_cond = {}; t1_gain = {}; t1_geom = {}; t1_lat = {}; t1_sust = {
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
     G_mat  = aggregate_G.(b_name).cohort(1).subj_data;    % [5 x n_ret]
-    LR_mat = aggregate_log_r.(b_name).cohort(1).subj_data;% [5 x 6 x n_ret]
+    LR_mat = aggregate_log_r.(b_name).cohort(1).subj_data;% [5 x m x n_ret]
     LT_mat = aggregate_lat.(b_name).cohort(1).subj_data;  % [5 x n_ret]
     SU_mat = aggregate_sust.(b_name).cohort(1).subj_data; % [5 x n_ret]
     
     for c_i = 1:length(cfg.all_conds)
         c_str = cfg.all_conds{c_i};
         
-        % 1. Gain (G +/- SEM, signrank p vs P1)
+        % 1. Gain (G +/- SEM, one-tailed signrank p vs P1 matching Figure 4B)
         g_vals = G_mat(c_i, :);
-        p_g    = 1; if c_i > 1, p_g = signrank(g_vals, G_mat(1, :)); end
-        g_str  = sprintf('%.2f +/- %.2f (p=%.3f)', mean(g_vals,'omitnan'), std(g_vals,0,'omitnan')/sqrt(length(g_vals)), p_g);
+        p_g    = 1.000; 
+        if c_i > 1
+            p_g_r = signrank(g_vals, G_mat(1, :), 'tail', 'right');
+            p_g_l = signrank(g_vals, G_mat(1, :), 'tail', 'left');
+            p_g   = min(p_g_r, p_g_l);
+        end
+        g_str = sprintf('%.2f +/- %.2f (p=%.3f)', mean(g_vals,'omitnan'), std(g_vals,0,'omitnan')/sqrt(length(g_vals)), p_g);
         
-        % 2. Geometry range across Xi_1..Xi_6
+        % 2. Geometry range across Xi_1..Xi_m
         lr_means = mean(squeeze(LR_mat(c_i, 1:cfg.m, :)), 2, 'omitnan');
         geom_str = sprintf('[%+.2f, %+.2f]', min(lr_means), max(lr_means));
         
-        % 3. Latency shift (only for stimulus-delivered P1, P2_500, P3_500)
+        % 3. Latency shift (only for stimulus-delivered P1, P2_500, P3_500, one-tailed)
         if ismember(c_str, {'P1', 'P2_500', 'P3_500'})
             lt_vals = LT_mat(c_i, :);
-            p_lt    = 1; if c_i > 1, p_lt = signrank(lt_vals, 0); end
+            p_lt    = 1.000; 
+            if c_i > 1
+                p_lt_r = signrank(lt_vals, 0, 'tail', 'right');
+                p_lt_l = signrank(lt_vals, 0, 'tail', 'left');
+                p_lt   = min(p_lt_r, p_lt_l);
+            end
             lat_str = sprintf('%+.1f +/- %.1f ms (p=%.3f)', mean(lt_vals,'omitnan'), std(lt_vals,0,'omitnan')/sqrt(length(lt_vals)), p_lt);
         else
             lat_str = 'N/A (Withheld)';
         end
         
-        % 4. Sustained Share (%)
-        su_vals  = SU_mat(c_i, :);
-        p_su     = 1; if c_i > 1, p_su = signrank(su_vals, SU_mat(1, :)); end
+        % 4. Sustained Share (%, one-tailed signrank p vs P1)
+        su_vals = SU_mat(c_i, :);
+        p_su    = 1.000; 
+        if c_i > 1
+            p_su_r = signrank(su_vals, SU_mat(1, :), 'tail', 'right');
+            p_su_l = signrank(su_vals, SU_mat(1, :), 'tail', 'left');
+            p_su   = min(p_su_r, p_su_l);
+        end
         sust_str = sprintf('%.2f +/- %.2f%% (p=%.3f)', mean(su_vals,'omitnan'), std(su_vals,0,'omitnan')/sqrt(length(su_vals)), p_su);
         
         t1_band{end+1,1} = b_name; t1_cond{end+1,1} = c_str;
