@@ -843,7 +843,13 @@ for band_idx = 1:length(bands_to_process)
     cb_B.Label.FontWeight = 'bold'; cb_B.FontSize = 18;
     
     save_file_B = fullfile(group_dir, 'Deliverable_B_Topos');
-    try saveas(figB, [save_file_B, '.png']); saveas(figB, [save_file_B, '.svg']); catch, end
+    try
+        exportgraphics(figB, [save_file_B, '.png'], 'Resolution', 600);
+        saveas(figB, [save_file_B, '.svg']);
+        print(figB, [save_file_B, '.eps'], '-depsc');
+    catch
+        saveas(figB, [save_file_B, '.png']);
+    end
     close(figB);
 
     % ------------------------------------------------------------------
@@ -887,7 +893,14 @@ for band_idx = 1:length(bands_to_process)
         'FontSize', 26, 'FontWeight', 'bold');
     
     save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim', 'valid_retained_subjs', 'Xi_aligned');
-    saveas(figC_sim, fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim.png')); 
+    save_file_C_sim = fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim');
+    try
+        exportgraphics(figC_sim, [save_file_C_sim, '.png'], 'Resolution', 600);
+        saveas(figC_sim, [save_file_C_sim, '.svg']);
+        print(figC_sim, [save_file_C_sim, '.eps'], '-depsc');
+    catch
+        saveas(figC_sim, [save_file_C_sim, '.png']);
+    end
     close(figC_sim);
 
     % ------------------------------------------------------------------
@@ -974,7 +987,14 @@ for band_idx = 1:length(bands_to_process)
     cb_km = colorbar; cb_km.Layout.Tile = 'east'; cb_km.Label.String = 'Absolute Cosine Similarity'; cb_km.FontSize = 14;
     sgtitle(sprintf('Universal Basis Subject Clustering: K-Means (k=2 vs. k=3, %s)', band_name), ...
         'FontSize', 20, 'FontWeight', 'bold');
-    saveas(figKMeans, fullfile(group_dir, 'Deliverable_C_KMeans_Clustering_K2_K3.png'));
+    save_file_KMeans = fullfile(group_dir, 'Deliverable_C_KMeans_Clustering_K2_K3');
+    try
+        exportgraphics(figKMeans, [save_file_KMeans, '.png'], 'Resolution', 600);
+        saveas(figKMeans, [save_file_KMeans, '.svg']);
+        print(figKMeans, [save_file_KMeans, '.eps'], '-depsc');
+    catch
+        saveas(figKMeans, [save_file_KMeans, '.png']);
+    end
     close(figKMeans);
 
     % ------------------------------------------------------------------
@@ -1106,11 +1126,13 @@ for band_idx = 1:length(bands_to_process)
         box on;
     end
     
-    save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test.png');
+    save_file_perm = fullfile(group_dir, 'Deliverable_C_Permutation_Test');
     try
-        exportgraphics(figC_perm, save_file_perm, 'Resolution', 600);
+        exportgraphics(figC_perm, [save_file_perm, '.png'], 'Resolution', 600);
+        saveas(figC_perm, [save_file_perm, '.svg']);
+        print(figC_perm, [save_file_perm, '.eps'], '-depsc');
     catch
-        saveas(figC_perm, save_file_perm);
+        saveas(figC_perm, [save_file_perm, '.png']);
     end
     close(figC_perm);
 
@@ -1694,7 +1716,9 @@ for band_idx = 1:length(bands_to_process)
             save_file_A = fullfile(group_dir, ...
                 sprintf('Checkpoint3b_GroupA_Summary_Xi%d_%s.png', k, g_name));
             try
-                exportgraphics(figA, save_file_A, 'Resolution', 300);
+                exportgraphics(figA, save_file_A, 'Resolution', 600);
+                saveas(figA, [save_file_A, '.svg']);
+                print(figA, [save_file_A, '.eps'], '-depsc');
             catch
                 try saveas(figA, save_file_A); catch, warning('Could not save %s.', save_file_A); end
             end
@@ -1797,7 +1821,9 @@ for band_idx = 1:length(bands_to_process)
             save_file_B = fullfile(group_dir, ...
                 sprintf('Checkpoint3b_GroupB_Summary_Xi%d_%s.png', k, g_name));
             try
-                exportgraphics(figB, save_file_B, 'Resolution', 300);
+                exportgraphics(figB, save_file_B, 'Resolution', 600);
+                saveas(figB, [save_file_B, '.svg']);
+                print(figB, [save_file_B, '.eps'], '-depsc');
             catch
                 try saveas(figB, save_file_B); catch, warning('Could not save %s.', save_file_B); end
             end
@@ -2411,45 +2437,54 @@ plot_group_power_index_v2(pow_groups.P1, pow_groups.P2_2000, t_centers_2, ...
 %% =========================================================================
 disp('Generating Figure 3B: Aggregate Cumulative Variance Scree Plot...');
 
-fig3B = figure('Position', [100, 100, 1200, 800], 'Name', 'Figure 3B: Scree Plot');
+fig3B = figure('Position', [100, 100, 1200, 800], 'Name', 'Figure 3B: Scree Plot', 'Color', 'w');
 hold on; 
-set(gca, 'FontSize', 22);
+set(gca, 'FontSize', 22, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
 
-bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
+bands       = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_labels = {'Raw Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
-colors = {[0 0 0], [0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4940 0.1840 0.5560]};
-markers = {'o', 's', '^', 'd'};
+colors      = {[0 0 0], [0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4940 0.1840 0.5560]};
+markers     = {'o', 's', '^', 'd'};
 
 for b = 1:length(bands)
     if isfield(aggregate_spectra, bands{b})
         plot(1:cfg.num_ch, aggregate_spectra.(bands{b}), ['-' markers{b}], ...
-             'Color', colors{b}, 'LineWidth', 2.5, 'MarkerSize', 8, ...
+             'Color', colors{b}, 'LineWidth', 2.8, 'MarkerSize', 9, ...
              'MarkerFaceColor', colors{b}, 'DisplayName', band_labels{b});
     end
 end
 
+% Reference lines and truncation marker
 xline(cfg.m, 'k--', 'LineWidth', 2, 'HandleVisibility', 'off');
-yline(85, 'r:', 'LineWidth', 2, 'DisplayName', '85% Variance Threshold');
-plot(cfg.m, aggregate_spectra.Raw(cfg.m), 'rp', 'MarkerSize', 15, 'MarkerFaceColor', 'r', 'HandleVisibility', 'off');
-text(cfg.m + 0.2, 70, sprintf('Truncation at m=%d\n(p < 0.05 consistency)', cfg.m), ...
-    'FontSize', 22, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w');
+yline(85, 'r:', 'LineWidth', 2, 'DisplayName', '85% Reference Line');
+plot(cfg.m, aggregate_spectra.Raw(cfg.m), 'rp', 'MarkerSize', 16, 'MarkerFaceColor', 'r', 'HandleVisibility', 'off');
 
+% --- SINGLE UNIFIED TRUNCATION LABEL (22 pt, smaller size, no overlap) ---
+text(cfg.m + 0.25, 75, sprintf('Truncation at m=%d\n(73.2-92.1%% variance explained)', cfg.m), ...
+    'FontSize', 22, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w', 'Margin', 3);
+
+% Beta/Alpha intrinsic 2D manifold label (22 pt, matched smaller size)
 xline(2, ':', 'Color', [0.4940 0.1840 0.5560], 'LineWidth', 2, 'HandleVisibility', 'off');
-text(2.2, 50, 'Beta/Alpha intrinsic 2D manifold (p < 0.05)', ...
-    'FontSize', 26, 'Color', [0.4940 0.1840 0.5560], 'FontWeight', 'bold', 'BackgroundColor', 'w');
-    
-text(cfg.m + 0.2, 70, sprintf('Truncation at m=%d\n(>85%% variance)', cfg.m), ...
-    'FontSize', 26, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w');
-    
+text(2.20, 46, 'Beta/Alpha intrinsic 2D manifold (63.4%, p < 0.05)', ...
+    'FontSize', 22, 'Color', [0.4940 0.1840 0.5560], 'FontWeight', 'bold', 'BackgroundColor', 'w', 'Margin', 2);
+
 xlim([0.5, 15]); xticks(1:15); ylim([0, 100]); yticks(0:10:100);
 xlabel('Number of Components (Spatial Directions)', 'FontSize', 24, 'FontWeight', 'bold');
 ylabel('Cumulative Variance Explained (%)', 'FontSize', 24, 'FontWeight', 'bold');
 title('Intrinsic Dimensionality Across Frequency Bands', 'FontSize', 28, 'FontWeight', 'bold');
 
-lgd = legend('Location', 'southeast'); lgd.FontSize = 20; grid on;
+lgd = legend('Location', 'southeast'); 
+lgd.FontSize = 20; 
+grid on; 
+box on;
 
 save_file_3b = fullfile(output_path, 'Figure_3B_Aggregate_ScreePlot');
-try pause(0.5); saveas(fig3B, [save_file_3b, '.svg']); saveas(fig3B, [save_file_3b, '.png']); catch, end
+try 
+    pause(0.5); 
+    exportgraphics(fig3B, [save_file_3b, '.png'], 'Resolution', 600);
+    saveas(fig3B, [save_file_3b, '.svg']); 
+catch
+end
 close(fig3B);
 
 %% =========================================================================
@@ -2512,7 +2547,9 @@ for g = 1:length(subj_group_names)
                 for k = 1:cfg.m
                     dist = squeeze(s_data(c_idx, k, :));
                     if length(dist) > 1 && ~all(isnan(dist))
-                        p_val = signrank(dist, 0);
+                        p_r = signrank(dist, 0, 'tail', 'right');
+                        p_l = signrank(dist, 0, 'tail', 'left');
+                        p_val = min(p_r, p_l);
                         if p_val < 0.05
                             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -2555,7 +2592,9 @@ for g = 1:length(subj_group_names)
                 for k = 1:cfg.m
                     dist = squeeze(s_data(c_idx, k, :));
                     if length(dist) > 1 && ~all(isnan(dist))
-                        p_val = signrank(dist, 0);
+                        p_r = signrank(dist, 0, 'tail', 'right');
+                        p_l = signrank(dist, 0, 'tail', 'left');
+                        p_val = min(p_r, p_l);
                         if p_val < 0.05
                             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -2577,8 +2616,13 @@ for g = 1:length(subj_group_names)
     sgtitle(sprintf('Subspace Redistribution Geometry — Raw (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
     
     save_file_5a_raw = fullfile(output_path, sprintf('Figure_5A_Raw_LogR_%s', fig_tags{g}));
-    try pause(0.5); saveas(fig5A_Raw, [save_file_5a_raw, '.svg']); saveas(fig5A_Raw, [save_file_5a_raw, '.png']); catch, end
-    close(fig5A_Raw);
+    try 
+        pause(0.5); 
+        exportgraphics(fig5A_Raw, [save_file_5a_raw, '.png'], 'Resolution', 600);
+        saveas(fig5A_Raw, [save_file_5a_raw, '.svg']);
+        print(fig5A_Raw, [save_file_5a_raw, '.eps'], '-depsc');
+    catch
+    end
     
     % =====================================================================
     % FIGURE 5A (PART 2): FILTERED ALPHA & BETA SIGNALS (2x2 GRID)
@@ -2611,7 +2655,9 @@ for g = 1:length(subj_group_names)
                 for k = 1:cfg.m
                     dist = squeeze(s_data(c_idx, k, :));
                     if length(dist) > 1 && ~all(isnan(dist))
-                        p_val = signrank(dist, 0);
+                        p_r = signrank(dist, 0, 'tail', 'right');
+                        p_l = signrank(dist, 0, 'tail', 'left');
+                        p_val = min(p_r, p_l);
                         if p_val < 0.05
                             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -2653,7 +2699,9 @@ for g = 1:length(subj_group_names)
                 for k = 1:cfg.m
                     dist = squeeze(s_data(c_idx, k, :));
                     if length(dist) > 1 && ~all(isnan(dist))
-                        p_val = signrank(dist, 0);
+                        p_r = signrank(dist, 0, 'tail', 'right');
+                        p_l = signrank(dist, 0, 'tail', 'left');
+                        p_val = min(p_r, p_l);
                         if p_val < 0.05
                             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -2695,7 +2743,9 @@ for g = 1:length(subj_group_names)
                 for k = 1:cfg.m
                     dist = squeeze(s_data(c_idx, k, :));
                     if length(dist) > 1 && ~all(isnan(dist))
-                        p_val = signrank(dist, 0);
+                        p_r = signrank(dist, 0, 'tail', 'right');
+                        p_l = signrank(dist, 0, 'tail', 'left');
+                        p_val = min(p_r, p_l);
                         if p_val < 0.05
                             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -2738,7 +2788,9 @@ for g = 1:length(subj_group_names)
                 for k = 1:cfg.m
                     dist = squeeze(s_data(c_idx, k, :));
                     if length(dist) > 1 && ~all(isnan(dist))
-                        p_val = signrank(dist, 0);
+                        p_r = signrank(dist, 0, 'tail', 'right');
+                        p_l = signrank(dist, 0, 'tail', 'left');
+                        p_val = min(p_r, p_l);
                         if p_val < 0.05
                             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -2760,7 +2812,13 @@ for g = 1:length(subj_group_names)
     sgtitle(sprintf('Subspace Redistribution Geometry — Alpha & Beta (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
     
     save_file_5a_ab = fullfile(output_path, sprintf('Figure_5A_AlphaBeta_LogR_%s', fig_tags{g}));
-    try pause(0.5); saveas(fig5A_AB, [save_file_5a_ab, '.svg']); saveas(fig5A_AB, [save_file_5a_ab, '.png']); catch, end
+    try 
+        pause(0.5); 
+        exportgraphics(fig5A_AB, [save_file_5a_ab, '.png'], 'Resolution', 600);
+        saveas(fig5A_AB, [save_file_5a_ab, '.svg']);
+        print(fig5A_AB, [save_file_5a_ab, '.eps'], '-depsc');
+    catch
+    end
     close(fig5A_AB);
 end
 
@@ -2939,7 +2997,13 @@ for g = 1:length(subj_group_names)
     sgtitle(sprintf('Global Subspace Gain Scaling (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
     
     save_file_5b = fullfile(output_path, sprintf('Figure_5B_MultiBand_Gain_%s', fig_tags{g}));
-    try pause(0.5); saveas(fig5B, [save_file_5b, '.svg']); saveas(fig5B, [save_file_5b, '.png']); catch, end
+    try 
+        pause(0.5); 
+        exportgraphics(fig5B, [save_file_5b, '.png'], 'Resolution', 600);
+        saveas(fig5B, [save_file_5b, '.svg']);
+        print(fig5B, [save_file_5b, '.eps'], '-depsc');
+    catch
+    end
     close(fig5B);
 end
 
@@ -3001,7 +3065,9 @@ for g = 1:length(subj_group_names)
                 lat_data = aggregate_lat.(b_name).cohort(g).subj_data(c_idx, :);
                 lat_data_clean = lat_data(~isnan(lat_data));
                 if length(lat_data_clean) > 1
-                    p_val = signrank(lat_data_clean, 0); 
+                    p_r = signrank(lat_data_clean, 0, 'tail', 'right');
+                    p_l = signrank(lat_data_clean, 0, 'tail', 'left');
+                    p_val = min(p_r, p_l);
                 else
                     p_val = 1;
                 end
@@ -3039,7 +3105,13 @@ for g = 1:length(subj_group_names)
     lgd.FontSize = 18;
     
     save_file_5c = fullfile(output_path, sprintf('Figure_5C_MultiBand_Latency_%s', fig_tags{g}));
-    try pause(0.5); saveas(fig5C, [save_file_5c, '.svg']); saveas(fig5C, [save_file_5c, '.png']); catch, end
+    try 
+        pause(0.5); 
+        exportgraphics(fig5C, [save_file_5c, '.png'], 'Resolution', 600);
+        saveas(fig5C, [save_file_5c, '.svg']);
+        print(fig5C, [save_file_5c, '.eps'], '-depsc');
+    catch
+    end
     close(fig5C);
 end
 
@@ -3206,16 +3278,22 @@ for g = 1:length(subj_group_names)
     sgtitle(sprintf('Sustained vs. Phasic Stability (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
     
     save_file_5d = fullfile(output_path, sprintf('Figure_5D_MultiBand_Sustained_%s', fig_tags{g}));
-    try pause(0.5); saveas(fig5D, [save_file_5d, '.svg']); saveas(fig5D, [save_file_5d, '.png']); catch, end
+    try 
+        pause(0.5); 
+        exportgraphics(fig5D, [save_file_5d, '.png'], 'Resolution', 600);
+        saveas(fig5D, [save_file_5d, '.svg']);
+        print(fig5D, [save_file_5d, '.eps'], '-depsc');
+    catch
+    end
     close(fig5D);
 end
 disp('All analyses completed successfully (All Retained Subjects, excluding S3 & S14).');
 
 %% =========================================================================
-%% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE
+%% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE (ONE-TAILED)
 %% =========================================================================
 fprintf('\n=========================================================================================================\n');
-fprintf(' PNAS TABLE 1: FREQUENCY-SPECIFIC DIVISION OF LABOR ACROSS GAIN, GEOMETRY, TIMING & SUSTAINED SHARE\n');
+fprintf(' PNAS TABLE 1: FREQUENCY-SPECIFIC DIVISION OF LABOR (ONE-TAILED WILCOXON SIGNED-RANK TESTS)\n');
 fprintf('=========================================================================================================\n');
 
 t1_band = {}; t1_cond = {}; t1_gain = {}; t1_geom = {}; t1_lat = {}; t1_sust = {};
@@ -3229,7 +3307,7 @@ for b = 1:length(plot_bands)
     for c_i = 1:length(cfg.all_conds)
         c_str = cfg.all_conds{c_i};
         
-        % 1. Gain (G +/- SEM, one-tailed signrank p vs P1 matching Figure 4B)
+        % 1. Gain (G +/- SEM, one-tailed signrank p vs P1)
         g_vals = G_mat(c_i, :);
         p_g    = 1.000; 
         if c_i > 1
@@ -3239,9 +3317,22 @@ for b = 1:length(plot_bands)
         end
         g_str = sprintf('%.2f +/- %.2f (p=%.3f)', mean(g_vals,'omitnan'), std(g_vals,0,'omitnan')/sqrt(length(g_vals)), p_g);
         
-        % 2. Geometry range across Xi_1..Xi_m
+        % 2. Geometry range across Xi_1..Xi_m + min one-tailed FDR-corrected q across directions
         lr_means = mean(squeeze(LR_mat(c_i, 1:cfg.m, :)), 2, 'omitnan');
-        geom_str = sprintf('[%+.2f, %+.2f]', min(lr_means), max(lr_means));
+        p_dirs   = ones(cfg.m, 1);
+        if c_i > 1
+            for k_d = 1:cfg.m
+                d_vec = squeeze(LR_mat(c_i, k_d, :));
+                p_dirs(k_d) = min(signrank(d_vec, 0, 'tail', 'right'), signrank(d_vec, 0, 'tail', 'left'));
+            end
+        end
+        % Benjamini-Hochberg FDR across m = 5 directions
+        [p_sort, sort_idx] = sort(p_dirs);
+        q_sort = p_sort .* (cfg.m ./ (1:cfg.m)');
+        for k_d = cfg.m-1:-1:1, q_sort(k_d) = min(q_sort(k_d), q_sort(k_d+1)); end
+        q_dirs = ones(cfg.m, 1); q_dirs(sort_idx) = min(1, q_sort);
+        
+        geom_str = sprintf('[%+.2f, %+.2f] (min p=%.3f, q=%.3f)', min(lr_means), max(lr_means), min(p_dirs), min(q_dirs));
         
         % 3. Latency shift (only for stimulus-delivered P1, P2_500, P3_500, one-tailed)
         if ismember(c_str, {'P1', 'P2_500', 'P3_500'})
@@ -3271,7 +3362,7 @@ for b = 1:length(plot_bands)
         t1_gain{end+1,1} = g_str;  t1_geom{end+1,1} = geom_str;
         t1_lat{end+1,1}  = lat_str; t1_sust{end+1,1} = sust_str;
         
-        fprintf('%-14s | %-10s | Gain: %-24s | Geom: %-14s | Lat: %-26s | Sust: %s\n', ...
+        fprintf('%-14s | %-10s | Gain: %-24s | Geom: %-36s | Lat: %-26s | Sust: %s\n', ...
             b_name, c_str, g_str, geom_str, lat_str, sust_str);
     end
 end
@@ -3280,17 +3371,18 @@ Table1_PNAS = table(t1_band, t1_cond, t1_gain, t1_geom, t1_lat, t1_sust, ...
 writetable(Table1_PNAS, fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv'));
 
 %% =========================================================================
-%% BAYES FACTOR (BF01) & TOST EQUIVALENCE CHECK FOR BETA GAIN & GEOMETRY
+%% BAYES FACTOR (BF01) FOR BETA GAIN (ONE-TAILED WILCOXON + JZS/BIC BF01)
 %% =========================================================================
 fprintf('\n--- BAYES FACTOR (BF_01, Evidence for Null Stability) IN BETA BAND ---\n');
 G_beta_subjs = aggregate_G.Beta.cohort(1).subj_data; % [5 conds x 12 subjs]
 n_s = size(G_beta_subjs, 2);
 for c_i = 2:length(cfg.all_conds)
     diff_G = G_beta_subjs(c_i, :) - G_beta_subjs(1, :);
-    [~, p_t, ~, stats_t] = ttest(diff_G, 0);
-    p_sr = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :));
-    %BIC / JZS approximation for BF01 (Rouder et al., 2009; Wagenmakers, 2007)
+    [~, ~, ~, stats_t] = ttest(diff_G, 0);
+    p_sr_1t = min(signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'right'), ...
+                  signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'left'));
+    % BIC / unit-information Bayes factor approximation for BF01 (Wagenmakers, 2007; Rouder et al., 2009)
     bf01_G = sqrt(n_s) * (1 + (stats_t.tstat^2) / (n_s - 1))^(-n_s / 2);
-    fprintf('Beta Gain %-12s vs P1: Mean G = %.3f | signrank p = %.3f | t = %+.2f | BF_01 = %.2f\n', ...
-        cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr, stats_t.tstat, bf01_G);
+    fprintf('Beta Gain %-12s vs P1: Mean G = %.3f | 1-tailed signrank p = %.3f | t = %+.2f | BF_01 = %.2f\n', ...
+        cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr_1t, stats_t.tstat, bf01_G);
 end
