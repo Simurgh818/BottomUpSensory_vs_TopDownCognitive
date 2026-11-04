@@ -835,12 +835,13 @@ for band_idx = 1:length(bands_to_process)
     save(fullfile(group_dir, 'spectra.mat'), 'lam_frac_all', 'gap_all', 'valid_retained_subjs');
     
     % ------------------------------------------------------------------
-    %% FIGURE 2B (DELIVERABLE B): SPATIAL TOPOGRAPHIES ("INDEPENDENT BASES")
+    %% FIGURE 2B (DELIVERABLE B): SPATIAL TOPOGRAPHIES (INDEPENDENT BASES)
     % ------------------------------------------------------------------
     subjs_topo = valid_retained_subjs(1:min(4, length(valid_retained_subjs)));
     n_rows_B   = length(subjs_topo);
     
     figB = figure('Position', [100, 100, 220 * cfg.m + 120, 210 * n_rows_B], 'Color', 'w', 'Visible', 'off');
+    
     for r_idx = 1:n_rows_B
         s = subjs_topo(r_idx);
         for k = 1:cfg.m
@@ -854,9 +855,12 @@ for band_idx = 1:length(bands_to_process)
                 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
             colormap(ax_b, 'parula'); clim(ax_b, [-0.4, 0.4]); % Color-blind friendly
             
+            % Column header (\xi_1 ... \xi_5) on the top row
             if r_idx == 1
                 title(sprintf('\\xi_%d', k), 'FontSize', 24, 'FontWeight', 'bold');
             end
+            
+            % Row label (Subj 1 ... Subj 4) on the first column
             if k == 1
                 text(-0.75, 0, sprintf('Subj %d', s), 'Rotation', 90, ...
                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
@@ -865,17 +869,19 @@ for band_idx = 1:length(bands_to_process)
         end
     end
     
-    % Short descriptive title for Panel B per lab feedback
-    sgtitle('Independent Bases', 'FontSize', 26, 'FontWeight', 'bold');
+    % (sgtitle completely removed per lab feedback)
     
     cb_B = colorbar('Position', [0.91, 0.15, 0.018, 0.72]);
     cb_B.Limits = [-0.4, 0.4]; cb_B.Ticks = -0.4 : 0.2 : 0.4;
     cb_B.Label.String = 'Spatial Weight (a.u.)'; cb_B.Label.FontSize = 20;
     cb_B.Label.FontWeight = 'bold'; cb_B.FontSize = 16;
     
+    % --- CRITICAL FIX: Override EEGLAB topoplot's blue background ---
+    set(figB, 'Color', 'w', 'InvertHardcopy', 'off');
+    
     save_file_B = fullfile(group_dir, 'Figure_2B_Deliverable_B_Topos');
     try
-        exportgraphics(figB, [save_file_B, '.png'], 'Resolution', 600);
+        exportgraphics(figB, [save_file_B, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
         saveas(figB, [save_file_B, '.svg']);
     catch
         saveas(figB, [save_file_B, '.png']);
@@ -1241,9 +1247,22 @@ for band_idx = 1:length(bands_to_process)
         aggregate_lat.(band_name).cohort(g).subj_dir_data  = lat_dir_mean;  % [5 x 5 x 12]
         aggregate_sust.(band_name).cohort(g).subj_dir_data = sust_dir_mean; % [5 x 5 x 12]
 
-        % --- COMMAND WINDOW & LOG FILE SUMMARY TABLE PRINTOUT ---
+       % --- COMMAND WINDOW & LOG FILE SUMMARY TABLE PRINTOUT ---
         sig_components = find(p_vals < 0.05)';
         if isempty(sig_components), sig_components = 1:cfg.m; end
+        
+        % Safety check: sanitize dest_list to prevent invalid file identifier crash
+        if exist('fid_sum', 'var') && ~isempty(fid_sum) && fid_sum > 2
+            % Check if fid_sum is currently open
+            [~, open_mode] = fopen(fid_sum);
+            if isempty(open_mode)
+                dest_list = 1; % File handle was closed, print to Command Window only
+            else
+                dest_list = [1, fid_sum];
+            end
+        else
+            dest_list = 1;
+        end
         
         for dest = dest_list
             fprintf(dest, '\n======================================================================\n');
@@ -1478,28 +1497,216 @@ for band_idx = 1:length(bands_to_process)
     end
 end
 
-fclose(fid_sum);
+if exist('fid_sum', 'var') && ~isempty(fid_sum) && fid_sum > 2
+    try fclose(fid_sum); catch, end
+end
+dest_list = 1; % Enforce Command Window logging for all downstream sections
 fprintf('\nAll Summary Tables printed and saved to: %s\n', summary_log_file);
 
+
 %% =========================================================================
-%% FIGURE 1B: CHANNEL C3 ERP DYNAMICS + TOPOPLOTS (150, 400, 900 ms) + WILCOXON BARS
+%% FIGURE 1A: EXPERIMENTAL PARADIGM (0–3.5 s)
 %% =========================================================================
-fprintf('\nGenerating Figure 1B: Channel C3 ERPs with Topoplots (150, 400, 900 ms) & Wilcoxon Bars...\n');
+fprintf('\nGenerating Figure 1A...\n');
+
+fig1A = figure('Position',[100 100 2000 900],'Color','w', ...
+    'Name','Figure 1A: Experimental Paradigm','Visible','off');
+
+ax = axes('Parent',fig1A,'Position',[0.235 0.23 0.62 0.60]);
+hold(ax,'on');
+set(ax,'FontSize',16,'FontName','Arial','LineWidth',1.5, ...
+    'TickDir','out','Box','off');
+
+t_min = 0; t_max = 3.5;
+y_min = 0.3; y_max = 6.8;
+xlim(ax,[t_min t_max]); ylim(ax,[y_min y_max]);
+xticks(ax,0:0.5:3.5);
+xticklabels(ax,{'0','0.5','1.0','1.5','2.0','2.5','3.0','3.5'});
+xlabel(ax,'Time (s)','FontSize',20,'FontWeight','bold');
+yticks(ax,[]);
+
+% Convert timeline coordinates into normalized figure coordinates
+ax_pos = ax.Position;
+x_to_fig = @(x) ax_pos(1) + (x-t_min)/(t_max-t_min)*ax_pos(3);
+y_to_fig = @(y) ax_pos(2) + (y-y_min)/(y_max-y_min)*ax_pos(4);
+
+% Analysis window boundaries
+window_edges = [0 0.5 1.0 1.5 2.5 3.5];
+window_centers = (window_edges(1:end-1)+window_edges(2:end))/2;
+
+for x = window_edges
+    line(ax,[x x],[0.8 6.2],'Color',[0.78 0.78 0.78], ...
+        'LineStyle','--','LineWidth',1.3,'HandleVisibility','off');
+end
+
+% Five window labels in a separate header row
+window_labels = {sprintf('Baseline\nWindow'), ...
+    sprintf('Auditory\nWindow'),sprintf('Tactile\nWindow'), ...
+    sprintf('Interstimulus\nInterval'),sprintf('Late Tactile\nWindow')};
+
+window_colors = [0.35 0.35 0.35; 0 0.50 0.55; ...
+    0.80 0.40 0; 0.40 0.40 0.40; 0 0.55 0.45];
+
+% Experimental condition rows
+y_levels = 6:-1:1;
+row_styles = {'-','-','--','-','--','-'};
+
+for r = 1:6
+    line(ax,[t_min t_max],[y_levels(r) y_levels(r)], ...
+        'Color',[0.55 0.55 0.55],'LineStyle',row_styles{r}, ...
+        'LineWidth',1.8,'HandleVisibility','off');
+end
+
+% Stimulus marker colors and plotting functions
+auditory_col = [0 0.55 0.55];
+tactile_early = [0.80 0.40 0];
+tactile_late = [0 0.60 0.50];
+
+draw_auditory = @(x,y) plot(ax,[x x],[y y+0.55], ...
+    'Color',auditory_col,'LineWidth',3.5,'Marker','^', ...
+    'MarkerSize',10,'MarkerFaceColor',auditory_col, ...
+    'MarkerIndices',2,'HandleVisibility','off');
+
+draw_tactile = @(x,y,c) plot(ax,[x x],[y y+0.55], ...
+    'Color',c,'LineWidth',3.5,'Marker','o', ...
+    'MarkerSize',11,'MarkerFaceColor',c, ...
+    'MarkerIndices',2,'HandleVisibility','off');
+
+% Stimulus timing: BLA, P1, P2-500, P2-2000, P3-500, P3-null
+stim_audio = [1 1 1 1 1 1];
+stim_tactile_time = [NaN 1.0 1.0 2.5 1.0 NaN];
+
+for r = 1:6
+    if stim_audio(r)
+        draw_auditory(0.5,y_levels(r));
+    end
+    if ~isnan(stim_tactile_time(r))
+        if r == 4
+            draw_tactile(stim_tactile_time(r),y_levels(r),tactile_late);
+        else
+            draw_tactile(stim_tactile_time(r),y_levels(r),tactile_early);
+        end
+    end
+end
+
+% Transparent overlay for header labels, condition labels, and legend
+ax_txt = axes('Parent',fig1A,'Position',[0 0 1 1], ...
+    'Visible','off','XLim',[0 1],'YLim',[0 1]);
+hold(ax_txt,'on');
+
+% Window labels (dedicated top row)
+for w = 1:5
+    text(ax_txt,x_to_fig(window_centers(w)),0.935,window_labels{w}, ...
+        'HorizontalAlignment','center','VerticalAlignment','middle', ...
+        'FontSize',20,'FontWeight','bold','FontName','Arial', ...
+        'Color',window_colors(w,:));
+end
+
+% Main condition labels
+text(ax_txt,0.12,y_to_fig(6),sprintf('Tone (only)\n(BLA)'), ...
+    'HorizontalAlignment','center','VerticalAlignment','middle', ...
+    'FontSize',20,'FontWeight','bold','Color',auditory_col);
+
+text(ax_txt,0.12,y_to_fig(5),sprintf('Cued, certain\n(P1)'), ...
+    'HorizontalAlignment','center','VerticalAlignment','middle', ...
+    'FontSize',20,'FontWeight','bold','Color',[0.07 0.35 0.37]);
+
+% P2 group
+text(ax_txt,0.07,mean(y_to_fig([4 3])),sprintf('Cued, when?\n(P2)'), ...
+    'HorizontalAlignment','center','VerticalAlignment','middle', ...
+    'FontSize',20,'FontWeight','bold','Color','k');
+
+text(ax_txt,0.150,mean(y_to_fig([4 3])),'}', ...
+    'FontSize',38,'HorizontalAlignment','center', ...
+    'VerticalAlignment','middle','Color',[0.3 0.3 0.3], ...
+    'Interpreter','none');
+
+text(ax_txt,0.225,y_to_fig(4),'P2-500', ...
+    'HorizontalAlignment','right','VerticalAlignment','middle', ...
+    'FontSize',19,'FontWeight','bold','Color',[0.47 0.12 0.08]);
+
+text(ax_txt,0.225,y_to_fig(3),'P2-2000', ...
+    'HorizontalAlignment','right','VerticalAlignment','middle', ...
+    'FontSize',19,'FontWeight','bold','Color',tactile_late);
+
+% P3 group
+text(ax_txt,0.07,mean(y_to_fig([2 1])),sprintf('Cued, whether?\n(P3)'), ...
+    'HorizontalAlignment','center','VerticalAlignment','middle', ...
+    'FontSize',20,'FontWeight','bold','Color','k');
+
+text(ax_txt,0.150,mean(y_to_fig([2 1])),'}', ...
+    'FontSize',38,'HorizontalAlignment','center', ...
+    'VerticalAlignment','middle','Color',[0.3 0.3 0.3], ...
+    'Interpreter','none');
+
+text(ax_txt,0.225,y_to_fig(2),'P3-500', ...
+    'HorizontalAlignment','right','VerticalAlignment','middle', ...
+    'FontSize',19,'FontWeight','bold','Color',[0.88 0.57 0.10]);
+
+text(ax_txt,0.225,y_to_fig(1),'P3-null', ...
+    'HorizontalAlignment','right','VerticalAlignment','middle', ...
+    'FontSize',19,'FontWeight','bold','Color',[0.35 0.70 0.90]);
+
+% Boxed stimulus legend: centered vertically, outside the plotting axes
+rectangle(ax_txt,'Position',[0.87 0.415 0.17 0.17], ...
+    'EdgeColor',[0.55 0.55 0.55], ...
+    'FaceColor','white','LineWidth',1.2);
+
+% Auditory input
+plot(ax_txt,[0.887 0.887],[0.535 0.563], ...
+    'Color',auditory_col,'LineWidth',3, ...
+    'Marker','^','MarkerSize',9,'MarkerFaceColor',auditory_col, ...
+    'MarkerIndices',2);
+
+text(ax_txt,0.907,0.549,'Auditory input', ...
+    'FontSize',18,'FontWeight','bold','Color','k', ...
+    'VerticalAlignment','middle');
+
+% Tactile input
+plot(ax_txt,[0.887 0.887],[0.455 0.483], ...
+    'Color',tactile_early,'LineWidth',3, ...
+    'Marker','o','MarkerSize',9,'MarkerFaceColor',tactile_early, ...
+    'MarkerIndices',2);
+
+text(ax_txt,0.907,0.469,'Tactile input', ...
+    'FontSize',18,'FontWeight','bold','Color','k', ...
+    'VerticalAlignment','middle');
+
+% Export
+fig1A_png = fullfile(output_path,'Figure_1A_Experimental_Design_600ppi.png');
+fig1A_svg = fullfile(output_path,'Figure_1A_Experimental_Design.svg');
+
+try
+    exportgraphics(fig1A,fig1A_png,'Resolution',600,'BackgroundColor','white');
+    saveas(fig1A,fig1A_svg);
+    fprintf('Figure 1A saved:\n%s\n%s\n',fig1A_png,fig1A_svg);
+catch ME
+    warning('Export issue: %s',ME.message);
+    print(fig1A,fig1A_png,'-dpng','-r600');
+end
+
+close(fig1A);
+fprintf('Figure 1A generation complete.\n');
+
+
+
+%% =========================================================================
+%% FIGURE 1B: CHANNEL C3 ERP DYNAMICS + TWO-ROW TOPOPLOTS (150, 400, 900 ms) + WILCOXON BARS
+%% =========================================================================
+fprintf('\nGenerating Figure 1B: Channel C3 ERPs with 2-Row Topoplots & Wilcoxon Bars...\n');
 orig_warn_1B = warning('off', 'all');
 
 % -------------------------------------------------------------------------
-% 1. USER CONFIGURATION & STATISTICAL PARAMETERS
+% 1. USER CONFIGURATION & LATENCIES
 % -------------------------------------------------------------------------
 time_win       = [-0.200, 1.000];        % ERP time window [-0.2 s to 1.0 s]
 topo_times     = [0.150, 0.400, 0.900];  % 3 topoplot latencies: 150, 400, 900 ms
-topo_half_win  = 0.025;                  % Average +/- 25 ms around each latency for clean SNR
-norm_au        = false;                  % false = Voltage (\muV); true = Normalized to P1 peak (a.u.)
+topo_half_win  = 0.025;                  % +/- 25 ms averaging window around each latency
+norm_au        = false;                  % false = \muV; true = a.u.
 
-% Statistical bar settings (Wilcoxon signed-rank against Cued P1)
-alpha_stat     = 0.05;                   % Significance threshold (p < 0.05)
-use_fdr        = false;                  % false = uncorrected + cluster duration; true = Benjamini-Hochberg FDR
-min_sig_ms     = 20;                     % Minimum contiguous significant duration in ms
-single_red_bar = false;                  % false = condition-colored bars; true = single crimson bar
+alpha_stat     = 0.05;                   
+use_fdr        = false;                  
+min_sig_ms     = 20;                     
 
 if ~exist('chan_c3', 'var') || isempty(chan_c3)
     chan_c3 = 14;
@@ -1516,17 +1723,7 @@ t_eval       = time_s(time_mask);
 n_t          = length(t_eval);
 
 % -------------------------------------------------------------------------
-% 2. COLOR PALETTE
-% -------------------------------------------------------------------------
-c_P1      = [0.07, 0.35, 0.37]; % Dark Teal
-c_P2_500  = [0.47, 0.12, 0.08]; % Dark Maroon
-c_P3_500  = [0.88, 0.57, 0.10]; % Amber / Gold
-c_P2_2000 = [0.90, 0.59, 0.51]; % Coral / Salmon
-c_P3_null = [0.94, 0.75, 0.47]; % Light Gold / Sand
-c_sig_red = [0.78, 0.12, 0.12]; % Crimson Red
-
-% -------------------------------------------------------------------------
-% 3. EXTRACT C3 SUBJECT TRACES & 32-CHANNEL GRAND AVERAGES FOR TOPOPLOTS
+% 2. EXTRACT C3 SUBJECT TRACES & 32-CHANNEL GRAND AVERAGES
 % -------------------------------------------------------------------------
 cond_list = {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
 erp_stats = struct();
@@ -1538,9 +1735,8 @@ for c_i = 1:length(cond_list)
     
     for s_i = 1:n_subjs_plot
         s       = subjs_plot(s_i);
-        raw_mat = data_all_conds.Raw.(c_name){s}; % [32 x time x trials]
-        
-        erp_s = mean(raw_mat, 3, 'omitnan');
+        raw_mat = data_all_conds.Raw.(c_name){s};
+        erp_s   = mean(raw_mat, 3, 'omitnan');
         subj_32ch(:, :, s_i) = erp_s;
         subj_traces(:, s_i)  = erp_s(chan_c3, time_mask)';
     end
@@ -1566,8 +1762,27 @@ else
     cb_unit_str = '\muV';
 end
 
+% Extract 3-latency vectors for each condition
+topo_vecs = struct();
+for c_i = 1:length(cond_list)
+    c_name = cond_list{c_i};
+    vec_mat = zeros(cfg.num_ch, length(topo_times));
+    for k = 1:length(topo_times)
+        idx_w = (time_s >= (topo_times(k) - topo_half_win)) & (time_s <= (topo_times(k) + topo_half_win));
+        vec_mat(:, k) = mean(erp_stats.(c_name).topo_32ch(:, idx_w), 2, 'omitnan');
+    end
+    topo_vecs.(c_name) = vec_mat;
+end
+
+% Determine symmetric color limits across ALL 6 topoplots (exact min/max without 0.90 clipping)
+all_topo_vals = [topo_vecs.P1(:); topo_vecs.P2_500(:); topo_vecs.P3_500(:); ...
+                 topo_vecs.P2_2000(:); topo_vecs.P3_missing(:)];
+max_topo = max(abs(all_topo_vals), [], 'omitnan');
+if isempty(max_topo) || max_topo <= 0 || isnan(max_topo), max_topo = 1; end
+c_lim_topo = [-max_topo, max_topo];
+
 % -------------------------------------------------------------------------
-% 4. PAIRED WILCOXON SIGNED-RANK TESTS ACROSS TIME AT CHANNEL C3
+% 3. WILCOXON SIGNED-RANK TESTS ACROSS TIME AT CHANNEL C3
 % -------------------------------------------------------------------------
 pairs_A  = {'P2_500', 'P3_500'};
 pairs_B  = {'P2_2000', 'P3_missing'};
@@ -1604,47 +1819,32 @@ sig_B = false(length(pairs_B), n_t);
 for p_i = 1:length(pairs_A), sig_A(p_i, :) = get_sig_mask(p_vals_A(p_i, :)); end
 for p_i = 1:length(pairs_B), sig_B(p_i, :) = get_sig_mask(p_vals_B(p_i, :)); end
 
-% -------------------------------------------------------------------------
-% 5. COMPUTE COORDINATED Y-LIMITS & TOPOPLOT COLOR LIMITS
-% -------------------------------------------------------------------------
+% Coordinated Y-limits
 all_means = [];
-for c_i = 1:length(cond_list)
-    all_means = [all_means; erp_stats.(cond_list{c_i}).mean];
-end
-min_val = min(all_means);
-max_val = max(all_means);
+for c_i = 1:length(cond_list), all_means = [all_means; erp_stats.(cond_list{c_i}).mean]; end
+min_val = min(all_means); max_val = max(all_means);
 y_span  = max_val - min_val;
 if y_span <= 0 || isnan(y_span), y_span = 2; end
-ylim_shared = [min_val - 0.24 * y_span, max_val + 0.15 * y_span];
-
-topo_map_A = (erp_stats.P1.topo_32ch + erp_stats.P2_500.topo_32ch + erp_stats.P3_500.topo_32ch) / 3;
-topo_map_B = (erp_stats.P2_2000.topo_32ch + erp_stats.P3_missing.topo_32ch) / 2;
-
-topo_vecs_A = zeros(cfg.num_ch, length(topo_times));
-topo_vecs_B = zeros(cfg.num_ch, length(topo_times));
-for k = 1:length(topo_times)
-    idx_w = (time_s >= (topo_times(k) - topo_half_win)) & (time_s <= (topo_times(k) + topo_half_win));
-    topo_vecs_A(:, k) = mean(topo_map_A(:, idx_w), 2, 'omitnan');
-    topo_vecs_B(:, k) = mean(topo_map_B(:, idx_w), 2, 'omitnan');
-end
-max_topo = max(abs([topo_vecs_A(:); topo_vecs_B(:)])) * 0.90;
-if isempty(max_topo) || max_topo <= 0 || isnan(max_topo), max_topo = 1; end
-c_lim_topo = [-max_topo, max_topo];
+ylim_shared = [min_val - 0.22 * y_span, max_val + 0.12 * y_span];
 
 % -------------------------------------------------------------------------
-% 6. RENDER PUBLICATION FIGURE WITH BALANCED FONTS & ADJUSTED SPACING
+% 4. RENDER FIGURE 1B (TWO ROWS OF TOPOPLOTS + WHITE BACKGROUND)
 % -------------------------------------------------------------------------
-%% --- 6. RENDER FIGURE 1B: WIDER PANELS, DUAL-CODED LINES, DESCRIPTIVE LABELS ---
-fig1B = figure('Position', [50, 50, 1600, 660], 'Color', 'w', ...
-    'Name', 'Figure 1B: Channel C3 ERPs with Topoplots & Wilcoxon Bars');
+fig1B = figure('Position', [50, 40, 1680, 880], 'Color', 'w', ...
+    'Name', 'Figure 1B: Channel C3 ERPs with 2-Row Topoplots & Wilcoxon Bars');
 
-% Widened subplot positions for better symmetry
-ax1_pos = [0.060, 0.14, 0.405, 0.54];
-ax2_pos = [0.555, 0.14, 0.405, 0.54];
+ax1_pos = [0.065, 0.10, 0.400, 0.44];
+ax2_pos = [0.555, 0.10, 0.400, 0.44];
+
+topo_w = 0.064;    
+topo_h = 0.145;    
+topo_row1_y = 0.745; 
+topo_row2_y = 0.580; 
+t_span = time_win(2) - time_win(1);
 
 % ==================== SUBPLOT 1: STIMULUS DELIVERED ====================
 ax1 = axes('Position', ax1_pos, 'Color', 'w'); hold(ax1, 'on');
-set(ax1, 'FontSize', 18, 'FontName', 'Arial', 'LineWidth', 1.5, 'TickDir', 'out');
+set(ax1, 'FontSize', 18, 'FontName', 'Arial', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
 box(ax1, 'off');
 
 yline(ax1, 0, 'Color', [0.80 0.80 0.80], 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -1652,7 +1852,7 @@ xline(ax1, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
 for k = 1:length(topo_times)
     tk = topo_times(k);
-    plot(ax1, [tk, tk], [ylim_shared(1), ylim_shared(2) * 1.05], 'k:', ...
+    plot(ax1, [tk, tk], [ylim_shared(1), ylim_shared(2)], 'k:', ...
         'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
 end
 
@@ -1666,7 +1866,7 @@ y_bar_step = 0.045 * (ylim_shared(2) - ylim_shared(1));
 draw_sig_bars(ax1, t_eval, sig_A(1, :), y_bar_base + y_bar_step, cond_colors('P2_500'), 5.0);
 draw_sig_bars(ax1, t_eval, sig_A(2, :), y_bar_base,              cond_colors('P3_500'), 5.0);
 
-legend(ax1, 'Location', 'northeast', 'Box', 'off', 'FontSize', 16);
+legend(ax1, 'Location', 'northeast', 'Box', 'off', 'FontSize', 15);
 
 xlim(ax1, time_win); ylim(ax1, ylim_shared);
 xticks(ax1, -0.2 : 0.2 : 1.0);
@@ -1677,7 +1877,7 @@ ylabel(ax1, y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
 % ==================== SUBPLOT 2: STIMULUS OMITTED / DELAYED ====================
 ax2 = axes('Position', ax2_pos, 'Color', 'w'); hold(ax2, 'on');
-set(ax2, 'FontSize', 18, 'FontName', 'Arial', 'LineWidth', 1.5, 'TickDir', 'out');
+set(ax2, 'FontSize', 18, 'FontName', 'Arial', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
 box(ax2, 'off');
 
 yline(ax2, 0, 'Color', [0.80 0.80 0.80], 'LineWidth', 1.2, 'HandleVisibility', 'off');
@@ -1685,7 +1885,7 @@ xline(ax2, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
 for k = 1:length(topo_times)
     tk = topo_times(k);
-    plot(ax2, [tk, tk], [ylim_shared(1), ylim_shared(2) * 1.05], 'k:', ...
+    plot(ax2, [tk, tk], [ylim_shared(1), ylim_shared(2)], 'k:', ...
         'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
 end
 
@@ -1696,7 +1896,7 @@ plot(ax2, t_eval, erp_stats.P3_missing.mean, 'Color', cond_colors('P3_missing'),
 draw_sig_bars(ax2, t_eval, sig_B(1, :), y_bar_base + y_bar_step, cond_colors('P2_2000'),    5.0);
 draw_sig_bars(ax2, t_eval, sig_B(2, :), y_bar_base,              cond_colors('P3_missing'), 5.0);
 
-legend(ax2, 'Location', 'northeast', 'Box', 'off', 'FontSize', 16);
+legend(ax2, 'Location', 'northeast', 'Box', 'off', 'FontSize', 15);
 
 xlim(ax2, time_win); ylim(ax2, ylim_shared);
 xticks(ax2, -0.2 : 0.2 : 1.0);
@@ -1705,95 +1905,93 @@ xtickangle(ax2, 0);
 xlabel(ax2, 'Time after expected stimulus (ms)', 'FontSize', 18, 'FontWeight', 'bold');
 ylabel(ax2, y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
-% ==================== FLOATING TOPOPLOTS & WIDER COLORBAR ====================
-topo_w = 0.080;
-topo_h = 0.180;
-topo_y = ax1_pos(2) + ax1_pos(4) + 0.025;
-t_span = time_win(2) - time_win(1);
+% ==================== 2 ROWS OF TOPOPLOTS (ABOVE SUBPLOTS) ====================
 
+% --- SUBPLOT 1, ROW 1: UNPRED 500 ---
 for k = 1:length(topo_times)
     frac_x   = (topo_times(k) - time_win(1)) / t_span;
     center_x = ax1_pos(1) + frac_x * ax1_pos(3);
-    ax_tA    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
-    topoplot(topo_vecs_A(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+    ax_t = axes('Position', [center_x - topo_w/2, topo_row1_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs.P2_500(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
         'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-    colormap(ax_tA, 'parula'); clim(ax_tA, c_lim_topo);
-    title(ax_tA, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 13, 'FontWeight', 'bold');
+    colormap(ax_t, 'parula'); clim(ax_t, c_lim_topo);
+    title(ax_t, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 13, 'FontWeight', 'bold');
+    if k == 1
+        text(ax_t, -0.80, 0, 'Unpred. 500', 'Rotation', 90, 'HorizontalAlignment', 'center', ...
+            'FontSize', 13, 'FontWeight', 'bold', 'Color', cond_colors('P2_500'));
+    end
 end
 
+% --- SUBPLOT 1, ROW 2: RAND 500 ---
+for k = 1:length(topo_times)
+    frac_x   = (topo_times(k) - time_win(1)) / t_span;
+    center_x = ax1_pos(1) + frac_x * ax1_pos(3);
+    ax_t = axes('Position', [center_x - topo_w/2, topo_row2_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs.P3_500(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_t, 'parula'); clim(ax_t, c_lim_topo);
+    if k == 1
+        text(ax_t, -0.80, 0, 'Rand. 500', 'Rotation', 90, 'HorizontalAlignment', 'center', ...
+            'FontSize', 13, 'FontWeight', 'bold', 'Color', cond_colors('P3_500'));
+    end
+end
+
+% --- SUBPLOT 2, ROW 1: UNPRED 2000 ---
 for k = 1:length(topo_times)
     frac_x   = (topo_times(k) - time_win(1)) / t_span;
     center_x = ax2_pos(1) + frac_x * ax2_pos(3);
-    ax_tB    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
-    topoplot(topo_vecs_B(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+    ax_t = axes('Position', [center_x - topo_w/2, topo_row1_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs.P2_2000(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
         'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-    colormap(ax_tB, 'parula'); clim(ax_tB, c_lim_topo);
-    title(ax_tB, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 13, 'FontWeight', 'bold');
+    colormap(ax_t, 'parula'); clim(ax_t, c_lim_topo);
+    title(ax_t, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 13, 'FontWeight', 'bold');
+    if k == 1
+        text(ax_t, -0.80, 0, 'Unpred. 2000', 'Rotation', 90, 'HorizontalAlignment', 'center', ...
+            'FontSize', 13, 'FontWeight', 'bold', 'Color', cond_colors('P2_2000'));
+    end
 end
 
-% Wider colorbar positioned cleanly in the center gap
-ax_cb = axes('Position', [0.478, 0.45, 0.018, 0.22], 'Visible', 'off');
+% --- SUBPLOT 2, ROW 2: RAND NULL ---
+for k = 1:length(topo_times)
+    frac_x   = (topo_times(k) - time_win(1)) / t_span;
+    center_x = ax2_pos(1) + frac_x * ax2_pos(3);
+    ax_t = axes('Position', [center_x - topo_w/2, topo_row2_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs.P3_missing(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_t, 'parula'); clim(ax_t, c_lim_topo);
+    if k == 1
+        text(ax_t, -0.80, 0, 'Rand. Null', 'Rotation', 90, 'HorizontalAlignment', 'center', ...
+            'FontSize', 13, 'FontWeight', 'bold', 'Color', cond_colors('P3_missing'));
+    end
+end
+
+% ==================== SHARED COLORBAR IN CENTER GAP ====================
+ax_cb = axes('Position', [0.485, topo_row2_y + 0.02, 0.015, (topo_row1_y + topo_h) - (topo_row2_y + 0.02)], 'Visible', 'off');
 colormap(ax_cb, 'parula'); clim(ax_cb, c_lim_topo);
-cb = colorbar(ax_cb, 'Position', [0.478, 0.45, 0.018, 0.22]);
-cb.FontSize = 13;
+cb = colorbar(ax_cb, 'Position', [0.485, topo_row2_y + 0.02, 0.015, (topo_row1_y + topo_h) - (topo_row2_y + 0.02)]);
+cb.FontSize = 12;
 cb.Title.String = cb_unit_str;
 cb.Title.FontSize = 14;
 cb.Title.FontWeight = 'bold';
 
-% -------------------------------------------------------------------------
-% 7. FLOATING TOPOPLOTS & NON-OVERLAPPING COLORBAR
-% -------------------------------------------------------------------------
-topo_w = 0.076;                           
-topo_h = 0.175;                           
-topo_y = ax1_pos(2) + ax1_pos(4) + 0.015; 
-t_span = time_win(2) - time_win(1);
-
-% Panel A Topoplots (150, 400, 900 ms)
-for k = 1:length(topo_times)
-    frac_x   = (topo_times(k) - time_win(1)) / t_span;
-    center_x = ax1_pos(1) + frac_x * ax1_pos(3);
-    ax_tA    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
-    topoplot(topo_vecs_A(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
-        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-    colormap(ax_tA, 'jet'); clim(ax_tA, c_lim_topo);
-    title(ax_tA, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 11, 'FontWeight', 'bold');
-end
-
-% Panel B Topoplots (150, 400, 900 ms)
-for k = 1:length(topo_times)
-    frac_x   = (topo_times(k) - time_win(1)) / t_span;
-    center_x = ax2_pos(1) + frac_x * ax2_pos(3);
-    ax_tB    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
-    topoplot(topo_vecs_B(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
-        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-    colormap(ax_tB, 'jet'); clim(ax_tB, c_lim_topo);
-    title(ax_tB, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 11, 'FontWeight', 'bold');
-end
-
-% Colorbar shifted left to x = 0.468 to eliminate overlap with ax2 y-axis label
-ax_cb = axes('Position', [0.468, 0.48, 0.012, 0.18], 'Visible', 'off');
-colormap(ax_cb, 'jet'); clim(ax_cb, c_lim_topo);
-cb = colorbar(ax_cb, 'Position', [0.468, 0.48, 0.012, 0.18]);
-cb.FontSize = 11;
-cb.Title.String = cb_unit_str;
-cb.Title.FontSize = 12;
-cb.Title.FontWeight = 'bold';
-
-% Panel Titles
+% Panel Super-Titles with "(Channel C3)"
 ax_title = axes('Position', [0, 0, 1, 1], 'Visible', 'off');
-text(ax_title, ax1_pos(1) + ax1_pos(3)/2, 0.965, 'Stimulus Delivered (C3)', ...
+text(ax_title, ax1_pos(1) + ax1_pos(3)/2, 0.965, 'Stimulus Delivered (Channel C3)', ...
     'HorizontalAlignment', 'center', 'FontSize', 22, 'FontWeight', 'bold');
-text(ax_title, ax2_pos(1) + ax2_pos(3)/2, 0.965, 'Stimulus Omitted / Delayed (C3)', ...
+text(ax_title, ax2_pos(1) + ax2_pos(3)/2, 0.965, 'Stimulus Omitted / Delayed (Channel C3)', ...
     'HorizontalAlignment', 'center', 'FontSize', 22, 'FontWeight', 'bold');
 
+% --- CRITICAL FIX: Override EEGLAB topoplot's blue background ---
+set(fig1B, 'Color', 'w', 'InvertHardcopy', 'off');
+
 % -------------------------------------------------------------------------
-% 8. EXPORT 600 PPI PUBLICATION IMAGE
+% 5. EXPORT FIGURE 1B
 % -------------------------------------------------------------------------
 fig1B_out_png = fullfile(output_path, 'Figure_1B_Channel_C3_Dynamics_600ppi.png');
 fig1B_out_svg = fullfile(output_path, 'Figure_1B_Channel_C3_Dynamics.svg');
 
 try
-    exportgraphics(fig1B, fig1B_out_png, 'Resolution', 600);
+    exportgraphics(fig1B, fig1B_out_png, 'Resolution', 600, 'BackgroundColor', 'white');
     saveas(fig1B, fig1B_out_svg);
     fprintf('  -> Saved Figure 1B Visual: %s\n', fig1B_out_png);
     fprintf('  -> Saved Figure 1B Vector SVG: %s\n', fig1B_out_svg);
@@ -2019,9 +2217,9 @@ end
 close(fig1C);
 
 %% =========================================================================
-%% FIGURE 1C & 1D: COMBINED 4-ROW SPECTRAL TOPOPLOTS WITH CENTRAL COLORBAR [-1, 0.5]
+%% FIGURE 1C & 1D: COMBINED 4-ROW SPECTRAL TOPOPLOTS (clim [-1, 1], 2nd Y-AXIS EQUATIONS)
 %% =========================================================================
-fprintf('\nGenerating Combined Figure 1C & 1D: 4-Row Spectral Topoplots (clim [-1, 0.5])...\n');
+fprintf('\nGenerating Combined Figure 1C & 1D: 4-Row Spectral Topoplots (clim [-1, 1])...\n');
 
 % --- 1. DEFINE SLIDING WINDOWS & TIME CENTERS ---
 step_fig2    = 0.20; 
@@ -2078,24 +2276,27 @@ if ~exist('pow_groups', 'var') || ~isfield(pow_groups, 'P1')
 end
 
 % --- 3. RENDER COMBINED FIGURE 1C & 1D ---
-row_labels_1cd = {'Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', ''}; % 4th row label removed per feedback
-clim_1cd       = [-1.0, 0.5];
+row_labels_1cd = {'Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta / Alpha'}; 
+clim_1cd       = [-1.0, 1.0]; % Colorbar range [-1, 1]
 n_rows_1cd     = 4;
-n_cols_1cd     = n_win_2; % 6 windows (-0.2 to 1.0s)
+n_cols_1cd     = n_win_2;
 
-fig1CD  = figure('Position', [30, 50, 2400, 920], 'Color', 'w', 'Visible', 'off');
+% Widened canvas to 2650 px to give generous room for the left equation, colorbar, and right equation
+fig1CD  = figure('Position', [20, 50, 2650, 950], 'Color', 'w', 'Visible', 'off');
 fid_cap = fopen(fullfile(output_path, 'Figure1CD_Significant_Channels_For_Caption.txt'), 'w');
 fprintf(fid_cap, 'SIGNIFICANT CHANNELS (p < 0.05) FOR FIGURE 1C & 1D CAPTION:\n===========================================================\n');
 
+% Adjusted x_start and panel_w so:
+% Panel 1C spans [0.045 to 0.435], Equation 1C sits at x = 0.452, Colorbar sits at x = 0.490,
+% Panel 1D spans [0.555 to 0.945], Equation 1D sits at x = 0.968.
 comparisons_1cd = {
-    'P3_missing', 'Rand. Null',   '(Cued - Rand. Null) / Cued',   0.04, 0.42; % Left Panel (1C)
-    'P2_2000',    'Unpred. 2000', '(Cued - Unpred. 2000) / Cued', 0.55, 0.42  % Right Panel (1D)
+    'P3_missing', 'Rand. Null',   '(Cued - Rand. Null) / Cued',   0.045, 0.390; % Left Panel (1C)
+    'P2_2000',    'Unpred. 2000', '(Cued - Unpred. 2000) / Cued', 0.555, 0.390  % Right Panel (1D)
 };
 
 for panel_idx = 1:2
     comp_field  = comparisons_1cd{panel_idx, 1};
     comp_name   = comparisons_1cd{panel_idx, 2};
-    formula_str = comparisons_1cd{panel_idx, 3};
     x_start     = comparisons_1cd{panel_idx, 4};
     panel_w     = comparisons_1cd{panel_idx, 5};
     
@@ -2138,49 +2339,64 @@ for panel_idx = 1:2
             
             ax_pos = [x_start + (w-1)*cell_w, 0.88 - r*cell_h, cell_w*0.92, cell_h*0.88];
             ax_t = axes('Position', ax_pos, 'Color', 'w'); %#ok<LAXES>
-            % Plot significant channels as subtle dots ONLY (no text labels on scalp)
-            topoplot(mean_topo, EEG.chanlocs, 'maplimits', clim_1cd, ...
-                'electrodes', 'on', 'emarker2', {sig_ch, '.', 'k', 10, 1}, ...
-                'style', 'map', 'shading', 'interp');
+            
+            % Significant channels drawn as prominent black dots (marker size 22, linewidth 2)
+            if ~isempty(sig_ch)
+                topoplot(mean_topo, EEG.chanlocs, 'maplimits', clim_1cd, ...
+                    'electrodes', 'on', 'emarker2', {sig_ch, '.', 'k', 22, 2}, ...
+                    'style', 'map', 'shading', 'interp');
+            else
+                topoplot(mean_topo, EEG.chanlocs, 'maplimits', clim_1cd, ...
+                    'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+            end
             colormap(ax_t, 'parula'); clim(ax_t, clim_1cd);
             
-            % Row labels on far left of Panel C
+            % Row labels on far left of Panel 1C
             if panel_idx == 1 && w == 1 && ~isempty(row_labels_1cd{r})
                 text(ax_t, -0.85, 0, row_labels_1cd{r}, 'Units', 'data', ...
                     'Rotation', 90, 'HorizontalAlignment', 'center', ...
                     'FontSize', 16, 'FontWeight', 'bold');
             end
-            % Time labels on bottom row
+            
+            % Time labels along the bottom row
             if r == n_rows_1cd
                 text(ax_t, 0, -0.72, sprintf('%.1f–%.1fs', win_starts_2(w), win_starts_2(w)+step_fig2), ...
                     'HorizontalAlignment', 'center', 'FontSize', 13, 'FontWeight', 'bold');
             end
         end
     end
-    
-    % Formulas placed all the way on the far left and far right
-    if panel_idx == 1
-        annotation(fig1CD, 'textbox', [0.002, 0.40, 0.03, 0.25], 'String', formula_str, ...
-            'EdgeColor', 'none', 'FontSize', 16, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-    else
-        annotation(fig1CD, 'textbox', [0.965, 0.40, 0.03, 0.25], 'String', formula_str, ...
-            'EdgeColor', 'none', 'FontSize', 16, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-    end
 end
 fclose(fid_cap);
 
-% Single central colorbar locked to [-1, 0.5] (no redundant blue/red labels above it)
-ax_cb_mid = axes('Position', [0.485, 0.22, 0.016, 0.55], 'Visible', 'off');
+% --- ROTATED INDEX EQUATIONS ON SECOND Y-AXIS (USING OVERLAY AXES + TEXT) ---
+ax_ov = axes('Position', [0, 0, 1, 1], 'Visible', 'off', 'XLim', [0, 1], 'YLim', [0, 1]);
+
+% Left Panel (1C) 2nd Y-Axis Equation (placed cleanly between Panel 1C and Colorbar)
+text(ax_ov, 0.452, 0.49, 'Normalized Index: (Cued - Rand. Null) / Cued', ...
+    'Rotation', 90, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+    'FontSize', 17, 'FontWeight', 'bold', 'Color', 'k');
+
+% Right Panel (1D) 2nd Y-Axis Equation (placed cleanly to the right of Panel 1D)
+text(ax_ov, 0.968, 0.49, 'Normalized Index: (Cued - Unpred. 2000) / Cued', ...
+    'Rotation', 90, 'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+    'FontSize', 17, 'FontWeight', 'bold', 'Color', 'k');
+
+% --- SINGLE CENTRAL COLORBAR LOCKED TO [-1, 1] (MOVED RIGHT FOR BREATHING ROOM) ---
+ax_cb_mid = axes('Position', [0.495, 0.20, 0.013, 0.58], 'Visible', 'off');
 colormap(ax_cb_mid, 'parula'); clim(ax_cb_mid, clim_1cd);
-cb_mid = colorbar(ax_cb_mid, 'Position', [0.485, 0.22, 0.016, 0.55]);
+cb_mid = colorbar(ax_cb_mid, 'Position', [0.495, 0.20, 0.013, 0.58]);
 cb_mid.Limits = clim_1cd;
-cb_mid.Ticks  = [-1.0, -0.5, 0, 0.5];
+cb_mid.Ticks  = [-1.0, -0.5, 0, 0.5, 1.0];
 cb_mid.FontSize = 15;
 cb_mid.Label.String = 'Normalized Power Difference';
 cb_mid.Label.FontSize = 17;
 cb_mid.Label.FontWeight = 'bold';
 
-exportgraphics(fig1CD, fullfile(output_path, 'Figure_1CD_Combined_Spectral_Topos_600ppi.png'), 'Resolution', 600);
+% --- CRITICAL FIX: Override EEGLAB topoplot's blue background ---
+set(fig1CD, 'Color', 'w', 'InvertHardcopy', 'off');
+
+exportgraphics(fig1CD, fullfile(output_path, 'Figure_1CD_Combined_Spectral_Topos_600ppi.png'), ...
+    'Resolution', 600, 'BackgroundColor', 'white');
 saveas(fig1CD, fullfile(output_path, 'Figure_1CD_Combined_Spectral_Topos.svg'));
 close(fig1CD);
 
