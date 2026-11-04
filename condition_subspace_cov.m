@@ -179,10 +179,38 @@ cfg.slide_win     = 0.100;             % 100 ms sliding trajectory window
 cfg.slide_step    = 0.025;             % 25 ms step size
 cfg.basis_mode    = 'universal';       % Concatenated Universal Basis
 
+%% --- GLOBAL DESCRIPTIVE CONDITION NAMES & DUAL-CODED PALETTE ---
 clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(strrep(c, ...
-    'BLT', 'Tactile (BLT)'), 'BLA', 'Auditory (BLA)'), 'P1', 'Cued (P1)'), ...
-    'P2_500', 'Unpred 500 (P2)'), 'P2_2000', 'Unpred 2000 (P2)'), ...
-    'P3_500', 'Rand 500 (P3)'), 'P3_missing', 'Rand Null (P3)');
+    'BLT',        'Tactile-only'), ...
+    'BLA',        'Auditory-only'), ...
+    'P1',         'Cued'), ...
+    'P2_500',     'Unpred. 500'), ...
+    'P2_2000',    'Unpred. 2000'), ...
+    'P3_500',     'Rand. 500'), ...
+    'P3_missing', 'Rand. Null');
+
+% Color-blind safe Okabe-Ito & high-contrast palette
+cond_colors = containers.Map( ...
+    {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA', 'BLT'}, ...
+    {[0.00 0.00 0.00], ... % Cued: Black
+     [0.80 0.40 0.00], ... % Unpred. 500: Vermillion
+     [0.90 0.60 0.00], ... % Rand. 500: Orange/Gold
+     [0.00 0.60 0.50], ... % Unpred. 2000: Bluish Green
+     [0.35 0.70 0.90], ... % Rand. Null: Sky Blue
+     [0.00 0.45 0.70], ... % Auditory-only: Blue
+     [0.80 0.60 0.70]});   % Tactile-only: Reddish Purple
+
+% Distinct line styles & widths: Solid ('-'), Dashed ('--'), Thicker Dotted/Dashed (':')
+cond_styles = containers.Map( ...
+    {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA', 'BLT'}, ...
+    {'-', '--', ':', '--', ':', '-.', '-'});
+
+cond_widths = containers.Map( ...
+    {'P1', 'P2_500', 'P3_500', 'P2_2000', 'P3_missing', 'BLA', 'BLT'}, ...
+    {2.5, 2.5, 3.2, 2.5, 3.2, 2.5, 2.5});
+
+% Standardize default font to Arial across all figures
+set(0, 'DefaultAxesFontName', 'Arial', 'DefaultTextFontName', 'Arial');
 
 %% 2. Time Axis Alignment & Window Masking
 nPnts = size(data_all_conds.Raw.P1{1}, 2); 
@@ -824,7 +852,7 @@ for band_idx = 1:length(bands_to_process)
             
             topoplot(Xi_aligned(:, k, s), EEG.chanlocs, 'maplimits', [-0.4, 0.4], ...
                 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
-            colormap(ax_b, 'jet'); clim(ax_b, [-0.4, 0.4]);
+            colormap(ax_b, 'parula'); clim(ax_b, [-0.4, 0.4]);
             
             if r_idx == 1
                 title(sprintf('\\xi_%d', k), 'FontSize', 26, 'FontWeight', 'bold');
@@ -841,7 +869,7 @@ for band_idx = 1:length(bands_to_process)
     cb_B.Limits = [-0.4, 0.4]; cb_B.Ticks = -0.4 : 0.2 : 0.4;
     cb_B.Label.String = 'Spatial Weight (a.u.)'; cb_B.Label.FontSize = 22;
     cb_B.Label.FontWeight = 'bold'; cb_B.FontSize = 18;
-    
+    sgtitle('Independent Bases', 'FontSize', 24, 'FontWeight', 'bold');
     save_file_B = fullfile(group_dir, 'Deliverable_B_Topos');
     try
         exportgraphics(figB, [save_file_B, '.png'], 'Resolution', 600);
@@ -868,13 +896,13 @@ for band_idx = 1:length(bands_to_process)
         end
     end
     
-    figC_sim = figure('Position', [100, 100, 310 * cfg.m + 120, 420], 'Color', 'w', 'Visible', 'off');
+    figC_sim = figure('Position', [50, 50, 380 * cfg.m + 140, 500], 'Color', 'w', 'Visible', 'off');
     tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'compact');
     
     for k = 1:cfg.m
         nexttile;
         imagesc(subj_subj_sim(:, :, k));
-        colormap('jet'); clim([0 1]); axis square;
+        colormap('parula'); clim([0 1]); axis square;
         set(gca, 'FontSize', 18, 'FontWeight', 'bold', 'LineWidth', 1.2);
         title(sprintf('\\xi_%d', k), 'FontSize', 28, 'FontWeight', 'bold');
         
@@ -888,9 +916,11 @@ for band_idx = 1:length(bands_to_process)
     end
     
     cb_sim = colorbar; cb_sim.Layout.Tile = 'east'; cb_sim.FontSize = 18;
-    cb_sim.Label.String = 'Absolute Cosine Similarity'; cb_sim.Label.FontSize = 22; cb_sim.Label.FontWeight = 'bold';
-    sgtitle(sprintf('Cross-Subject Component Consistency (%s Universal Basis, n=%d)', band_name, n_ret), ...
-        'FontSize', 26, 'FontWeight', 'bold');
+    cb_sim.Label.String = '|Cosine Similarity|';
+    cb_sim.Label.FontSize = 22;
+    cb_sim.Label.FontWeight = 'bold';
+    % sgtitle(sprintf('Cross-Subject Component Consistency (%s Universal Basis, n=%d)', band_name, n_ret), ...
+    %     'FontSize', 26, 'FontWeight', 'bold');
     
     save(fullfile(group_dir, 'subj_subj_similarity.mat'), 'subj_subj_sim', 'valid_retained_subjs', 'Xi_aligned');
     save_file_C_sim = fullfile(group_dir, 'Deliverable_C_SubjSubj_Sim');
@@ -1408,6 +1438,10 @@ for band_idx = 1:length(bands_to_process)
         aggregate_sust.(band_name).cohort(g).se   = std(subj_mean_sust, 0, 2, 'omitnan') ./ sqrt(curr_n);
         aggregate_sust.(band_name).cohort(g).subj_data = subj_mean_sust; 
         
+        % Store full [5 conds x 5 directions x 12 subjects] matrices for 60-point expansion
+        aggregate_lat.(band_name).cohort(g).subj_dir_data  = lat_dir_mean;  % [5 x 5 x 12]
+        aggregate_sust.(band_name).cohort(g).subj_dir_data = sust_dir_mean; % [5 x 5 x 12]
+
         % --- COMMAND WINDOW & LOG FILE SUMMARY TABLE PRINTOUT ---
         sig_components = find(p_vals < 0.05)';
         if isempty(sig_components), sig_components = 1:cfg.m; end
@@ -1990,20 +2024,20 @@ c_lim_topo = [-max_topo, max_topo];
 % -------------------------------------------------------------------------
 % 6. RENDER PUBLICATION FIGURE WITH BALANCED FONTS & ADJUSTED SPACING
 % -------------------------------------------------------------------------
-fig1B = figure('Position', [50, 50, 1500, 660], 'Color', 'w', ...
+%% --- 6. RENDER FIGURE 1B: WIDER PANELS, DUAL-CODED LINES, DESCRIPTIVE LABELS ---
+fig1B = figure('Position', [50, 50, 1600, 660], 'Color', 'w', ...
     'Name', 'Figure 1B: Channel C3 ERPs with Topoplots & Wilcoxon Bars');
 
-% Adjusted subplot coordinates to widen the inter-panel gap
-ax1_pos = [0.065, 0.13, 0.380, 0.54];
-ax2_pos = [0.575, 0.13, 0.380, 0.54];
+% Widened subplot positions for better symmetry
+ax1_pos = [0.060, 0.14, 0.405, 0.54];
+ax2_pos = [0.555, 0.14, 0.405, 0.54];
 
 % ==================== SUBPLOT 1: STIMULUS DELIVERED ====================
-ax1 = axes('Position', ax1_pos); hold(ax1, 'on');
-% Decreased axis font size from 26 to 18 to prevent tick collisions and auto-rotation
-set(ax1, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+ax1 = axes('Position', ax1_pos, 'Color', 'w'); hold(ax1, 'on');
+set(ax1, 'FontSize', 18, 'FontName', 'Arial', 'LineWidth', 1.5, 'TickDir', 'out');
 box(ax1, 'off');
 
-yline(ax1, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
+yline(ax1, 0, 'Color', [0.80 0.80 0.80], 'LineWidth', 1.2, 'HandleVisibility', 'off');
 xline(ax1, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
 for k = 1:length(topo_times)
@@ -2012,46 +2046,31 @@ for k = 1:length(topo_times)
         'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
 end
 
-plot(ax1, t_eval, erp_stats.P1.mean,     'Color', c_P1,     'LineWidth', 2.6, 'DisplayName', 'Cued (P1)');
-plot(ax1, t_eval, erp_stats.P2_500.mean, 'Color', c_P2_500, 'LineWidth', 2.6, 'DisplayName', 'Unpred 500 (P2-500)');
-plot(ax1, t_eval, erp_stats.P3_500.mean, 'Color', c_P3_500, 'LineWidth', 2.6, 'DisplayName', 'Rand 500 (P3-500)');
+plot(ax1, t_eval, erp_stats.P1.mean,     'Color', cond_colors('P1'),     'LineStyle', cond_styles('P1'),     'LineWidth', cond_widths('P1'),     'DisplayName', clean_name('P1'));
+plot(ax1, t_eval, erp_stats.P2_500.mean, 'Color', cond_colors('P2_500'), 'LineStyle', cond_styles('P2_500'), 'LineWidth', cond_widths('P2_500'), 'DisplayName', clean_name('P2_500'));
+plot(ax1, t_eval, erp_stats.P3_500.mean, 'Color', cond_colors('P3_500'), 'LineStyle', cond_styles('P3_500'), 'LineWidth', cond_widths('P3_500'), 'DisplayName', clean_name('P3_500'));
 
-% Wilcoxon Significance Bars
 y_bar_base = ylim_shared(1) + 0.04 * (ylim_shared(2) - ylim_shared(1));
 y_bar_step = 0.045 * (ylim_shared(2) - ylim_shared(1));
 
-if single_red_bar
-    any_sig_A = any(sig_A, 1);
-    draw_sig_bars(ax1, t_eval, any_sig_A, y_bar_base, c_sig_red, 6.0);
-    if any(any_sig_A)
-        text(ax1, 0.52, y_bar_base + y_bar_step*0.8, 'p < 0.05 (Wilcoxon)', ...
-            'Color', c_sig_red, 'FontSize', 12, 'FontWeight', 'bold');
-    end
-else
-    draw_sig_bars(ax1, t_eval, sig_A(1, :), y_bar_base + y_bar_step, c_P2_500, 5.0);
-    draw_sig_bars(ax1, t_eval, sig_A(2, :), y_bar_base,              c_P3_500, 5.0);
-    text(ax1, -0.18, y_bar_base + y_bar_step*0.5, 'p < 0.05 vs. P1', ...
-        'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
-end
+draw_sig_bars(ax1, t_eval, sig_A(1, :), y_bar_base + y_bar_step, cond_colors('P2_500'), 5.0);
+draw_sig_bars(ax1, t_eval, sig_A(2, :), y_bar_base,              cond_colors('P3_500'), 5.0);
 
-text(ax1, 0.82, ylim_shared(2)*0.86, 'P1',     'Color', c_P1,     'FontSize', 19, 'FontWeight', 'bold');
-text(ax1, 0.82, ylim_shared(2)*0.72, 'P2-500', 'Color', c_P2_500, 'FontSize', 19, 'FontWeight', 'bold');
-text(ax1, 0.82, ylim_shared(2)*0.58, 'P3-500', 'Color', c_P3_500, 'FontSize', 19, 'FontWeight', 'bold');
+legend(ax1, 'Location', 'northeast', 'Box', 'off', 'FontSize', 16);
 
 xlim(ax1, time_win); ylim(ax1, ylim_shared);
 xticks(ax1, -0.2 : 0.2 : 1.0);
 xticklabels(ax1, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
-xtickangle(ax1, 0); % Enforce horizontal x-axis tick labels
+xtickangle(ax1, 0);
 xlabel(ax1, 'Time after expected stimulus (ms)', 'FontSize', 18, 'FontWeight', 'bold');
 ylabel(ax1, y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
 
 % ==================== SUBPLOT 2: STIMULUS OMITTED / DELAYED ====================
-ax2 = axes('Position', ax2_pos); hold(ax2, 'on');
-% Increased axis font size from 15 to 18 to match the left subplot perfectly
-set(ax2, 'FontSize', 18, 'FontName', 'Helvetica', 'LineWidth', 1.5, 'TickDir', 'out');
+ax2 = axes('Position', ax2_pos, 'Color', 'w'); hold(ax2, 'on');
+set(ax2, 'FontSize', 18, 'FontName', 'Arial', 'LineWidth', 1.5, 'TickDir', 'out');
 box(ax2, 'off');
 
-yline(ax2, 0, 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
+yline(ax2, 0, 'Color', [0.80 0.80 0.80], 'LineWidth', 1.2, 'HandleVisibility', 'off');
 xline(ax2, 0, 'k--', 'LineWidth', 1.2, 'Alpha', 0.6, 'HandleVisibility', 'off');
 
 for k = 1:length(topo_times)
@@ -2060,34 +2079,56 @@ for k = 1:length(topo_times)
         'LineWidth', 1.2, 'Clipping', 'off', 'HandleVisibility', 'off');
 end
 
-plot(ax2, t_eval, erp_stats.P1.mean,         'Color', c_P1,      'LineWidth', 2.6, 'DisplayName', 'Cued (P1)');
-plot(ax2, t_eval, erp_stats.P2_2000.mean,    'Color', c_P2_2000, 'LineWidth', 2.6, 'DisplayName', 'Unpred 2000 (P2-2000)');
-plot(ax2, t_eval, erp_stats.P3_missing.mean, 'Color', c_P3_null, 'LineWidth', 2.6, 'DisplayName', 'Rand Null (P3-null)');
+plot(ax2, t_eval, erp_stats.P1.mean,         'Color', cond_colors('P1'),         'LineStyle', cond_styles('P1'),         'LineWidth', cond_widths('P1'),         'DisplayName', clean_name('P1'));
+plot(ax2, t_eval, erp_stats.P2_2000.mean,    'Color', cond_colors('P2_2000'),    'LineStyle', cond_styles('P2_2000'),    'LineWidth', cond_widths('P2_2000'),    'DisplayName', clean_name('P2_2000'));
+plot(ax2, t_eval, erp_stats.P3_missing.mean, 'Color', cond_colors('P3_missing'), 'LineStyle', cond_styles('P3_missing'), 'LineWidth', cond_widths('P3_missing'), 'DisplayName', clean_name('P3_missing'));
 
-if single_red_bar
-    any_sig_B = any(sig_B, 1);
-    draw_sig_bars(ax2, t_eval, any_sig_B, y_bar_base, c_sig_red, 6.0);
-    if any(any_sig_B)
-        text(ax2, 0.52, y_bar_base + y_bar_step*0.8, 'p < 0.05 (Wilcoxon)', ...
-            'Color', c_sig_red, 'FontSize', 12, 'FontWeight', 'bold');
-    end
-else
-    draw_sig_bars(ax2, t_eval, sig_B(1, :), y_bar_base + y_bar_step, c_P2_2000, 5.0);
-    draw_sig_bars(ax2, t_eval, sig_B(2, :), y_bar_base,              c_P3_null, 5.0);
-    text(ax2, -0.18, y_bar_base + y_bar_step*0.5, 'p < 0.05 vs. P1', ...
-        'Color', [0.25 0.25 0.25], 'FontSize', 11, 'FontWeight', 'bold');
-end
+draw_sig_bars(ax2, t_eval, sig_B(1, :), y_bar_base + y_bar_step, cond_colors('P2_2000'),    5.0);
+draw_sig_bars(ax2, t_eval, sig_B(2, :), y_bar_base,              cond_colors('P3_missing'), 5.0);
 
-text(ax2, 0.80, ylim_shared(2)*0.86, 'P1',      'Color', c_P1,      'FontSize', 19, 'FontWeight', 'bold');
-text(ax2, 0.80, ylim_shared(2)*0.72, 'P2-2000', 'Color', c_P2_2000, 'FontSize', 19, 'FontWeight', 'bold');
-text(ax2, 0.80, ylim_shared(2)*0.58, 'P3-null', 'Color', c_P3_null, 'FontSize', 19, 'FontWeight', 'bold');
+legend(ax2, 'Location', 'northeast', 'Box', 'off', 'FontSize', 16);
 
 xlim(ax2, time_win); ylim(ax2, ylim_shared);
 xticks(ax2, -0.2 : 0.2 : 1.0);
 xticklabels(ax2, arrayfun(@(x) sprintf('%d', round(x*1000)), -0.2:0.2:1.0, 'UniformOutput', false));
-xtickangle(ax2, 0); % Enforce horizontal x-axis tick labels
+xtickangle(ax2, 0);
 xlabel(ax2, 'Time after expected stimulus (ms)', 'FontSize', 18, 'FontWeight', 'bold');
 ylabel(ax2, y_label_str, 'FontSize', 20, 'FontWeight', 'bold');
+
+% ==================== FLOATING TOPOPLOTS & WIDER COLORBAR ====================
+topo_w = 0.080;
+topo_h = 0.180;
+topo_y = ax1_pos(2) + ax1_pos(4) + 0.025;
+t_span = time_win(2) - time_win(1);
+
+for k = 1:length(topo_times)
+    frac_x   = (topo_times(k) - time_win(1)) / t_span;
+    center_x = ax1_pos(1) + frac_x * ax1_pos(3);
+    ax_tA    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs_A(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_tA, 'parula'); clim(ax_tA, c_lim_topo);
+    title(ax_tA, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 13, 'FontWeight', 'bold');
+end
+
+for k = 1:length(topo_times)
+    frac_x   = (topo_times(k) - time_win(1)) / t_span;
+    center_x = ax2_pos(1) + frac_x * ax2_pos(3);
+    ax_tB    = axes('Position', [center_x - topo_w/2, topo_y, topo_w, topo_h]); %#ok<LAXES>
+    topoplot(topo_vecs_B(:, k), EEG.chanlocs, 'maplimits', c_lim_topo, ...
+        'numcontour', 3, 'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_tB, 'parula'); clim(ax_tB, c_lim_topo);
+    title(ax_tB, sprintf('%d ms', round(topo_times(k)*1000)), 'FontSize', 13, 'FontWeight', 'bold');
+end
+
+% Wider colorbar positioned cleanly in the center gap
+ax_cb = axes('Position', [0.478, 0.45, 0.018, 0.22], 'Visible', 'off');
+colormap(ax_cb, 'parula'); clim(ax_cb, c_lim_topo);
+cb = colorbar(ax_cb, 'Position', [0.478, 0.45, 0.018, 0.22]);
+cb.FontSize = 13;
+cb.Title.String = cb_unit_str;
+cb.Title.FontSize = 14;
+cb.Title.FontWeight = 'bold';
 
 % -------------------------------------------------------------------------
 % 7. FLOATING TOPOPLOTS & NON-OVERLAPPING COLORBAR
@@ -2368,458 +2409,440 @@ end
 close(fig1C);
 
 %% =========================================================================
-%% FIGURE 2: 4-ROW TOPOPLOTS (RAW, ALPHA, BETA, BETA/ALPHA) OVER [-0.2, 1.0 s]
+%% FIGURE 1C & 1D: COMBINED 4-ROW SPECTRAL TOPOPLOTS WITH CENTRAL COLORBAR [-1, 0.5]
 %% =========================================================================
-fprintf('\nGenerating Figure 2: 4-Row Spectral Power & Ratio Index Topoplots [-0.2 to 1.0 s]...\n');
+fprintf('\nGenerating Combined Figure 1C & 1D: 4-Row Spectral Topoplots (clim [-1, 0.5])...\n');
 
+% --- 1. DEFINE SLIDING WINDOWS & TIME CENTERS ---
 step_fig2    = 0.20; 
-win_starts_2 = -0.200 : step_fig2 : (1.000 - step_fig2);
+win_starts_2 = -0.200 : step_fig2 : (1.000 - step_fig2); % [-0.2, 0.0, 0.2, 0.4, 0.6, 0.8]
 t_centers_2  = win_starts_2 + step_fig2 / 2;
-n_win_2      = length(win_starts_2);
+n_win_2      = length(win_starts_2); % Exactly 6 windows
 
 subjs_fig2   = valid_retained_subjs;
 n_subjs_2    = length(subjs_fig2);
 
-conds_fig2   = {'P1', 'P3_missing', 'P2_2000'};
-pow_groups   = struct();
-
-for c_i = 1:length(conds_fig2)
-    c_name = conds_fig2{c_i};
-    pow_cell = cell(n_subjs_2, 3);
+% --- 2. EXTRACT HILBERT POWER ACROSS BANDS IF NOT ALREADY IN WORKSPACE ---
+if ~exist('pow_groups', 'var') || ~isfield(pow_groups, 'P1')
+    conds_fig2 = {'P1', 'P3_missing', 'P2_2000'};
+    pow_groups = struct();
     
-    for s_i = 1:n_subjs_2
-        s = subjs_fig2(s_i);
+    for c_i = 1:length(conds_fig2)
+        c_name   = conds_fig2{c_i};
+        pow_cell = cell(n_subjs_2, 3);
         
-        X_raw = data_all_conds.Raw.(c_name){s};
-        X_a   = data_all_conds.Alpha.(c_name){s};
-        X_b   = data_all_conds.Beta.(c_name){s};
-        [nc, nt, ntr] = size(X_a);
-        
-        valid_tr  = find(~isnan(squeeze(X_a(1, 1, :))));
-        P_raw_win = nan(nc, n_win_2, length(valid_tr));
-        P_a_win   = nan(nc, n_win_2, length(valid_tr));
-        P_b_win   = nan(nc, n_win_2, length(valid_tr));
-        
-        for tr_i = 1:length(valid_tr)
-            tr = valid_tr(tr_i);
+        for s_i = 1:n_subjs_2
+            s = subjs_fig2(s_i);
             
-            env_raw_sq = abs(hilbert(double(X_raw(:, :, tr))')).^2;
-            env_a_sq   = abs(hilbert(double(X_a(:, :, tr))')).^2;
-            env_b_sq   = abs(hilbert(double(X_b(:, :, tr))')).^2;
+            X_raw = data_all_conds.Raw.(c_name){s};
+            X_a   = data_all_conds.Alpha.(c_name){s};
+            X_b   = data_all_conds.Beta.(c_name){s};
+            [nc, nt, ntr] = size(X_a);
             
-            for w = 1:n_win_2
-                w_mask = (time_s >= win_starts_2(w)) & (time_s < win_starts_2(w) + step_fig2);
-                P_raw_win(:, w, tr_i) = mean(env_raw_sq(w_mask, :), 1, 'omitnan')';
-                P_a_win(:, w, tr_i)   = mean(env_a_sq(w_mask, :), 1, 'omitnan')';
-                P_b_win(:, w, tr_i)   = mean(env_b_sq(w_mask, :), 1, 'omitnan')';
+            valid_tr  = find(~isnan(squeeze(X_a(1, 1, :))));
+            P_raw_win = nan(nc, n_win_2, length(valid_tr));
+            P_a_win   = nan(nc, n_win_2, length(valid_tr));
+            P_b_win   = nan(nc, n_win_2, length(valid_tr));
+            
+            for tr_i = 1:length(valid_tr)
+                tr = valid_tr(tr_i);
+                
+                env_raw_sq = abs(hilbert(double(X_raw(:, :, tr))')).^2;
+                env_a_sq   = abs(hilbert(double(X_a(:, :, tr))')).^2;
+                env_b_sq   = abs(hilbert(double(X_b(:, :, tr))')).^2;
+                
+                for w = 1:n_win_2
+                    w_mask = (time_s >= win_starts_2(w)) & (time_s < win_starts_2(w) + step_fig2);
+                    P_raw_win(:, w, tr_i) = mean(env_raw_sq(w_mask, :), 1, 'omitnan')';
+                    P_a_win(:, w, tr_i)   = mean(env_a_sq(w_mask, :), 1, 'omitnan')';
+                    P_b_win(:, w, tr_i)   = mean(env_b_sq(w_mask, :), 1, 'omitnan')';
+                end
             end
+            
+            pow_cell{s_i, 1} = P_raw_win;
+            pow_cell{s_i, 2} = P_a_win;
+            pow_cell{s_i, 3} = P_b_win;
         end
-        
-        pow_cell{s_i, 1} = P_raw_win;
-        pow_cell{s_i, 2} = P_a_win;
-        pow_cell{s_i, 3} = P_b_win;
+        pow_groups.(c_name) = pow_cell;
     end
-    pow_groups.(c_name) = pow_cell;
 end
 
-% 1. Figure 2A: (Cued - Rand Null) / Cued (4 Rows)
-plot_group_power_index_v2(pow_groups.P1, pow_groups.P3_missing, t_centers_2, ...
-    'Cued', 'Rand Null', 'Cued vs Rand Null (-0.2 to 1.0s)', ...
-    EEG.chanlocs, 1000, 0.05, output_path);
+% --- 3. RENDER COMBINED FIGURE 1C & 1D ---
+row_labels_1cd = {'Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', ''}; % 4th row label removed per feedback
+clim_1cd       = [-1.0, 0.5];
+n_rows_1cd     = 4;
+n_cols_1cd     = n_win_2; % 6 windows (-0.2 to 1.0s)
 
-% 2. Figure 2B: (Cued - Unpred 2000) / Cued (4 Rows)
-plot_group_power_index_v2(pow_groups.P1, pow_groups.P2_2000, t_centers_2, ...
-    'Cued', 'Unpred 2000', 'Cued vs Unpred 2000 (-0.2 to 1.0s)', ...
-    EEG.chanlocs, 1000, 0.05, output_path);
+fig1CD  = figure('Position', [30, 50, 2400, 920], 'Color', 'w', 'Visible', 'off');
+fid_cap = fopen(fullfile(output_path, 'Figure1CD_Significant_Channels_For_Caption.txt'), 'w');
+fprintf(fid_cap, 'SIGNIFICANT CHANNELS (p < 0.05) FOR FIGURE 1C & 1D CAPTION:\n===========================================================\n');
+
+comparisons_1cd = {
+    'P3_missing', 'Rand. Null',   '(Cued - Rand. Null) / Cued',   0.04, 0.42; % Left Panel (1C)
+    'P2_2000',    'Unpred. 2000', '(Cued - Unpred. 2000) / Cued', 0.55, 0.42  % Right Panel (1D)
+};
+
+for panel_idx = 1:2
+    comp_field  = comparisons_1cd{panel_idx, 1};
+    comp_name   = comparisons_1cd{panel_idx, 2};
+    formula_str = comparisons_1cd{panel_idx, 3};
+    x_start     = comparisons_1cd{panel_idx, 4};
+    panel_w     = comparisons_1cd{panel_idx, 5};
+    
+    pow_ref  = pow_groups.P1;
+    pow_test = pow_groups.(comp_field);
+    
+    fprintf(fid_cap, '\n--- Panel %s: Cued vs. %s ---\n', char('B' + panel_idx), comp_name);
+    
+    cell_w = panel_w / n_cols_1cd;
+    cell_h = 0.78 / n_rows_1cd;
+    
+    for r = 1:n_rows_1cd
+        for w = 1:n_cols_1cd
+            subj_idx_mat = nan(cfg.num_ch, n_subjs_2);
+            for s_i = 1:n_subjs_2
+                if r <= 3
+                    m_ref  = mean(pow_ref{s_i, r}(:, w, :), 3, 'omitnan');
+                    m_test = mean(pow_test{s_i, r}(:, w, :), 3, 'omitnan');
+                else
+                    % Row 4: Beta / Alpha Ratio
+                    m_ref  = mean(pow_ref{s_i, 3}(:, w, :), 3, 'omitnan') ./ (mean(pow_ref{s_i, 2}(:, w, :), 3, 'omitnan') + eps);
+                    m_test = mean(pow_test{s_i, 3}(:, w, :), 3, 'omitnan') ./ (mean(pow_test{s_i, 2}(:, w, :), 3, 'omitnan') + eps);
+                end
+                subj_idx_mat(:, s_i) = (m_ref - m_test) ./ (abs(m_ref) + eps);
+            end
+            
+            mean_topo = mean(subj_idx_mat, 2, 'omitnan');
+            p_chans   = ones(cfg.num_ch, 1);
+            for ch = 1:cfg.num_ch
+                v_ch = subj_idx_mat(ch, :);
+                if any(~isnan(v_ch))
+                    p_chans(ch) = signrank(v_ch, 0);
+                end
+            end
+            sig_ch = find(p_chans < 0.05);
+            if ~isempty(sig_ch)
+                ch_names = strjoin({EEG.chanlocs(sig_ch).labels}, ', ');
+                fprintf(fid_cap, 'Row %d | %.1f to %.1fs: %s\n', r, win_starts_2(w), win_starts_2(w)+step_fig2, ch_names);
+            end
+            
+            ax_pos = [x_start + (w-1)*cell_w, 0.88 - r*cell_h, cell_w*0.92, cell_h*0.88];
+            ax_t = axes('Position', ax_pos, 'Color', 'w'); %#ok<LAXES>
+            % Plot significant channels as subtle dots ONLY (no text labels on scalp)
+            topoplot(mean_topo, EEG.chanlocs, 'maplimits', clim_1cd, ...
+                'electrodes', 'on', 'emarker2', {sig_ch, '.', 'k', 10, 1}, ...
+                'style', 'map', 'shading', 'interp');
+            colormap(ax_t, 'parula'); clim(ax_t, clim_1cd);
+            
+            % Row labels on far left of Panel C
+            if panel_idx == 1 && w == 1 && ~isempty(row_labels_1cd{r})
+                text(ax_t, -0.85, 0, row_labels_1cd{r}, 'Units', 'data', ...
+                    'Rotation', 90, 'HorizontalAlignment', 'center', ...
+                    'FontSize', 16, 'FontWeight', 'bold');
+            end
+            % Time labels on bottom row
+            if r == n_rows_1cd
+                text(ax_t, 0, -0.72, sprintf('%.1f–%.1fs', win_starts_2(w), win_starts_2(w)+step_fig2), ...
+                    'HorizontalAlignment', 'center', 'FontSize', 13, 'FontWeight', 'bold');
+            end
+        end
+    end
+    
+    % Formulas placed all the way on the far left and far right
+    if panel_idx == 1
+        annotation(fig1CD, 'textbox', [0.002, 0.40, 0.03, 0.25], 'String', formula_str, ...
+            'EdgeColor', 'none', 'FontSize', 16, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+    else
+        annotation(fig1CD, 'textbox', [0.965, 0.40, 0.03, 0.25], 'String', formula_str, ...
+            'EdgeColor', 'none', 'FontSize', 16, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+    end
+end
+fclose(fid_cap);
+
+% Single central colorbar locked to [-1, 0.5] (no redundant blue/red labels above it)
+ax_cb_mid = axes('Position', [0.485, 0.22, 0.016, 0.55], 'Visible', 'off');
+colormap(ax_cb_mid, 'parula'); clim(ax_cb_mid, clim_1cd);
+cb_mid = colorbar(ax_cb_mid, 'Position', [0.485, 0.22, 0.016, 0.55]);
+cb_mid.Limits = clim_1cd;
+cb_mid.Ticks  = [-1.0, -0.5, 0, 0.5];
+cb_mid.FontSize = 15;
+cb_mid.Label.String = 'Normalized Power Difference';
+cb_mid.Label.FontSize = 17;
+cb_mid.Label.FontWeight = 'bold';
+
+exportgraphics(fig1CD, fullfile(output_path, 'Figure_1CD_Combined_Spectral_Topos_600ppi.png'), 'Resolution', 600);
+saveas(fig1CD, fullfile(output_path, 'Figure_1CD_Combined_Spectral_Topos.svg'));
+close(fig1CD);
 
 %% =========================================================================
-%% AGGREGATE FIGURE 3B: MULTI-BAND SCREE PLOT
+%% FIGURE 2A (FORMERLY 3B): MULTI-BAND SCREE PLOT (NO VERTICAL LINES, LARGER LEGEND)
 %% =========================================================================
-disp('Generating Figure 3B: Aggregate Cumulative Variance Scree Plot...');
-
-fig3B = figure('Position', [100, 100, 1200, 800], 'Name', 'Figure 3B: Scree Plot', 'Color', 'w');
+fig2A = figure('Position', [100, 100, 1100, 750], 'Name', 'Figure 2A: Scree Plot', 'Color', 'w');
 hold on; 
-set(gca, 'FontSize', 22, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
+set(gca, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
 
 bands       = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
-band_labels = {'Raw Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
-colors      = {[0 0 0], [0 0.4470 0.7410], [0.8500 0.3250 0.0980], [0.4940 0.1840 0.5560]};
-markers     = {'o', 's', '^', 'd'};
+band_labels = {'Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
+colors_2a   = {[0 0 0], [0 0.45 0.70], [0.80 0.40 0.00], [0.80 0.60 0.70]};
+styles_2a   = {'-', '--', ':', '-.'};
+markers_2a  = {'o', 's', '^', 'd'};
 
 for b = 1:length(bands)
     if isfield(aggregate_spectra, bands{b})
-        plot(1:cfg.num_ch, aggregate_spectra.(bands{b}), ['-' markers{b}], ...
-             'Color', colors{b}, 'LineWidth', 2.8, 'MarkerSize', 9, ...
-             'MarkerFaceColor', colors{b}, 'DisplayName', band_labels{b});
+        plot(1:cfg.num_ch, aggregate_spectra.(bands{b}), ...
+             'LineStyle', styles_2a{b}, 'Marker', markers_2a{b}, ...
+             'Color', colors_2a{b}, 'LineWidth', 2.8, 'MarkerSize', 9, ...
+             'MarkerFaceColor', colors_2a{b}, 'DisplayName', band_labels{b});
     end
 end
 
-% Reference lines and truncation marker
-xline(cfg.m, 'k--', 'LineWidth', 2, 'HandleVisibility', 'off');
-yline(85, 'r:', 'LineWidth', 2, 'DisplayName', '85% Reference Line');
-plot(cfg.m, aggregate_spectra.Raw(cfg.m), 'rp', 'MarkerSize', 16, 'MarkerFaceColor', 'r', 'HandleVisibility', 'off');
+% Removed vertical truncation lines and text per lab feedback; kept clean 85% horizontal reference
+yline(85, 'k:', 'LineWidth', 1.8, 'DisplayName', '85% Variance');
 
-% --- SINGLE UNIFIED TRUNCATION LABEL (22 pt, smaller size, no overlap) ---
-text(cfg.m + 0.25, 75, sprintf('Truncation at m=%d\n(73.2-92.1%% variance explained)', cfg.m), ...
-    'FontSize', 22, 'Color', 'k', 'FontWeight', 'bold', 'BackgroundColor', 'w', 'Margin', 3);
+xlim([0.5, 15]); xticks(1:15); ylim([0, 100]); yticks(0:20:100);
+xlabel('Number of Spatial Directions', 'FontSize', 22, 'FontWeight', 'bold');
+ylabel('Cumulative Variance Explained (%)', 'FontSize', 22, 'FontWeight', 'bold');
 
-% Beta/Alpha intrinsic 2D manifold label (22 pt, matched smaller size)
-xline(2, ':', 'Color', [0.4940 0.1840 0.5560], 'LineWidth', 2, 'HandleVisibility', 'off');
-text(2.20, 46, 'Beta/Alpha intrinsic 2D manifold (63.4%, p < 0.05)', ...
-    'FontSize', 22, 'Color', [0.4940 0.1840 0.5560], 'FontWeight', 'bold', 'BackgroundColor', 'w', 'Margin', 2);
+% Enlarged legend, removed top title
+lgd = legend('Location', 'southeast', 'Box', 'off'); 
+lgd.FontSize = 24; 
+grid on; box on;
 
-xlim([0.5, 15]); xticks(1:15); ylim([0, 100]); yticks(0:10:100);
-xlabel('Number of Components (Spatial Directions)', 'FontSize', 24, 'FontWeight', 'bold');
-ylabel('Cumulative Variance Explained (%)', 'FontSize', 24, 'FontWeight', 'bold');
-title('Intrinsic Dimensionality Across Frequency Bands', 'FontSize', 28, 'FontWeight', 'bold');
+exportgraphics(fig2A, fullfile(output_path, 'Figure_2A_ScreePlot_600ppi.png'), 'Resolution', 600);
+saveas(fig2A, fullfile(output_path, 'Figure_2A_ScreePlot.svg'));
+close(fig2A);
 
-lgd = legend('Location', 'southeast'); 
-lgd.FontSize = 20; 
-grid on; 
-box on;
+%% =========================================================================
+%% COMBINED FIGURE 3 & 4: ONE TOPOPLOT PER DIRECTION + DUAL-CODED TRAJECTORIES + HOMOSCEDASTICITY ANOVA
+%% =========================================================================
+orig_warn_state = warning('off', 'all');
 
-save_file_3b = fullfile(output_path, 'Figure_3B_Aggregate_ScreePlot');
-try 
-    pause(0.5); 
-    exportgraphics(fig3B, [save_file_3b, '.png'], 'Resolution', 600);
-    saveas(fig3B, [save_file_3b, '.svg']); 
-catch
+% Output statistics directly to the Command Window
+dest_list = 1;
+
+% Ensure curr_subjs and num_sig exist if running outside the master band loop
+if ~exist('curr_subjs', 'var') || isempty(curr_subjs)
+    curr_subjs = valid_retained_subjs;
 end
-close(fig3B);
+if ~exist('sig_components', 'var') || isempty(sig_components)
+    sig_components = 1:cfg.m;
+end
+num_sig = length(sig_components);
+
+Xi_bar = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
+Xi_bar = Xi_bar ./ vecnorm(Xi_bar);
+topo_win_s = [0.2, 0.8];
+topo_idx   = find(time_s >= topo_win_s(1) & time_s <= topo_win_s(2));
+iWin_traj  = (t_centers >= 0.0 & t_centers <= 1.0);
+
+% --- 1. HOMOSCEDASTICITY TEST & REPEATED-MEASURES ANOVA ---
+for dest = dest_list
+    fprintf(dest, '\n--- HOMOSCEDASTICITY (BARTLETT/LEVENE) & RM-ANOVA ACROSS CONDITIONS [%s] ---\n', upper(band_name));
+end
+for k = 1:cfg.m
+    % Mean trajectory variance in [0, 1.0s] window per subject x condition [n_subjs x 5 conds]
+    Y_rm = squeeze(mean(subj_mean_traj(:, k, iWin_traj, curr_subjs), 3, 'omitnan'))';
+    p_homo = vartestn(Y_rm, 'TestType', 'Bartlett', 'Display', 'off');
+    
+    t_rm = array2table(Y_rm, 'VariableNames', {'C1','C2','C3','C4','C5'});
+    WithinDesign = table((1:5)', 'VariableNames', {'Condition'});
+    rm_model = fitrm(t_rm, 'C1-C5 ~ 1', 'WithinDesign', WithinDesign);
+    ranovatbl = ranova(rm_model);
+    p_rm = ranovatbl.pValue(1);
+    
+    for dest = dest_list
+        fprintf(dest, 'Direction Xi_%d | Homoscedasticity p = %.4f (Homo=%d) | RM-ANOVA F = %.2f, p = %.4f\n', ...
+            k, p_homo, p_homo > 0.05, ranovatbl.F(1), p_rm);
+    end
+end
+
+% --- 2. COMBINED FIGURE (ROWS = SIGNIFICANT DIRECTIONS, COLS = [1 TOPO | DELIVERED | OMITTED]) ---
+fig34 = figure('Position', [40, 40, 1650, 320 * num_sig], 'Color', 'w', 'Visible', 'off');
+t34   = tiledlayout(num_sig, 5, 'TileSpacing', 'compact', 'Padding', 'normal');
+
+for k_i = 1:num_sig
+    k  = sig_components(k_i);
+    xi = Xi_bar(:, k);
+    
+    % Compute single canonical spatial projection topoplot for direction Xi_k
+    erp_cued  = mean(cat(3, current_data.P1{curr_subjs}), 3, 'omitnan');
+    topo_vec  = xi * mean(xi' * erp_cued(:, topo_idx), 2, 'omitnan');
+    max_abs_c = max(abs(topo_vec)) + eps;
+    c_lim_k   = [-max_abs_c, max_abs_c];
+    
+    % COL 1: Single Topoplot for Direction Xi_k
+    ax_topo = nexttile(t34, (k_i-1)*5 + 1, [1, 1]);
+    topoplot(topo_vec, EEG.chanlocs, 'maplimits', c_lim_k, ...
+        'electrodes', 'on', 'style', 'map', 'shading', 'interp');
+    colormap(ax_topo, 'parula'); clim(ax_topo, c_lim_k);
+    text(ax_topo, -0.85, 0, sprintf('\\xi_%d', k), 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+    cb_k = colorbar(ax_topo, 'eastoutside'); cb_k.FontSize = 13;
+    
+    % Shared y-limits for row k
+    time_mask_zoom = (t_centers >= -0.1 & t_centers <= 1.0);
+    zoom_up = grp_mean_traj(:, k, time_mask_zoom) + grp_sem_traj(:, k, time_mask_zoom);
+    max_y   = max(zoom_up(:), [], 'omitnan') * 1.18;
+    if isempty(max_y) || ~isfinite(max_y) || max_y <= 0, max_y = 10; end
+    
+    % COL 2-3: Stimulus Delivered Zoomed Trajectory (No Shaded Background, Horizontal AOI Line)
+    ax_del = nexttile(t34, (k_i-1)*5 + 2, [1, 2]); hold(ax_del, 'on');
+    set(ax_del, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+    xline(ax_del, 0, 'k--', 'LineWidth', 1.4, 'HandleVisibility', 'off');
+    % Horizontal line at top indicating Area of Interest [0, 1.0 s] instead of gray/blue shading
+    plot(ax_del, [0, 1.0], [max_y*0.95, max_y*0.95], 'k-', 'LineWidth', 3.5, 'HandleVisibility', 'off');
+    
+    for c_cell = {'P1', 'P2_500', 'P3_500'}
+        c_str = c_cell{1};
+        c_idx = find(strcmp(cfg.all_conds, c_str));
+        y_val = reshape(grp_mean_traj(c_idx, k, :), 1, []);
+        y_sem = reshape(grp_sem_traj(c_idx, k, :), 1, []);
+        fill(ax_del, [t_centers, fliplr(t_centers)], max(0, [y_val + y_sem, fliplr(y_val - y_sem)]), ...
+            cond_colors(c_str), 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        plot(ax_del, t_centers, y_val, 'Color', cond_colors(c_str), ...
+            'LineStyle', cond_styles(c_str), 'LineWidth', cond_widths(c_str), 'DisplayName', clean_name(c_str));
+    end
+    xlim(ax_del, [-0.1, 1.0]); ylim(ax_del, [0, max_y]);
+    ylabel(ax_del, 'Projected Variance', 'FontSize', 18, 'FontWeight', 'bold');
+    if k_i == 1, legend(ax_del, 'Location', 'northeast', 'Box', 'off', 'FontSize', 15); end
+    if k_i == num_sig, xlabel(ax_del, 'Time (s)', 'FontSize', 18, 'FontWeight', 'bold'); end
+    
+    % COL 4-5: Stimulus Omitted / Delayed Zoomed Trajectory
+    ax_om = nexttile(t34, (k_i-1)*5 + 4, [1, 2]); hold(ax_om, 'on');
+    set(ax_om, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+    xline(ax_om, 0, 'k--', 'LineWidth', 1.4, 'HandleVisibility', 'off');
+    plot(ax_om, [0, 1.0], [max_y*0.95, max_y*0.95], 'k-', 'LineWidth', 3.5, 'HandleVisibility', 'off');
+    
+    for c_cell = {'P1', 'P2_2000', 'P3_missing'}
+        c_str = c_cell{1};
+        c_idx = find(strcmp(cfg.all_conds, c_str));
+        y_val = reshape(grp_mean_traj(c_idx, k, :), 1, []);
+        y_sem = reshape(grp_sem_traj(c_idx, k, :), 1, []);
+        fill(ax_om, [t_centers, fliplr(t_centers)], max(0, [y_val + y_sem, fliplr(y_val - y_sem)]), ...
+            cond_colors(c_str), 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        plot(ax_om, t_centers, y_val, 'Color', cond_colors(c_str), ...
+            'LineStyle', cond_styles(c_str), 'LineWidth', cond_widths(c_str), 'DisplayName', clean_name(c_str));
+    end
+    xlim(ax_om, [-0.1, 1.0]); ylim(ax_om, [0, max_y]);
+    if k_i == 1, legend(ax_om, 'Location', 'northeast', 'Box', 'off', 'FontSize', 15); end
+    if k_i == num_sig, xlabel(ax_om, 'Time (s)', 'FontSize', 18, 'FontWeight', 'bold'); end
+end
+
+exportgraphics(fig34, fullfile(group_dir, sprintf('Figure_3_4_Combined_Trajectories_%s_600ppi.png', band_name)), 'Resolution', 600);
+saveas(fig34, fullfile(group_dir, sprintf('Figure_3_4_Combined_Trajectories_%s.svg', band_name)));
+close(fig34);
+warning(orig_warn_state);
 
 %% =========================================================================
-%% AGGREGATE FIGURE 5A: SPLIT INTO (1) RAW (1x2) & (2) ALPHA/BETA (2x2)
+%% FIGURE 5A: ONE SUBPLOT PER DIRECTION (\eta_1 .. \eta_5), TOP CONDITION LABELS, CHI-SQUARE & PERMUTATION TESTS
 %% =========================================================================
-disp('Generating Figure 5A: Split Raw (1x2) and Alpha & Beta (2x2) log(r) Subspace Redistribution...');
-plot_bands_filt = {'Alpha', 'Beta'};
-band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
-    {[0 0.4470 0.7410], [0.8500 0.3250 0.0980]});
-raw_color = [0.15 0.15 0.15];
-cond_markers_A = {'o', 's', 'd'}; cond_styles_A  = {'-', '--', ':'};
-cond_markers_B = {'^', 'v', 'd', 'p'}; cond_styles_B  = {'-', '--', ':', '-.'};
+disp('Generating Updated Figure 5A: One Subplot per Direction (\eta_k) with t-test, Chi-Square & Permutation Tests...');
 
+conds_5a_idx   = [2, 3, 4, 5]; % Unpred. 500, Rand. 500, Unpred. 2000, Rand. Null
+conds_5a_names = {'Unpred. 500', 'Rand. 500', 'Unpred. 2000', 'Rand. Null'};
+
+% --- 1. COMPUTE UNIFIED DYNAMIC Y-LIMITS ACROSS ALL BANDS ---
 all_y_5a = [];
-for g_chk = 1:length(subj_group_names)
-    for b_chk = {'Raw', 'Alpha', 'Beta'}
-        b_name = b_chk{1};
-        if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g_chk
-            m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean;
-            se_val = aggregate_log_r.(b_name).cohort(g_chk).se;
-            all_y_5a = [all_y_5a; m_val(:) + se_val(:); m_val(:) - se_val(:)];
-        end
+for b_chk = {'Raw', 'Alpha', 'Beta'}
+    b_name = b_chk{1};
+    if isfield(aggregate_log_r, b_name) && ~isempty(aggregate_log_r.(b_name).cohort)
+        s_d = aggregate_log_r.(b_name).cohort(1).subj_data;
+        all_y_5a = [all_y_5a; s_d(:)];
     end
 end
-if isempty(all_y_5a), all_y_5a = [-1.5, 1.5]; end
-global_5a_ymin = min(-1.5, floor(min(all_y_5a) * 1.15 * 2) / 2);
-global_5a_ymax = max( 1.5, ceil(max(all_y_5a)  * 1.15 * 2) / 2);
-star_offset = (global_5a_ymax - global_5a_ymin) * 0.03;
+if isempty(all_y_5a) || all(isnan(all_y_5a))
+    all_y_5a = [-1.5, 1.5];
+end
+global_5a_ymin = min(-2.0, floor(min(all_y_5a, [], 'omitnan') * 1.15 * 2) / 2);
+global_5a_ymax = max( 2.0, ceil(max(all_y_5a,  [], 'omitnan') * 1.15 * 2) / 2);
 
-for g = 1:length(subj_group_names)
-    cohort_str = strrep(subj_group_names{g}, '_', ' ');
+% --- 2. RENDER SUBPLOTS PER FREQUENCY BAND ---
+for b_cell = {'Raw', 'Alpha', 'Beta'}
+    b_name = b_cell{1};
+    if ~isfield(aggregate_log_r, b_name), continue; end
     
-    % =====================================================================
-    % FIGURE 5A (PART 1): RAW BROADBAND SIGNAL (1x2 GRID)
-    % =====================================================================
-    fig5A_Raw = figure('Position', [100, 100, 1600, 680], ...
-        'Name', sprintf('Figure 5A (Raw): %s', cohort_str), 'Color', 'w');
-    tiledlayout(1, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
+    % s_data is [5 conds x 5 directions x 12 subjects]
+    s_data = aggregate_log_r.(b_name).cohort(1).subj_data;
+    n_s    = size(s_data, 3);
     
-    % --- COL 1: STIMULUS DELIVERED - RAW BROADBAND ---
-    nexttile; hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
-    yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    fig5A_eta = figure('Position', [50, 50, 1850, 500], 'Color', 'w', 'Visible', 'off');
+    tiledlayout(1, cfg.m, 'TileSpacing', 'compact', 'Padding', 'normal');
     
-    if isfield(aggregate_log_r, 'Raw') && length(aggregate_log_r.Raw.cohort) >= g
-        grp_m  = aggregate_log_r.Raw.cohort(g).mean;
-        grp_se = aggregate_log_r.Raw.cohort(g).se;
-        for i = 1:length(cfg.group_A)
-            c_idx = find(strcmp(cfg.all_conds, cfg.group_A{i}));
-            if isempty(c_idx), continue; end
-            x_jitter = (1:cfg.m) + (i - (length(cfg.group_A)+1)/2) * 0.08;
+    fprintf('\n================ FIGURE 5A STATS: %s BAND ================\n', upper(b_name));
+    
+    for k = 1:cfg.m
+        ax = nexttile; hold(ax, 'on');
+        set(ax, 'FontSize', 16, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+        yline(ax, 0, 'k--', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+        
+        for c_pos = 1:length(conds_5a_idx)
+            c_idx = conds_5a_idx(c_pos);
+            c_key = cfg.all_conds{c_idx};
+            vals  = squeeze(s_data(c_idx, k, :)); % 12 subjects for direction \eta_k
             
-            errorbar(x_jitter, grp_m(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), ...
-                'LineStyle', cond_styles_A{i}, 'Marker', cond_markers_A{i}, ...
-                'Color', raw_color, 'LineWidth', 2.8, 'MarkerSize', 10, ...
-                'MarkerFaceColor', raw_color, 'DisplayName', sprintf('%s (Raw)', clean_name(cfg.group_A{i})));
+            rng(100 * k + c_pos);
+            x_jit = c_pos + (rand(size(vals)) - 0.5) * 0.28;
+            scatter(ax, x_jit, vals, 70, cond_colors(c_key), 'filled', ...
+                'MarkerFaceAlpha', 0.75, 'MarkerEdgeColor', 'k', 'LineWidth', 0.8, ...
+                'DisplayName', clean_name(c_key));
             
-            if isfield(aggregate_log_r.Raw.cohort(g), 'subj_data')
-                s_data = aggregate_log_r.Raw.cohort(g).subj_data;
-                for k = 1:cfg.m
-                    dist = squeeze(s_data(c_idx, k, :));
-                    if length(dist) > 1 && ~all(isnan(dist))
-                        p_r = signrank(dist, 0, 'tail', 'right');
-                        p_l = signrank(dist, 0, 'tail', 'left');
-                        p_val = min(p_r, p_l);
-                        if p_val < 0.05
-                            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(x_jitter(k), y_pos, star, 'Color', raw_color, 'FontSize', 22, 'FontWeight', 'bold', ...
-                                'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                        end
-                    end
-                end
-            end
+            % Plot Mean +/- SEM crossbar
+            m_v  = mean(vals, 'omitnan');
+            se_v = std(vals, 0, 'omitnan') / sqrt(n_s);
+            errorbar(ax, c_pos, m_v, se_v, 'k', 'LineWidth', 2.0, 'CapSize', 8, 'HandleVisibility', 'off');
+            plot(ax, [c_pos-0.22, c_pos+0.22], [m_v, m_v], '-', 'Color', cond_colors(c_key), 'LineWidth', 3.5, 'HandleVisibility', 'off');
+            
+            % Place condition label on TOP of column (removing x-axis redundancy)
+            text(ax, c_pos, global_5a_ymax * 0.90, conds_5a_names{c_pos}, ...
+                'HorizontalAlignment', 'center', 'Rotation', 20, 'FontSize', 12, ...
+                'FontWeight', 'bold', 'Color', cond_colors(c_key));
         end
-    end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
-    xlabel('Spatial Direction Index', 'FontSize', 26, 'FontWeight', 'bold');
-    ylabel('log(r_i) \pm SEM', 'FontSize', 26, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Delivered — Raw\n(%s)', cohort_str), 'FontSize', 24, 'FontWeight', 'bold');
-    lgd = legend('Location', 'best'); lgd.FontSize = 18;
-    ylim([global_5a_ymin, global_5a_ymax]);
-    
-    % --- COL 2: STIMULUS OMITTED / DELAYED - RAW BROADBAND ---
-    nexttile; hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
-    yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    
-    if isfield(aggregate_log_r, 'Raw') && length(aggregate_log_r.Raw.cohort) >= g
-        grp_m  = aggregate_log_r.Raw.cohort(g).mean;
-        grp_se = aggregate_log_r.Raw.cohort(g).se;
-        for i = 1:length(cfg.group_B)
-            c_idx = find(strcmp(cfg.all_conds, cfg.group_B{i}));
-            if isempty(c_idx), continue; end
-            x_jitter = (1:cfg.m) + (i - (length(cfg.group_B)+1)/2) * 0.08;
-            
-            errorbar(x_jitter, grp_m(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), ...
-                'LineStyle', cond_styles_B{i}, 'Marker', cond_markers_B{i}, ...
-                'Color', raw_color, 'LineWidth', 2.8, 'MarkerSize', 10, ...
-                'MarkerFaceColor', raw_color, 'DisplayName', sprintf('%s (Raw)', clean_name(cfg.group_B{i})));
-            
-            if isfield(aggregate_log_r.Raw.cohort(g), 'subj_data')
-                s_data = aggregate_log_r.Raw.cohort(g).subj_data;
-                for k = 1:cfg.m
-                    dist = squeeze(s_data(c_idx, k, :));
-                    if length(dist) > 1 && ~all(isnan(dist))
-                        p_r = signrank(dist, 0, 'tail', 'right');
-                        p_l = signrank(dist, 0, 'tail', 'left');
-                        p_val = min(p_r, p_l);
-                        if p_val < 0.05
-                            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(x_jitter(k), y_pos, star, 'Color', raw_color, 'FontSize', 22, 'FontWeight', 'bold', ...
-                                'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                        end
-                    end
-                end
-            end
+        
+        % Paired t-test, Chi-Square Sign Test, & 1,000-Perm Test between Delivered (Unpred 500 vs Rand 500)
+        v_u500 = squeeze(s_data(2, k, :));
+        v_r500 = squeeze(s_data(3, k, :));
+        diff_500 = v_u500 - v_r500;
+        diff_500 = diff_500(~isnan(diff_500));
+        
+        [~, p_ttest] = ttest(diff_500, 0);
+        n_pos = sum(diff_500 > 0); n_neg = sum(diff_500 < 0);
+        chi2_stat = ((n_pos - n_neg)^2) / max(1, (n_pos + n_neg));
+        p_chi2    = 1 - chi2cdf(chi2_stat, 1);
+        
+        obs_m  = abs(mean(diff_500));
+        null_m = zeros(1000, 1);
+        for p_i = 1:1000
+            signs = (rand(length(diff_500), 1) > 0.5) * 2 - 1;
+            null_m(p_i) = abs(mean(diff_500 .* signs));
         end
+        p_perm = (1 + sum(null_m >= obs_m)) / 1001;
+        
+        fprintf('[%s | \\eta_%d] Unpred 500 vs Rand 500: t-test p=%.4f | Chi2 p=%.4f | Perm p=%.4f\n', ...
+            b_name, k, p_ttest, p_chi2, p_perm);
+        
+        xlim(ax, [0.4, 4.6]); 
+        ylim(ax, [global_5a_ymin, global_5a_ymax * 1.12]);
+        xticks(ax, []); % X-axis tick labels removed per feedback
+        xlabel(ax, sprintf('\\eta_%d', k), 'FontSize', 20, 'FontWeight', 'bold');
+        if k == 1
+            ylabel(ax, 'log(r) Redistribution', 'FontSize', 20, 'FontWeight', 'bold');
+        else
+            yticklabels(ax, {});
+        end
+        % Single legend in the last panel only
+        if k == cfg.m
+            lgd = legend(ax, 'Location', 'eastoutside', 'Box', 'off');
+            lgd.FontSize = 15;
+        end
+        grid(ax, 'on');
     end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
-    xlabel('Spatial Direction Index', 'FontSize', 26, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Omitted / Delayed — Raw\n(%s)', cohort_str), 'FontSize', 24, 'FontWeight', 'bold');
-    lgd = legend('Location', 'best'); lgd.FontSize = 18;
-    ylim([global_5a_ymin, global_5a_ymax]);
     
-    sgtitle(sprintf('Subspace Redistribution Geometry — Raw (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
-    
-    save_file_5a_raw = fullfile(output_path, sprintf('Figure_5A_Raw_LogR_%s', fig_tags{g}));
-    try 
-        pause(0.5); 
-        exportgraphics(fig5A_Raw, [save_file_5a_raw, '.png'], 'Resolution', 600);
-        saveas(fig5A_Raw, [save_file_5a_raw, '.svg']);
-        print(fig5A_Raw, [save_file_5a_raw, '.eps'], '-depsc');
+    save_file_5a = fullfile(output_path, sprintf('Figure_5A_Eta_Subplots_%s', b_name));
+    try
+        exportgraphics(fig5A_eta, [save_file_5a, '.png'], 'Resolution', 600);
+        saveas(fig5A_eta, [save_file_5a, '.svg']);
     catch
     end
-    
-    % =====================================================================
-    % FIGURE 5A (PART 2): FILTERED ALPHA & BETA SIGNALS (2x2 GRID)
-    % =====================================================================
-    fig5A_AB = figure('Position', [100, 100, 1600, 1100], ...
-        'Name', sprintf('Figure 5A (Alpha & Beta): %s', cohort_str), 'Color', 'w');
-    tiledlayout(2, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
-    
-    % --- ROW 1, COL 1: STIMULUS DELIVERED - ALPHA ---
-    b_name = 'Alpha'; col = band_colors_filt(b_name);
-    nexttile; hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
-    yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    
-    if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g
-        grp_m  = aggregate_log_r.(b_name).cohort(g).mean;
-        grp_se = aggregate_log_r.(b_name).cohort(g).se;
-        for i = 1:length(cfg.group_A)
-            c_idx = find(strcmp(cfg.all_conds, cfg.group_A{i}));
-            if isempty(c_idx), continue; end
-            x_jitter = (1:cfg.m) + (i - (length(cfg.group_A)+1)/2) * 0.08;
-            
-            errorbar(x_jitter, grp_m(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), ...
-                'LineStyle', cond_styles_A{i}, 'Marker', cond_markers_A{i}, ...
-                'Color', col, 'LineWidth', 2.8, 'MarkerSize', 10, ...
-                'MarkerFaceColor', col, 'DisplayName', sprintf('%s (%s)', clean_name(cfg.group_A{i}), b_name));
-            
-            if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
-                s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
-                for k = 1:cfg.m
-                    dist = squeeze(s_data(c_idx, k, :));
-                    if length(dist) > 1 && ~all(isnan(dist))
-                        p_r = signrank(dist, 0, 'tail', 'right');
-                        p_l = signrank(dist, 0, 'tail', 'left');
-                        p_val = min(p_r, p_l);
-                        if p_val < 0.05
-                            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(x_jitter(k), y_pos, star, 'Color', col, 'FontSize', 22, 'FontWeight', 'bold', ...
-                                'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                        end
-                    end
-                end
-            end
-        end
-    end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
-    ylabel('log(r_i) \pm SEM', 'FontSize', 26, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Delivered — Alpha\n(%s)', cohort_str), 'FontSize', 24, 'FontWeight', 'bold');
-    lgd = legend('Location', 'best'); lgd.FontSize = 18;
-    ylim([global_5a_ymin, global_5a_ymax]);
-    
-    % --- ROW 1, COL 2: STIMULUS OMITTED / DELAYED - ALPHA ---
-    nexttile; hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
-    yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    
-    if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g
-        grp_m  = aggregate_log_r.(b_name).cohort(g).mean;
-        grp_se = aggregate_log_r.(b_name).cohort(g).se;
-        for i = 1:length(cfg.group_B)
-            c_idx = find(strcmp(cfg.all_conds, cfg.group_B{i}));
-            if isempty(c_idx), continue; end
-            x_jitter = (1:cfg.m) + (i - (length(cfg.group_B)+1)/2) * 0.08;
-            
-            errorbar(x_jitter, grp_m(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), ...
-                'LineStyle', cond_styles_B{i}, 'Marker', cond_markers_B{i}, ...
-                'Color', col, 'LineWidth', 2.8, 'MarkerSize', 10, ...
-                'MarkerFaceColor', col, 'DisplayName', sprintf('%s (%s)', clean_name(cfg.group_B{i}), b_name));
-            
-            if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
-                s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
-                for k = 1:cfg.m
-                    dist = squeeze(s_data(c_idx, k, :));
-                    if length(dist) > 1 && ~all(isnan(dist))
-                        p_r = signrank(dist, 0, 'tail', 'right');
-                        p_l = signrank(dist, 0, 'tail', 'left');
-                        p_val = min(p_r, p_l);
-                        if p_val < 0.05
-                            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(x_jitter(k), y_pos, star, 'Color', col, 'FontSize', 22, 'FontWeight', 'bold', ...
-                                'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                        end
-                    end
-                end
-            end
-        end
-    end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
-    title(sprintf('Stimulus Omitted / Delayed — Alpha\n(%s)', cohort_str), 'FontSize', 24, 'FontWeight', 'bold');
-    lgd = legend('Location', 'best'); lgd.FontSize = 18;
-    ylim([global_5a_ymin, global_5a_ymax]);
-    
-    % --- ROW 2, COL 1: STIMULUS DELIVERED - BETA ---
-    b_name = 'Beta'; col = band_colors_filt(b_name);
-    nexttile; hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
-    yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    
-    if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g
-        grp_m  = aggregate_log_r.(b_name).cohort(g).mean;
-        grp_se = aggregate_log_r.(b_name).cohort(g).se;
-        for i = 1:length(cfg.group_A)
-            c_idx = find(strcmp(cfg.all_conds, cfg.group_A{i}));
-            if isempty(c_idx), continue; end
-            x_jitter = (1:cfg.m) + (i - (length(cfg.group_A)+1)/2) * 0.08;
-            
-            errorbar(x_jitter, grp_m(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), ...
-                'LineStyle', cond_styles_A{i}, 'Marker', cond_markers_A{i}, ...
-                'Color', col, 'LineWidth', 2.8, 'MarkerSize', 10, ...
-                'MarkerFaceColor', col, 'DisplayName', sprintf('%s (%s)', clean_name(cfg.group_A{i}), b_name));
-            
-            if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
-                s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
-                for k = 1:cfg.m
-                    dist = squeeze(s_data(c_idx, k, :));
-                    if length(dist) > 1 && ~all(isnan(dist))
-                        p_r = signrank(dist, 0, 'tail', 'right');
-                        p_l = signrank(dist, 0, 'tail', 'left');
-                        p_val = min(p_r, p_l);
-                        if p_val < 0.05
-                            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(x_jitter(k), y_pos, star, 'Color', col, 'FontSize', 22, 'FontWeight', 'bold', ...
-                                'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                        end
-                    end
-                end
-            end
-        end
-    end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
-    xlabel('Spatial Direction Index', 'FontSize', 26, 'FontWeight', 'bold');
-    ylabel('log(r_i) \pm SEM', 'FontSize', 26, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Delivered — Beta\n(%s)', cohort_str), 'FontSize', 24, 'FontWeight', 'bold');
-    lgd = legend('Location', 'best'); lgd.FontSize = 18;
-    ylim([global_5a_ymin, global_5a_ymax]);
-    
-    % --- ROW 2, COL 2: STIMULUS OMITTED / DELAYED - BETA ---
-    nexttile; hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
-    yline(0, 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    
-    if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g
-        grp_m  = aggregate_log_r.(b_name).cohort(g).mean;
-        grp_se = aggregate_log_r.(b_name).cohort(g).se;
-        for i = 1:length(cfg.group_B)
-            c_idx = find(strcmp(cfg.all_conds, cfg.group_B{i}));
-            if isempty(c_idx), continue; end
-            x_jitter = (1:cfg.m) + (i - (length(cfg.group_B)+1)/2) * 0.08;
-            
-            errorbar(x_jitter, grp_m(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), grp_se(c_idx, 1:cfg.m), ...
-                'LineStyle', cond_styles_B{i}, 'Marker', cond_markers_B{i}, ...
-                'Color', col, 'LineWidth', 2.8, 'MarkerSize', 10, ...
-                'MarkerFaceColor', col, 'DisplayName', sprintf('%s (%s)', clean_name(cfg.group_B{i}), b_name));
-            
-            if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
-                s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
-                for k = 1:cfg.m
-                    dist = squeeze(s_data(c_idx, k, :));
-                    if length(dist) > 1 && ~all(isnan(dist))
-                        p_r = signrank(dist, 0, 'tail', 'right');
-                        p_l = signrank(dist, 0, 'tail', 'left');
-                        p_val = min(p_r, p_l);
-                        if p_val < 0.05
-                            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(x_jitter(k), y_pos, star, 'Color', col, 'FontSize', 22, 'FontWeight', 'bold', ...
-                                'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                        end
-                    end
-                end
-            end
-        end
-    end
-    grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
-    xlabel('Spatial Direction Index', 'FontSize', 26, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Omitted / Delayed — Beta\n(%s)', cohort_str), 'FontSize', 24, 'FontWeight', 'bold');
-    lgd = legend('Location', 'best'); lgd.FontSize = 18;
-    ylim([global_5a_ymin, global_5a_ymax]);
-    
-    sgtitle(sprintf('Subspace Redistribution Geometry — Alpha & Beta (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
-    
-    save_file_5a_ab = fullfile(output_path, sprintf('Figure_5A_AlphaBeta_LogR_%s', fig_tags{g}));
-    try 
-        pause(0.5); 
-        exportgraphics(fig5A_AB, [save_file_5a_ab, '.png'], 'Resolution', 600);
-        saveas(fig5A_AB, [save_file_5a_ab, '.svg']);
-        print(fig5A_AB, [save_file_5a_ab, '.eps'], '-depsc');
-    catch
-    end
-    close(fig5A_AB);
+    close(fig5A_eta);
 end
 
 %% =========================================================================
@@ -3008,117 +3031,94 @@ for g = 1:length(subj_group_names)
 end
 
 %% =========================================================================
-%% AGGREGATE FIGURE 5C: MULTI-BAND DELTA LATENCY SCATTER PLOT
+%% FIGURE 5C: EXPANDED 60 POINTS PER CONDITION (12 SUBJECTS x 5 DIRECTIONS) + PAIRED T-TEST
 %% =========================================================================
-disp('Generating Figure 5C: Multi-Band Delta Latency Scatter Plots...');
-plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
-band_titles = {'Raw Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
-colors_conds = [0.500 0.500 0.500; ...
-                0.850 0.325 0.098; ...
-                0.929 0.694 0.125; ...
-                0.466 0.674 0.188; ...
-                0.301 0.745 0.933; ...
-                0.494 0.184 0.556];
-erp_conds = {'P1', 'P2_500', 'P3_500'};
-erp_conds_idx = find(ismember(cfg.all_conds, erp_conds));
+disp('Generating Updated Figure 5C: 60 Data Points (12 Subjs x 5 Directions) per Condition...');
 
-for g = 1:length(subj_group_names)
-    cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig5C = figure('Position', [100, 100, 1850, 750], 'Name', sprintf('Figure 5C: Latency %s', cohort_str));
-    tiledlayout(1, 4, 'TileSpacing', 'compact', 'Padding', 'normal');
+% --- 1. DEFINE BANDS & CANONICAL BAND TITLES ---
+plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
+band_titles = {'Broadband', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'};
+
+fig5C = figure('Position', [80, 80, 1850, 680], 'Color', 'w', 'Visible', 'off');
+tiledlayout(1, 4, 'TileSpacing', 'compact', 'Padding', 'normal');
+
+erp_conds_idx   = [1, 2, 3]; % Cued (P1), Unpred. 500 (P2-500), Rand. 500 (P3-500)
+erp_short_names = {'Cued', 'Unpred. 500', 'Rand. 500'};
+
+for b = 1:length(plot_bands)
+    b_name = plot_bands{b};
     
-    all_lat = [];
-    for b = 1:length(plot_bands)
-        if isfield(aggregate_lat, plot_bands{b}) && length(aggregate_lat.(plot_bands{b}).cohort) >= g
-            lat_subset = aggregate_lat.(plot_bands{b}).cohort(g).mean(erp_conds_idx, 1:cfg.m);
-            all_lat = [all_lat; lat_subset(:)];
-        end
+    % Retrieve full [5 conds x 5 dirs x 12 subjs] array -> 60 points per condition
+    if isfield(aggregate_lat, b_name) && isfield(aggregate_lat.(b_name).cohort(1), 'subj_dir_data')
+        lat_3d = aggregate_lat.(b_name).cohort(1).subj_dir_data;
+    else
+        % Fallback if full 3D array wasn't cached: expand subject means across m=5 directions
+        lat_3d = repmat(aggregate_lat.(b_name).cohort(1).subj_data, [1, 1, cfg.m]);
+        lat_3d = permute(lat_3d, [1, 3, 2]);
     end
     
-    if isempty(all_lat) || all(isnan(all_lat)), all_lat = [-50, 50]; end
-    y_bound = max(50, ceil(max(abs(all_lat)) / 25) * 25); 
+    ax = nexttile; hold(ax, 'on');
+    set(ax, 'FontSize', 18, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+    yline(ax, 0, 'k--', 'LineWidth', 1.8, 'HandleVisibility', 'off');
     
-    for b = 1:length(plot_bands)
-        b_name = plot_bands{b};
-        if ~isfield(aggregate_lat, b_name) || length(aggregate_lat.(b_name).cohort) < g, continue; end
+    for i = 1:length(erp_conds_idx)
+        c_idx = erp_conds_idx(i);
+        c_key = cfg.all_conds{c_idx};
         
-        lat_m = aggregate_lat.(b_name).cohort(g).mean;
+        % Flatten 5 directions x 12 subjects = 60 points
+        pts_60 = reshape(lat_3d(c_idx, 1:cfg.m, :), [], 1);
+        pts_60 = pts_60(~isnan(pts_60));
         
-        nexttile; hold on;
-        set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
+        rng(42 + i);
+        x_jit = i + (rand(size(pts_60)) - 0.5) * 0.36;
+        scatter(ax, x_jit, pts_60, 50, cond_colors(c_key), 'filled', ...
+            'MarkerFaceAlpha', 0.65, 'MarkerEdgeColor', 'none', 'DisplayName', clean_name(c_key));
         
-        yline(0, 'k-', 'LineWidth', 2.5, 'HandleVisibility', 'off');
+        m_60  = mean(pts_60);
+        se_60 = std(pts_60) / sqrt(length(pts_60));
+        plot(ax, [i-0.25, i+0.25], [m_60, m_60], 'k-', 'LineWidth', 3.5, 'HandleVisibility', 'off');
+        errorbar(ax, i, m_60, se_60, 'k', 'LineWidth', 2.0, 'HandleVisibility', 'off');
         
-        for i = 1:length(erp_conds_idx)
-            c_idx = erp_conds_idx(i);
-            
-            rng(42); 
-            x_jitter = i + (rand(1, cfg.m) - 0.5) * 0.35; 
-            
-            scatter(x_jitter, lat_m(c_idx, 1:cfg.m), 130, colors_conds(c_idx, :), 'filled', ...
-                'MarkerEdgeColor', 'k', 'LineWidth', 1.2, 'DisplayName', clean_name(cfg.all_conds{c_idx}));
-                
-            mean_val = mean(lat_m(c_idx, 1:cfg.m), 'omitnan');
-            plot([i-0.3, i+0.3], [mean_val, mean_val], '-', 'Color', colors_conds(c_idx, :), 'LineWidth', 4.5, 'HandleVisibility', 'off');
-            
-            if c_idx ~= find(strcmp(cfg.all_conds, 'P1'))
-                lat_data = aggregate_lat.(b_name).cohort(g).subj_data(c_idx, :);
-                lat_data_clean = lat_data(~isnan(lat_data));
-                if length(lat_data_clean) > 1
-                    p_r = signrank(lat_data_clean, 0, 'tail', 'right');
-                    p_l = signrank(lat_data_clean, 0, 'tail', 'left');
-                    p_val = min(p_r, p_l);
-                else
-                    p_val = 1;
-                end
-                if p_val < 0.05
-                    star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                    test_mean = mean(lat_m(c_idx, 1:cfg.m), 'omitnan');
-                    if test_mean > 0
-                        y_star = max(lat_m(c_idx, 1:cfg.m)) + y_bound * 0.08;
-                    else
-                        y_star = min(lat_m(c_idx, 1:cfg.m)) - y_bound * 0.08;
-                    end
-                    text(i, y_star, star, 'FontSize', 26, 'FontWeight', 'bold', ...
-                        'HorizontalAlignment', 'center', 'Color', colors_conds(c_idx, :));
-                end
+        % Paired t-test across the 60 subject-direction pairs vs 0
+        if c_idx > 1
+            [~, p_t60] = ttest(pts_60, 0);
+            if p_t60 < 0.05
+                star = '*'; if p_t60 < 0.01, star = '**'; end; if p_t60 < 0.001, star = '***'; end
+                text(ax, i, max(pts_60) + 12, star, 'FontSize', 22, 'FontWeight', 'bold', ...
+                    'HorizontalAlignment', 'center', 'Color', cond_colors(c_key));
             end
         end
         
-        xlim([0.5, 3.5]);
-        xticks(1:3);
-        xticklabels({'Cued', 'Unpred 500', 'Rand 500'});
-        xtickangle(35);
-        
-        if b == 1
-            ylabel('\Delta Latency relative to Cued (ms)', 'FontSize', 26, 'FontWeight', 'bold'); 
-        end
-        title(band_titles{b}, 'FontSize', 24, 'FontWeight', 'bold');
-        ylim([-y_bound * 1.18, y_bound * 1.18]); 
-        grid on;
+        % Condition labels on top of columns
+        text(ax, i, 135, erp_short_names{i}, 'HorizontalAlignment', 'center', ...
+            'FontSize', 14, 'FontWeight', 'bold', 'Color', cond_colors(c_key));
     end
     
-    sgtitle(sprintf('Stimulus Delivered: Tactile ERP \\Delta Latency Shifts (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
-    
-    lgd_names = cellfun(clean_name, cfg.all_conds(erp_conds_idx), 'UniformOutput', false);
-    lgd = legend(lgd_names, 'Location', 'northeastoutside');
-    lgd.FontSize = 18;
-    
-    save_file_5c = fullfile(output_path, sprintf('Figure_5C_MultiBand_Latency_%s', fig_tags{g}));
-    try 
-        pause(0.5); 
-        exportgraphics(fig5C, [save_file_5c, '.png'], 'Resolution', 600);
-        saveas(fig5C, [save_file_5c, '.svg']);
-        print(fig5C, [save_file_5c, '.eps'], '-depsc');
-    catch
+    xlim(ax, [0.4, 3.6]); ylim(ax, [-150, 150]);
+    xticks(ax, []); % Removed bottom x-axis tick labels
+    xlabel(ax, band_titles{b}, 'FontSize', 18, 'FontWeight', 'bold');
+    if b == 1
+        ylabel(ax, '\Delta Latency vs. Cued (ms)', 'FontSize', 20, 'FontWeight', 'bold');
+    else
+        yticklabels(ax, {});
     end
-    close(fig5C);
+    if b == length(plot_bands)
+        lgd = legend(ax, 'Location', 'eastoutside', 'Box', 'off');
+        lgd.FontSize = 16;
+    end
+    grid(ax, 'on');
 end
+
+exportgraphics(fig5C, fullfile(output_path, 'Figure_5C_60Pts_MultiBand_Latency_600ppi.png'), 'Resolution', 600);
+saveas(fig5C, fullfile(output_path, 'Figure_5C_60Pts_MultiBand_Latency.svg'));
+close(fig5C);
 
 %% =========================================================================
 %% AGGREGATE FIGURE 5D: MULTI-BAND % SUSTAINED (TONIC VS PHASIC) BAR PLOTS
 %% =========================================================================
 disp('Generating Figure 5D: Multi-Band Sustained % Bar Plots (Wilcoxon Signed-Rank)...');
+
+plot_bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 idx_P1      = find(strcmp(cfg.all_conds, 'P1'));
 idx_P2_500  = find(strcmp(cfg.all_conds, 'P2_500'));
 idx_P3_500  = find(strcmp(cfg.all_conds, 'P3_500'));
@@ -3127,9 +3127,9 @@ idx_P3_mis  = find(strcmp(cfg.all_conds, 'P3_missing'));
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig5D = figure('Position', [100, 100, 1600, 880], 'Name', sprintf('Figure 5D: Sustained %s', cohort_str));
+    fig5D = figure('Position', [100, 100, 1600, 880], 'Name', sprintf('Figure 5D: Sustained %s', cohort_str), 'Color', 'w');
     hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out');
+    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
     
     Y_mean = zeros(length(plot_bands), length(cfg.all_conds));
     Y_se   = zeros(length(plot_bands), length(cfg.all_conds));
@@ -3145,25 +3145,26 @@ for g = 1:length(subj_group_names)
     b_handle = bar(Y_mean, 'grouped');
     
     for i = 1:length(b_handle)
-        b_handle(i).FaceColor = colors_conds(i, :);
-        b_handle(i).DisplayName = clean_name(cfg.all_conds{i});
+        cond_k = cfg.all_conds{i};
+        b_handle(i).FaceColor   = cond_colors(cond_k);
+        b_handle(i).DisplayName = clean_name(cond_k);
     end
     
-    ngroups = size(Y_mean, 1);
-    nbars = size(Y_mean, 2);
-    groupwidth = min(0.8, nbars/(nbars + 1.5));
-    get_x_pos = @(b, c) b - groupwidth/2 + (2*c-1) * groupwidth / (2*nbars);
+    ngroups    = size(Y_mean, 1);
+    nbars      = size(Y_mean, 2);
+    groupwidth = min(0.8, nbars / (nbars + 1.5));
+    get_x_pos  = @(b, c) b - groupwidth/2 + (2*c-1) * groupwidth / (2*nbars);
     
     for i = 1:nbars
         x = (1:ngroups) - groupwidth/2 + (2*i-1) * groupwidth / (2*nbars);
-        errorbar(x, Y_mean(:,i), Y_se(:,i), 'k', 'linestyle', 'none', 'LineWidth', 1.8, 'HandleVisibility', 'off');
+        errorbar(x, Y_mean(:, i), Y_se(:, i), 'k', 'LineStyle', 'none', 'LineWidth', 1.8, 'HandleVisibility', 'off');
     end
     
     xticks(1:length(plot_bands));
-    xticklabels({'Raw', 'Alpha', 'Beta', 'Beta/Alpha Ratio'});
+    xticklabels({'Broadband', 'Alpha', 'Beta', 'Beta/Alpha Ratio'});
     ylabel('Sustained Variance (%)', 'FontSize', 26, 'FontWeight', 'bold');
     
-    lgd = legend('Location', 'north');
+    lgd = legend('Location', 'north', 'Box', 'off');
     lgd.FontSize = 18;
     grid on;
     
@@ -3188,7 +3189,7 @@ for g = 1:length(subj_group_names)
                 
                 if ~isnan(p1) && p1 < 0.05
                     x1 = get_x_pos(1, idx_P1); x2 = get_x_pos(1, idx_P3_500);
-                    y = max(Y_mean(1, [idx_P1, idx_P3_500]) + Y_se(1, [idx_P1, idx_P3_500])) + y_shift;
+                    y  = max(Y_mean(1, [idx_P1, idx_P3_500]) + Y_se(1, [idx_P1, idx_P3_500])) + y_shift;
                     plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
                     star = '*'; if p1 < 0.01, star = '**'; end; if p1 < 0.001, star = '***'; end
                     text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
@@ -3203,7 +3204,7 @@ for g = 1:length(subj_group_names)
                 
                 if ~isnan(p2) && p2 < 0.05
                     x1 = get_x_pos(1, idx_P1); x2 = get_x_pos(1, idx_P3_mis);
-                    y = max(Y_mean(1, [idx_P1, idx_P3_mis]) + Y_se(1, [idx_P1, idx_P3_mis])) + y_shift;
+                    y  = max(Y_mean(1, [idx_P1, idx_P3_mis]) + Y_se(1, [idx_P1, idx_P3_mis])) + y_shift;
                     plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
                     star = '*'; if p2 < 0.01, star = '**'; end; if p2 < 0.001, star = '***'; end
                     text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
@@ -3227,7 +3228,7 @@ for g = 1:length(subj_group_names)
                     
                     if ~isnan(p_ab1) && p_ab1 < 0.05
                         x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_500);
-                        y = max(Y_mean(b_idx, [idx_P1, idx_P3_500]) + Y_se(b_idx, [idx_P1, idx_P3_500])) + y_shift;
+                        y  = max(Y_mean(b_idx, [idx_P1, idx_P3_500]) + Y_se(b_idx, [idx_P1, idx_P3_500])) + y_shift;
                         plot([x1, x1, x2, x2], [y, y+1, y+1, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
                         star = '*'; if p_ab1 < 0.01, star = '**'; end; if p_ab1 < 0.001, star = '***'; end
                         text(mean([x1, x2]), y+2, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
@@ -3250,7 +3251,7 @@ for g = 1:length(subj_group_names)
                 
                 if ~isnan(p3) && p3 < 0.05
                     x1 = get_x_pos(4, idx_P1); x2 = get_x_pos(4, idx_P2_2000);
-                    y = max(Y_mean(4, [idx_P1, idx_P2_2000]) + Y_se(4, [idx_P1, idx_P2_2000])) + y_shift;
+                    y  = max(Y_mean(4, [idx_P1, idx_P2_2000]) + Y_se(4, [idx_P1, idx_P2_2000])) + y_shift;
                     plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
                     star = '*'; if p3 < 0.01, star = '**'; end; if p3 < 0.001, star = '***'; end
                     text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
@@ -3265,7 +3266,7 @@ for g = 1:length(subj_group_names)
                 
                 if ~isnan(p4) && p4 < 0.05
                     x1 = get_x_pos(4, idx_P2_500); x2 = get_x_pos(4, idx_P2_2000);
-                    y = max(Y_mean(4, [idx_P2_500, idx_P2_2000]) + Y_se(4, [idx_P2_500, idx_P2_2000])) + y_shift;
+                    y  = max(Y_mean(4, [idx_P2_500, idx_P2_2000]) + Y_se(4, [idx_P2_500, idx_P2_2000])) + y_shift;
                     plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
                     star = '*'; if p4 < 0.01, star = '**'; end; if p4 < 0.001, star = '***'; end
                     text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
@@ -3274,20 +3275,14 @@ for g = 1:length(subj_group_names)
         end
     end
     
-    % Whole figure title set to 28 pt bold
-    sgtitle(sprintf('Sustained vs. Phasic Stability (%s)', cohort_str), 'FontSize', 28, 'FontWeight', 'bold');
-    
     save_file_5d = fullfile(output_path, sprintf('Figure_5D_MultiBand_Sustained_%s', fig_tags{g}));
     try 
-        pause(0.5); 
         exportgraphics(fig5D, [save_file_5d, '.png'], 'Resolution', 600);
         saveas(fig5D, [save_file_5d, '.svg']);
-        print(fig5D, [save_file_5d, '.eps'], '-depsc');
     catch
     end
     close(fig5D);
 end
-disp('All analyses completed successfully (All Retained Subjects, excluding S3 & S14).');
 
 %% =========================================================================
 %% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE (ONE-TAILED)
