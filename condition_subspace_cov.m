@@ -2763,7 +2763,7 @@ for g = 1:length(subj_group_names)
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
     xlabel('Spatial Direction Index', 'FontSize', 24, 'FontWeight', 'bold');
     ylabel('log(r_i) \pm SEM', 'FontSize', 24, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Delivered — Raw\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
+    % title(sprintf('Stimulus Delivered — Raw\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
     ylim([global_4a_ymin, global_4a_ymax]);
     
@@ -2808,7 +2808,7 @@ for g = 1:length(subj_group_names)
     end
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
     xlabel('Spatial Direction Index', 'FontSize', 24, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Omitted / Delayed — Raw\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
+    % title(sprintf('Stimulus Omitted / Delayed — Raw\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
     ylim([global_4a_ymin, global_4a_ymax]);
     
@@ -3027,17 +3027,19 @@ end
 
 %% =========================================================================
 %% MANUSCRIPT FIGURE 4B (CODE SECTION 5B): GLOBAL SUBSPACE GAIN (G)
-%% (CONSISTENT PALETTE, SINGLE LEGEND IN LAST PANEL, PAIRED T-TESTS)
+%% (RAW LABEL, INDIVIDUAL SUBPLOT LEGENDS, STATISTICAL BRACKETS RESTORED)
 %% =========================================================================
 disp('Generating Manuscript Figure 4B (Code Fig 5B): Global Subspace Gain...');
+
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
-band_labels = {'Broadband', 'Alpha', 'Beta', sprintf('Beta/Alpha\nRatio')};
+% Renamed 'Broadband' to 'Raw'
+band_labels = {'Raw', 'Alpha', 'Beta', sprintf('Beta/Alpha\nRatio')};
 
 conds_plot_A = [{'P1'}, cfg.group_A];                  
 conds_plot_B = [{'P1'}, intersect(cfg.group_B, cfg.all_conds, 'stable')]; 
 idx_P1       = find(strcmp(cfg.all_conds, 'P1'));
 
-% --- COMPUTE SYNCHRONIZED Y-LIMIT ACROSS ALL BANDS & CONDITIONS ---
+% --- 1. COMPUTE SYNCHRONIZED Y-LIMIT ---
 global_max_gain = 0;
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
@@ -3047,12 +3049,14 @@ for b = 1:length(plot_bands)
         global_max_gain = max(global_max_gain, max(m_v + se_v, [], 'omitnan'));
     end
 end
-global_y_lim_5b = max(global_max_gain * 1.18, 2.5);
+global_y_lim_5b = max(global_max_gain * 1.25, 2.5);
 
 fig4B = figure('Position', [100, 100, 1850, 780], 'Color', 'w', 'Visible', 'off');
 tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
 
-% --- SUBPLOT 1: STIMULUS DELIVERED (NO REDUNDANT LEGEND) ---
+% =========================================================================
+% SUBPLOT 1: STIMULUS DELIVERED (INDEPENDENT NORTH LEGEND + WILCOXON BRACKETS)
+% =========================================================================
 ax_g1 = nexttile; hold(ax_g1, 'on');
 set(ax_g1, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
 
@@ -3076,17 +3080,58 @@ for i = 1:nA
 end
 
 groupwidthA = min(0.8, nA / (nA + 1.5));
+get_xA = @(b, i) b - groupwidthA/2 + (2*i - 1) * groupwidthA / (2*nA);
+
 for i = 1:nA
     x = (1:length(plot_bands)) - groupwidthA/2 + (2*i - 1) * groupwidthA / (2*nA);
     errorbar(ax_g1, x, Y_mean_A(:, i), Y_se_A(:, i), 'k', 'LineStyle', 'none', 'LineWidth', 2.0, 'HandleVisibility', 'off');
 end
-yline(ax_g1, 1.0, 'k--', 'LineWidth', 2, 'HandleVisibility', 'off');
+yline(ax_g1, 1.0, 'k--', 'LineWidth', 2, 'DisplayName', 'Cued Baseline (1.0)');
 
+% --- RESTORED SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
+for b = 1:length(plot_bands)
+    b_name = plot_bands{b};
+    if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
+    G_data = aggregate_G.(b_name).cohort(1).subj_data;
+    if size(G_data, 2) <= 1, continue; end
+    
+    band_max = max(Y_mean_A(b, :) + Y_se_A(b, :));
+    y_curr   = band_max + global_y_lim_5b * 0.04;
+    
+    for i = 2:nA
+        c_idx = find(strcmp(cfg.all_conds, conds_plot_A{i}));
+        if isempty(c_idx) || isempty(idx_P1), continue; end
+        
+        p_right = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'right');
+        p_left  = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'left');
+        p_val   = min(p_right, p_left);
+        
+        if p_val < 0.05
+            x1 = get_xA(b, 1); x2 = get_xA(b, i);
+            h_bar = global_y_lim_5b * 0.018;
+            plot(ax_g1, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
+                'k-', 'LineWidth', 1.3, 'HandleVisibility', 'off');
+            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
+            text(ax_g1, mean([x1, x2]), y_curr + h_bar * 1.6, star, ...
+                'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+            y_curr = y_curr + global_y_lim_5b * 0.08;
+        end
+    end
+end
+
+xlim(ax_g1, [0.4, 4.6]);
 xticks(ax_g1, 1:length(plot_bands)); xticklabels(ax_g1, band_labels); xtickangle(ax_g1, 0);
 ylabel(ax_g1, 'Global Subspace Gain (G)', 'FontSize', 22, 'FontWeight', 'bold');
+% title(ax_g1, 'Stimulus Delivered Gain (All Subjects)', 'FontSize', 20, 'FontWeight', 'bold');
 ylim(ax_g1, [0, global_y_lim_5b]); grid(ax_g1, 'on');
 
-% --- SUBPLOT 2: STIMULUS OMITTED / DELAYED (UNIFIED LEGEND IN LAST PANEL) ---
+% Subplot 1 Legend restored to top
+lgd1 = legend(ax_g1, 'Location', 'north', 'Box', 'on');
+lgd1.FontSize = 14;
+
+% =========================================================================
+% SUBPLOT 2: STIMULUS OMITTED / DELAYED (NO PHANTOM GAP + INDEPENDENT LEGEND)
+% =========================================================================
 ax_g2 = nexttile; hold(ax_g2, 'on');
 set(ax_g2, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
 
@@ -3110,24 +3155,64 @@ for i = 1:nB
 end
 
 groupwidthB = min(0.8, nB / (nB + 1.5));
+get_xB = @(b, i) b - groupwidthB/2 + (2*i - 1) * groupwidthB / (2*nB);
+
 for i = 1:nB
     x = (1:length(plot_bands)) - groupwidthB/2 + (2*i - 1) * groupwidthB / (2*nB);
     errorbar(ax_g2, x, Y_mean_B(:, i), Y_se_B(:, i), 'k', 'LineStyle', 'none', 'LineWidth', 2.0, 'HandleVisibility', 'off');
 end
 yline(ax_g2, 1.0, 'k--', 'LineWidth', 2, 'DisplayName', 'Cued Baseline (1.0)');
 
-% Dummy handles so the legend on the right panel documents all conditions
-h_u500 = bar(ax_g2, nan, nan, 'FaceColor', cond_colors('P2_500'), 'DisplayName', clean_name('P2_500'));
-h_r500 = bar(ax_g2, nan, nan, 'FaceColor', cond_colors('P3_500'), 'DisplayName', clean_name('P3_500'));
+% --- RESTORED SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
+for b = 1:length(plot_bands)
+    b_name = plot_bands{b};
+    if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
+    G_data = aggregate_G.(b_name).cohort(1).subj_data;
+    if size(G_data, 2) <= 1, continue; end
+    
+    band_max = max(Y_mean_B(b, :) + Y_se_B(b, :));
+    y_curr   = band_max + global_y_lim_5b * 0.04;
+    
+    for i = 2:nB
+        c_idx = find(strcmp(cfg.all_conds, conds_plot_B{i}));
+        if isempty(c_idx) || isempty(idx_P1), continue; end
+        
+        p_right = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'right');
+        p_left  = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'left');
+        p_val   = min(p_right, p_left);
+        
+        if p_val < 0.05
+            x1 = get_xB(b, 1); x2 = get_xB(b, i);
+            h_bar = global_y_lim_5b * 0.018;
+            plot(ax_g2, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
+                'k-', 'LineWidth', 1.3, 'HandleVisibility', 'off');
+            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
+            text(ax_g2, mean([x1, x2]), y_curr + h_bar * 1.6, star, ...
+                'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+            y_curr = y_curr + global_y_lim_5b * 0.08;
+        end
+    end
+end
 
+% Explicit xlim removes the phantom empty space to the left of Raw
+xlim(ax_g2, [0.4, 4.6]);
 xticks(ax_g2, 1:length(plot_bands)); xticklabels(ax_g2, band_labels); xtickangle(ax_g2, 0);
+% title(ax_g2, 'Stimulus Omitted / Delayed Gain (All Subjects)', 'FontSize', 20, 'FontWeight', 'bold');
 ylim(ax_g2, [0, global_y_lim_5b]); grid(ax_g2, 'on');
-lgd = legend(ax_g2, 'Location', 'eastoutside', 'Box', 'off'); lgd.FontSize = 16;
+
+% Subplot 2 Legend restored to top
+lgd2 = legend(ax_g2, 'Location', 'north', 'Box', 'on');
+lgd2.FontSize = 14;
+
+set(fig4B, 'Color', 'w', 'InvertHardcopy', 'off');
 
 save_file_4b = fullfile(output_path, 'Figure_4B_Code5B_MultiBand_Gain');
+save_file_5b = fullfile(output_path, 'Figure_5B_MultiBand_Gain');
 try
-    exportgraphics(fig4B, [save_file_4b, '.png'], 'Resolution', 600);
+    exportgraphics(fig4B, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+    exportgraphics(fig4B, [save_file_5b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
     saveas(fig4B, [save_file_4b, '.svg']);
+    saveas(fig4B, [save_file_5b, '.svg']);
 catch
 end
 close(fig4B);
@@ -3231,7 +3316,7 @@ idx_P3_mis  = find(strcmp(cfg.all_conds, 'P3_missing'));
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig5D = figure('Position', [100, 100, 1600, 880], 'Name', sprintf('Figure 5D: Sustained %s', cohort_str), 'Color', 'w');
+    fig5D = figure('Position', [100, 100, 1700, 880], 'Name', sprintf('Figure 5D: Sustained %s', cohort_str), 'Color', 'w');
     hold on; 
     set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
     
@@ -3272,7 +3357,7 @@ for g = 1:length(subj_group_names)
     lgd.FontSize = 18;
     grid on;
     
-    ylim([0, 60]);
+    ylim([0, 52]);
     
     plot([1.6, 3.4], [3.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
     plot([1.6, 1.6], [2.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
@@ -3391,22 +3476,41 @@ end
 %% =========================================================================
 %% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE (ONE-TAILED)
 %% =========================================================================
-fprintf('\n=========================================================================================================\n');
+fprintf('\n===============================================================================================================================\n');
 fprintf(' PNAS TABLE 1: FREQUENCY-SPECIFIC DIVISION OF LABOR (ONE-TAILED WILCOXON SIGNED-RANK TESTS)\n');
-fprintf('=========================================================================================================\n');
+fprintf('===============================================================================================================================\n');
+
+% Fallback definition for clean_name if not already in memory
+if ~exist('clean_name', 'var') || ~isa(clean_name, 'function_handle')
+    clean_name = @(c) strrep(strrep(strrep(strrep(strrep(strrep(strrep(c, ...
+        'BLT',        'Tactile-only'), ...
+        'BLA',        'Auditory-only'), ...
+        'P1',         'Cued'), ...
+        'P2_500',     'Unpred. 500'), ...
+        'P2_2000',    'Unpred. 2000'), ...
+        'P3_500',     'Rand. 500'), ...
+        'P3_missing', 'Rand. Null');
+end
+
+% Standardize band names (e.g., 'BetaAlphaRatio' -> 'Beta/Alpha Ratio', 'Broadband' -> 'Raw')
+clean_band = @(b) strrep(strrep(b, 'BetaAlphaRatio', 'Beta/Alpha Ratio'), 'Broadband', 'Raw');
 
 t1_band = {}; t1_cond = {}; t1_gain = {}; t1_geom = {}; t1_lat = {}; t1_sust = {};
+
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
+    b_disp = clean_band(b_name);
+    
     G_mat  = aggregate_G.(b_name).cohort(1).subj_data;    % [5 x n_ret]
     LR_mat = aggregate_log_r.(b_name).cohort(1).subj_data;% [5 x m x n_ret]
     LT_mat = aggregate_lat.(b_name).cohort(1).subj_data;  % [5 x n_ret]
     SU_mat = aggregate_sust.(b_name).cohort(1).subj_data; % [5 x n_ret]
     
     for c_i = 1:length(cfg.all_conds)
-        c_str = cfg.all_conds{c_i};
+        c_str  = cfg.all_conds{c_i};
+        c_disp = clean_name(c_str); % Use descriptive condition label
         
-        % 1. Gain (G +/- SEM, one-tailed signrank p vs P1)
+        % 1. Gain (G +/- SEM, one-tailed signrank p vs P1 / Cued)
         g_vals = G_mat(c_i, :);
         p_g    = 1.000; 
         if c_i > 1
@@ -3433,7 +3537,7 @@ for b = 1:length(plot_bands)
         
         geom_str = sprintf('[%+.2f, %+.2f] (min p=%.3f, q=%.3f)', min(lr_means), max(lr_means), min(p_dirs), min(q_dirs));
         
-        % 3. Latency shift (only for stimulus-delivered P1, P2_500, P3_500, one-tailed)
+        % 3. Latency shift (only for stimulus-delivered Cued, Unpred. 500, Rand. 500, one-tailed)
         if ismember(c_str, {'P1', 'P2_500', 'P3_500'})
             lt_vals = LT_mat(c_i, :);
             p_lt    = 1.000; 
@@ -3447,7 +3551,7 @@ for b = 1:length(plot_bands)
             lat_str = 'N/A (Withheld)';
         end
         
-        % 4. Sustained Share (%, one-tailed signrank p vs P1)
+        % 4. Sustained Share (%, one-tailed signrank p vs P1 / Cued)
         su_vals = SU_mat(c_i, :);
         p_su    = 1.000; 
         if c_i > 1
@@ -3457,17 +3561,22 @@ for b = 1:length(plot_bands)
         end
         sust_str = sprintf('%.2f +/- %.2f%% (p=%.3f)', mean(su_vals,'omitnan'), std(su_vals,0,'omitnan')/sqrt(length(su_vals)), p_su);
         
-        t1_band{end+1,1} = b_name; t1_cond{end+1,1} = c_str;
-        t1_gain{end+1,1} = g_str;  t1_geom{end+1,1} = geom_str;
-        t1_lat{end+1,1}  = lat_str; t1_sust{end+1,1} = sust_str;
+        t1_band{end+1,1} = b_disp; 
+        t1_cond{end+1,1} = c_disp;
+        t1_gain{end+1,1} = g_str;  
+        t1_geom{end+1,1} = geom_str;
+        t1_lat{end+1,1}  = lat_str; 
+        t1_sust{end+1,1} = sust_str;
         
-        fprintf('%-14s | %-10s | Gain: %-24s | Geom: %-36s | Lat: %-26s | Sust: %s\n', ...
-            b_name, c_str, g_str, geom_str, lat_str, sust_str);
+        fprintf('%-16s | %-14s | Gain: %-24s | Geom: %-36s | Lat: %-26s | Sust: %s\n', ...
+            b_disp, c_disp, g_str, geom_str, lat_str, sust_str);
     end
 end
+
 Table1_PNAS = table(t1_band, t1_cond, t1_gain, t1_geom, t1_lat, t1_sust, ...
     'VariableNames', {'Band', 'Condition', 'Global_Gain_G', 'Geometry_LogR_Range', 'Delta_Latency_ms', 'Sustained_Share_Pct'});
 writetable(Table1_PNAS, fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv'));
+fprintf('  -> Successfully exported Table 1 to: %s\n', fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv'));
 
 %% =========================================================================
 %% BAYES FACTOR (BF01) FOR BETA GAIN (ONE-TAILED WILCOXON + JZS/BIC BF01)
