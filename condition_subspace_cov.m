@@ -2189,15 +2189,15 @@ for col = 1:5
     grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
 end
 
-if isnumeric(subj_to_plot)
-    title(t_layout, sprintf('Subject %d: Multi-Channel ERP Dynamics (Trial Average \\pm 1 SD)', subj_to_plot), ...
-        'FontSize', 28, 'FontWeight', 'bold');
-    out_tag = sprintf('Subj%02d', subj_to_plot);
-else
-    title(t_layout, 'Grand Average: Multi-Channel ERP Dynamics (Mean \\pm 1 SD across Subjects)', ...
-        'FontSize', 28, 'FontWeight', 'bold');
-    out_tag = 'GrandAvg';
-end
+% if isnumeric(subj_to_plot)
+%     title(t_layout, sprintf('Subject %d: Multi-Channel ERP Dynamics (Trial Average \\pm 1 SD)', subj_to_plot), ...
+%         'FontSize', 28, 'FontWeight', 'bold');
+%     out_tag = sprintf('Subj%02d', subj_to_plot);
+% else
+%     title(t_layout, 'Grand Average: Multi-Channel ERP Dynamics (Mean \\pm 1 SD across Subjects)', ...
+%         'FontSize', 28, 'FontWeight', 'bold');
+%     out_tag = 'GrandAvg';
+% end
 
 % -------------------------------------------------------------------------
 % 6. EXPORT 600 PPI PUBLICATION IMAGES (PNG + VECTOR SVG)
@@ -2874,7 +2874,7 @@ for g = 1:length(subj_group_names)
     end
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
     ylabel('log(r_i) \pm SEM', 'FontSize', 24, 'FontWeight', 'bold');
-    title(sprintf('Stimulus Delivered — Alpha\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
+    % title(sprintf('Stimulus Delivered — Alpha\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
     ylim([global_4a_ymin, global_4a_ymax]);
     
@@ -2918,7 +2918,7 @@ for g = 1:length(subj_group_names)
         end
     end
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
-    title(sprintf('Stimulus Omitted / Delayed — Alpha\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
+    % title(sprintf('Stimulus Omitted / Delayed — Alpha\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
     ylim([global_4a_ymin, global_4a_ymax]);
     
