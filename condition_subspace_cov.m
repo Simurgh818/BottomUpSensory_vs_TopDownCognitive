@@ -2189,15 +2189,15 @@ for col = 1:5
     grid on; set(gca, 'XMinorGrid', 'off', 'YMinorGrid', 'off');
 end
 
-% if isnumeric(subj_to_plot)
-%     title(t_layout, sprintf('Subject %d: Multi-Channel ERP Dynamics (Trial Average \\pm 1 SD)', subj_to_plot), ...
-%         'FontSize', 28, 'FontWeight', 'bold');
-%     out_tag = sprintf('Subj%02d', subj_to_plot);
-% else
-%     title(t_layout, 'Grand Average: Multi-Channel ERP Dynamics (Mean \\pm 1 SD across Subjects)', ...
-%         'FontSize', 28, 'FontWeight', 'bold');
-%     out_tag = 'GrandAvg';
-% end
+if isnumeric(subj_to_plot)
+    % title(t_layout, sprintf('Subject %d: Multi-Channel ERP Dynamics (Trial Average \\pm 1 SD)', subj_to_plot), ...
+    %     'FontSize', 28, 'FontWeight', 'bold');
+    out_tag = sprintf('Subj%02d', subj_to_plot);
+else
+    % title(t_layout, 'Grand Average: Multi-Channel ERP Dynamics (Mean \\pm 1 SD across Subjects)', ...
+    %     'FontSize', 28, 'FontWeight', 'bold');
+    out_tag = 'GrandAvg';
+end
 
 % -------------------------------------------------------------------------
 % 6. EXPORT 600 PPI PUBLICATION IMAGES (PNG + VECTOR SVG)
@@ -3594,3 +3594,130 @@ for c_i = 2:length(cfg.all_conds)
     fprintf('Beta Gain %-12s vs P1: Mean G = %.3f | 1-tailed signrank p = %.3f | t = %+.2f | BF_01 = %.2f\n', ...
         cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr_1t, stats_t.tstat, bf01_G);
 end
+%% =========================================================================
+%% SUPPLEMENTAL TABLE 2: PER-CONDITION BAYES FACTORS (BF01) FOR BETA GAIN
+%% =========================================================================
+fprintf('\n=========================================================================================================\n');
+fprintf(' SUPPLEMENTAL TABLE 2: PER-CONDITION BAYES FACTORS (BF_01) FOR BETA GAIN STABILITY\n');
+fprintf('=========================================================================================================\n');
+
+G_beta_subjs = aggregate_G.Beta.cohort(1).subj_data; % [5 conds x 12 subjs]
+n_s = size(G_beta_subjs, 2);
+
+supp_cond      = {};
+supp_mean_gain = {};
+supp_diff_gain = {};
+supp_t_stat    = [];
+supp_df        = [];
+supp_p_sr_1t   = [];
+supp_p_sr_2t   = [];
+supp_bf01      = [];
+supp_evidence  = {};
+
+for c_i = 2:length(cfg.all_conds)
+    c_str  = cfg.all_conds{c_i};
+    c_disp = clean_name(c_str);
+    
+    diff_G = G_beta_subjs(c_i, :) - G_beta_subjs(1, :);
+    [~, p_t, ~, stats_t] = ttest(diff_G, 0);
+    
+    p_r = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'right');
+    p_l = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'left');
+    p_sr_1t = min(p_r, p_l);
+    p_sr_2t = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :));
+    
+    % JZS / Unit-information Bayes factor approximation for BF01 (Wagenmakers, 2007; Rouder et al., 2009)
+    bf01_val = sqrt(n_s) * (1 + (stats_t.tstat^2) / (n_s - 1))^(-n_s / 2);
+    
+    % Classification based on Lee & Wagenmakers (2013)
+    if bf01_val >= 3.0
+        ev_str = 'Moderate evidence for H0 (Stability)';
+    elseif bf01_val >= 1.0
+        ev_str = 'Anecdotal evidence for H0 (Inconclusive)';
+    else
+        ev_str = 'Evidence favors H1 (Modulation)';
+    end
+    
+    mean_g_str = sprintf('%.3f +/- %.3f', mean(G_beta_subjs(c_i, :)), std(G_beta_subjs(c_i, :))/sqrt(n_s));
+    diff_g_str = sprintf('%+.3f +/- %.3f', mean(diff_G), std(diff_G)/sqrt(n_s));
+    
+    supp_cond{end+1, 1}      = c_disp;
+    supp_mean_gain{end+1, 1} = mean_g_str;
+    supp_diff_gain{end+1, 1} = diff_g_str;
+    supp_t_stat(end+1, 1)    = round(stats_t.tstat, 2);
+    supp_df(end+1, 1)        = n_s - 1;
+    supp_p_sr_1t(end+1, 1)   = round(p_sr_1t, 3);
+    supp_p_sr_2t(end+1, 1)   = round(p_sr_2t, 3);
+    supp_bf01(end+1, 1)      = round(bf01_val, 2);
+    supp_evidence{end+1, 1}  = ev_str;
+    
+    fprintf('%-14s | Gain: %-18s | Diff: %-18s | t(%d) = %+.2f | p(1-tail)=%.3f | BF_01 = %4.2f | %s\n', ...
+        c_disp, mean_g_str, diff_g_str, n_s-1, stats_t.tstat, p_sr_1t, bf01_val, ev_str);
+end
+
+Supp_Table_2 = table(supp_cond, supp_mean_gain, supp_diff_gain, supp_t_stat, supp_df, ...
+    supp_p_sr_1t, supp_p_sr_2t, supp_bf01, supp_evidence, ...
+    'VariableNames', {'Condition', 'Beta_Gain_Mean_SEM', 'Delta_Gain_vs_Cued', 't_stat', 'df', ...
+                     'Wilcoxon_p_1tailed', 'Wilcoxon_p_2tailed', 'Bayes_Factor_BF01', 'Evidence_Interpretation'});
+
+csv_supp2 = fullfile(output_path, 'Supplemental_Table_2_Beta_Gain_BF01.csv');
+writetable(Supp_Table_2, csv_supp2);
+fprintf('  -> Successfully saved Supplemental Table 2 to: %s\n', csv_supp2);
+
+%% =========================================================================
+%% SUPPLEMENTAL FIGURE 1A: PROGRAMMATIC 32-CHANNEL 10-20 SCALP MONTAGE
+%% =========================================================================
+fprintf('\nGenerating Programmatic Supplemental Figure 1A: 32-Channel 10-20 Montage...\n');
+figS1A = figure('Position', [100, 100, 850, 800], 'Color', 'w', 'Visible', 'off');
+ax_s1a = axes('Position', [0.05, 0.12, 0.90, 0.82], 'Color', 'w'); hold(ax_s1a, 'on');
+
+% Plot blank EEGLAB head outline (nose, ears, head circumference)
+topoplot([], EEG.chanlocs, 'style', 'blank', 'electrodes', 'off', 'headrad', 0.5);
+
+% Extract 2D Cartesian coordinates from EEG.chanlocs (polar radius & angle)
+th = pi/180 * [EEG.chanlocs.theta];
+rd = [EEG.chanlocs.radius];
+[x_ch, y_ch] = pol2cart(th, rd); % Note: in EEGLAB polar coords, x is nose (up), y is left/right
+plot_x = y_ch; 
+plot_y = x_ch;
+
+labels_all = {EEG.chanlocs.labels};
+
+% Define anatomical region groupings and Okabe-Ito colors
+reg_names  = {'Frontal', 'Central / Sensorimotor', 'Temporal', 'Parietal', 'Occipital'};
+reg_colors = {[0.80 0.30 0.25], [0.00 0.60 0.50], [0.00 0.45 0.70], [0.90 0.60 0.00], [0.55 0.35 0.65]};
+
+for ch = 1:length(labels_all)
+    lbl = upper(labels_all{ch});
+    if startsWith(lbl, {'FP', 'AF', 'F3', 'F4', 'F7', 'F8', 'FZ'})
+        r_idx = 1; % Frontal
+    elseif startsWith(lbl, {'FC', 'C3', 'C4', 'CZ'})
+        r_idx = 2; % Central / Sensorimotor
+    elseif startsWith(lbl, {'T7', 'T8', 'TP', 'T3', 'T4', 'T5', 'T6'})
+        r_idx = 3; % Temporal
+    elseif startsWith(lbl, {'CP', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'PZ', 'P1', 'P2'})
+        r_idx = 4; % Parietal
+    else
+        r_idx = 5; % Occipital (PO, O1, Oz, O2)
+    end
+    
+    scatter(ax_s1a, plot_x(ch), plot_y(ch), 340, reg_colors{r_idx}, 'filled', ...
+        'MarkerEdgeColor', 'k', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+    text(ax_s1a, plot_x(ch), plot_y(ch) + 0.042, labels_all{ch}, ...
+        'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
+        'FontSize', 14, 'FontWeight', 'bold', 'FontName', 'Arial', 'Color', 'k');
+end
+
+% Add clean region legend at bottom
+for r_i = 1:length(reg_names)
+    scatter(ax_s1a, nan, nan, 180, reg_colors{r_i}, 'filled', ...
+        'MarkerEdgeColor', 'k', 'LineWidth', 1.2, 'DisplayName', reg_names{r_i});
+end
+lgd_s1a = legend(ax_s1a, 'Location', 'southoutside', 'Orientation', 'horizontal', 'Box', 'off');
+lgd_s1a.FontSize = 14;
+set(figS1A, 'Color', 'w', 'InvertHardcopy', 'off');
+
+exportgraphics(figS1A, fullfile(output_path, 'Supp_Figure_1A_Programmatic_Montage_600ppi.png'), ...
+    'Resolution', 600, 'BackgroundColor', 'white');
+saveas(figS1A, fullfile(output_path, 'Supp_Figure_1A_Programmatic_Montage.svg'));
+close(figS1A);
