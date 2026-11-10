@@ -2439,10 +2439,10 @@ saveas(fig2A, fullfile(output_path, 'Figure_2A_ScreePlot.svg'));
 close(fig2A);
 
 %% =========================================================================
-%% MANUSCRIPT FIGURE 4A (FORMERLY 5A): SUBSPACE REDISTRIBUTION GEOMETRY log(r)
+%% MANUSCRIPT FIGURE 3B (FORMERLY 4A / 5A): SUBSPACE REDISTRIBUTION GEOMETRY log(r)
 %% (PART 1: RAW 1x2 GRID | PART 2: ALPHA & BETA 2x2 GRID)
 %% =========================================================================
-disp('Generating Manuscript Figure 4A (Code Fig 5A): Reverted log(r) Subspace Redistribution...');
+disp('Generating Manuscript Figure 3B: log(r) Subspace Redistribution...');
 
 plot_bands_filt = {'Alpha', 'Beta'};
 band_colors_filt = containers.Map({'Alpha', 'Beta'}, ...
@@ -2453,30 +2453,30 @@ cond_markers_A = {'o', 's', 'd'}; cond_styles_A  = {'-', '--', ':'};
 cond_markers_B = {'^', 'v', 'd', 'p'}; cond_styles_B  = {'-', '--', ':', '-.'};
 
 % --- 1. PRE-CALCULATE SYNCHRONIZED Y-LIMITS ACROSS ALL SIGNALS ---
-all_y_4a = [];
+all_y_3b = [];
 for g_chk = 1:length(subj_group_names)
     for b_chk = {'Raw', 'Alpha', 'Beta'}
         b_name = b_chk{1};
         if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g_chk
             m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean;
             se_val = aggregate_log_r.(b_name).cohort(g_chk).se;
-            all_y_4a = [all_y_4a; m_val(:) + se_val(:); m_val(:) - se_val(:)];
+            all_y_3b = [all_y_3b; m_val(:) + se_val(:); m_val(:) - se_val(:)];
         end
     end
 end
-if isempty(all_y_4a) || all(isnan(all_y_4a)), all_y_4a = [-1.5, 1.5]; end
-global_4a_ymin = min(-1.5, floor(min(all_y_4a, [], 'omitnan') * 1.15 * 2) / 2);
-global_4a_ymax = max( 1.5, ceil(max(all_y_4a,  [], 'omitnan') * 1.15 * 2) / 2);
-star_offset = (global_4a_ymax - global_4a_ymin) * 0.035;
+if isempty(all_y_3b) || all(isnan(all_y_3b)), all_y_3b = [-1.5, 1.5]; end
+global_3b_ymin = min(-1.5, floor(min(all_y_3b, [], 'omitnan') * 1.15 * 2) / 2);
+global_3b_ymax = max( 1.5, ceil(max(all_y_3b,  [], 'omitnan') * 1.15 * 2) / 2);
+star_offset = (global_3b_ymax - global_3b_ymin) * 0.035;
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
     
     % =====================================================================
-    % FIGURE 4A (PART 1): RAW BROADBAND SIGNAL (1x2 GRID)
+    % FIGURE 3B (PART 1): RAW BROADBAND SIGNAL (1x2 GRID)
     % =====================================================================
-    fig4A_Raw = figure('Position', [100, 100, 1600, 680], ...
-        'Name', sprintf('Figure 4A (Raw): %s', cohort_str), 'Color', 'w', 'Visible', 'off');
+    fig3B_Raw = figure('Position', [100, 100, 1600, 680], ...
+        'Name', sprintf('Figure 3B (Raw): %s', cohort_str), 'Color', 'w', 'Visible', 'off');
     tiledlayout(1, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
     
     % --- COL 1: STIMULUS DELIVERED - RAW BROADBAND ---
@@ -2521,9 +2521,8 @@ for g = 1:length(subj_group_names)
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
     xlabel('Spatial Direction Index', 'FontSize', 24, 'FontWeight', 'bold');
     ylabel('log(r_i) \pm SEM', 'FontSize', 24, 'FontWeight', 'bold');
-    % title(sprintf('Stimulus Delivered — Raw\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
-    ylim([global_4a_ymin, global_4a_ymax]);
+    ylim([global_3b_ymin, global_3b_ymax]);
     
     % --- COL 2: STIMULUS OMITTED / DELAYED - RAW BROADBAND ---
     nexttile; hold on; 
@@ -2566,28 +2565,24 @@ for g = 1:length(subj_group_names)
     end
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m);
     xlabel('Spatial Direction Index', 'FontSize', 24, 'FontWeight', 'bold');
-    % title(sprintf('Stimulus Omitted / Delayed — Raw\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
-    ylim([global_4a_ymin, global_4a_ymax]);
+    ylim([global_3b_ymin, global_3b_ymax]);
     
-    set(fig4A_Raw, 'Color', 'w', 'InvertHardcopy', 'off');
+    set(fig3B_Raw, 'Color', 'w', 'InvertHardcopy', 'off');
     
-    save_file_4a_raw = fullfile(output_path, sprintf('Figure_4A_Raw_LogR_%s', fig_tags{g}));
-    save_file_5a_raw = fullfile(output_path, sprintf('Figure_5A_Raw_LogR_%s', fig_tags{g}));
+    save_file_3b_raw = fullfile(output_path, sprintf('Figure_3B_Raw_LogR_%s', fig_tags{g}));
     try 
-        exportgraphics(fig4A_Raw, [save_file_4a_raw, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-        exportgraphics(fig4A_Raw, [save_file_5a_raw, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-        saveas(fig4A_Raw, [save_file_4a_raw, '.svg']);
-        saveas(fig4A_Raw, [save_file_5a_raw, '.svg']);
+        exportgraphics(fig3B_Raw, [save_file_3b_raw, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+        saveas(fig3B_Raw, [save_file_3b_raw, '.svg']);
     catch
     end
-    close(fig4A_Raw);
+    close(fig3B_Raw);
     
     % =====================================================================
-    % FIGURE 4A (PART 2): FILTERED ALPHA & BETA SIGNALS (2x2 GRID)
+    % FIGURE 3B (PART 2): FILTERED ALPHA & BETA SIGNALS (2x2 GRID)
     % =====================================================================
-    fig4A_AB = figure('Position', [100, 100, 1600, 1100], ...
-        'Name', sprintf('Figure 4A (Alpha & Beta): %s', cohort_str), 'Color', 'w', 'Visible', 'off');
+    fig3B_AB = figure('Position', [100, 100, 1600, 1100], ...
+        'Name', sprintf('Figure 3B (Alpha & Beta): %s', cohort_str), 'Color', 'w', 'Visible', 'off');
     tiledlayout(2, 2, 'TileSpacing', 'normal', 'Padding', 'normal');
     
     % --- ROW 1, COL 1: STIMULUS DELIVERED - ALPHA ---
@@ -2632,9 +2627,8 @@ for g = 1:length(subj_group_names)
     end
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
     ylabel('log(r_i) \pm SEM', 'FontSize', 24, 'FontWeight', 'bold');
-    % title(sprintf('Stimulus Delivered — Alpha\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
-    ylim([global_4a_ymin, global_4a_ymax]);
+    ylim([global_3b_ymin, global_3b_ymax]);
     
     % --- ROW 1, COL 2: STIMULUS OMITTED / DELAYED - ALPHA ---
     nexttile; hold on; 
@@ -2676,9 +2670,8 @@ for g = 1:length(subj_group_names)
         end
     end
     grid on; xlim([0.5, cfg.m + 0.5]); xticks(1:cfg.m); xticklabels({});
-    % title(sprintf('Stimulus Omitted / Delayed — Alpha\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
-    ylim([global_4a_ymin, global_4a_ymax]);
+    ylim([global_3b_ymin, global_3b_ymax]);
     
     % --- ROW 2, COL 1: STIMULUS DELIVERED - BETA ---
     b_name = 'Beta'; col = band_colors_filt(b_name);
@@ -2725,7 +2718,7 @@ for g = 1:length(subj_group_names)
     ylabel('log(r_i) \pm SEM', 'FontSize', 24, 'FontWeight', 'bold');
     title(sprintf('Stimulus Delivered — Beta\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
-    ylim([global_4a_ymin, global_4a_ymax]);
+    ylim([global_3b_ymin, global_3b_ymax]);
     
     % --- ROW 2, COL 2: STIMULUS OMITTED / DELAYED - BETA ---
     nexttile; hold on; 
@@ -2770,27 +2763,26 @@ for g = 1:length(subj_group_names)
     xlabel('Spatial Direction Index', 'FontSize', 24, 'FontWeight', 'bold');
     title(sprintf('Stimulus Omitted / Delayed — Beta\n(%s)', cohort_str), 'FontSize', 22, 'FontWeight', 'bold');
     legend('Location', 'best', 'Box', 'on', 'FontSize', 16);
-    ylim([global_4a_ymin, global_4a_ymax]);
+    ylim([global_3b_ymin, global_3b_ymax]);
     
-    set(fig4A_AB, 'Color', 'w', 'InvertHardcopy', 'off');
+    set(fig3B_AB, 'Color', 'w', 'InvertHardcopy', 'off');
     
-    save_file_4a_ab = fullfile(output_path, sprintf('Figure_4A_AlphaBeta_LogR_%s', fig_tags{g}));
+    save_file_3b_ab = fullfile(output_path, sprintf('Figure_3B_AlphaBeta_LogR_%s', fig_tags{g}));
     try 
-        exportgraphics(fig4A_AB, [save_file_4a_ab, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-        saveas(fig4A_AB, [save_file_4a_ab, '.svg']);
+        exportgraphics(fig3B_AB, [save_file_3b_ab, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+        saveas(fig3B_AB, [save_file_3b_ab, '.svg']);
     catch
     end
-    close(fig4A_AB);
+    close(fig3B_AB);
 end
 
 %% =========================================================================
-%% MANUSCRIPT FIGURE 4B (CODE SECTION 5B): GLOBAL SUBSPACE GAIN (G)
+%% MANUSCRIPT FIGURE 3C (FORMERLY 4B / 5B): GLOBAL SUBSPACE GAIN (G)
 %% (RAW LABEL, INDIVIDUAL SUBPLOT LEGENDS, STATISTICAL BRACKETS RESTORED)
 %% =========================================================================
-disp('Generating Manuscript Figure 4B (Code Fig 5B): Global Subspace Gain...');
+disp('Generating Manuscript Figure 3C: Global Subspace Gain...');
 
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
-% Renamed 'Broadband' to 'Raw'
 band_labels = {'Raw', 'Alpha', 'Beta', sprintf('Beta/Alpha\nRatio')};
 
 conds_plot_A = [{'P1'}, cfg.group_A];                  
@@ -2807,9 +2799,9 @@ for b = 1:length(plot_bands)
         global_max_gain = max(global_max_gain, max(m_v + se_v, [], 'omitnan'));
     end
 end
-global_y_lim_5b = max(global_max_gain * 1.25, 2.5);
+global_y_lim_3c = max(global_max_gain * 1.25, 2.5);
 
-fig4B = figure('Position', [100, 100, 1850, 780], 'Color', 'w', 'Visible', 'off');
+fig3C = figure('Position', [100, 100, 1850, 780], 'Name', 'Figure 3C: Global Subspace Gain', 'Color', 'w', 'Visible', 'off');
 tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
 
 % =========================================================================
@@ -2846,7 +2838,7 @@ for i = 1:nA
 end
 yline(ax_g1, 1.0, 'k--', 'LineWidth', 2, 'DisplayName', 'Cued Baseline (1.0)');
 
-% --- RESTORED SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
+% --- SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
     if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
@@ -2854,7 +2846,7 @@ for b = 1:length(plot_bands)
     if size(G_data, 2) <= 1, continue; end
     
     band_max = max(Y_mean_A(b, :) + Y_se_A(b, :));
-    y_curr   = band_max + global_y_lim_5b * 0.04;
+    y_curr   = band_max + global_y_lim_3c * 0.04;
     
     for i = 2:nA
         c_idx = find(strcmp(cfg.all_conds, conds_plot_A{i}));
@@ -2866,13 +2858,13 @@ for b = 1:length(plot_bands)
         
         if p_val < 0.05
             x1 = get_xA(b, 1); x2 = get_xA(b, i);
-            h_bar = global_y_lim_5b * 0.018;
+            h_bar = global_y_lim_3c * 0.018;
             plot(ax_g1, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
                 'k-', 'LineWidth', 1.3, 'HandleVisibility', 'off');
             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
             text(ax_g1, mean([x1, x2]), y_curr + h_bar * 1.6, star, ...
                 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-            y_curr = y_curr + global_y_lim_5b * 0.08;
+            y_curr = y_curr + global_y_lim_3c * 0.08;
         end
     end
 end
@@ -2880,10 +2872,8 @@ end
 xlim(ax_g1, [0.4, 4.6]);
 xticks(ax_g1, 1:length(plot_bands)); xticklabels(ax_g1, band_labels); xtickangle(ax_g1, 0);
 ylabel(ax_g1, 'Global Subspace Gain (G)', 'FontSize', 22, 'FontWeight', 'bold');
-% title(ax_g1, 'Stimulus Delivered Gain (All Subjects)', 'FontSize', 20, 'FontWeight', 'bold');
-ylim(ax_g1, [0, global_y_lim_5b]); grid(ax_g1, 'on');
+ylim(ax_g1, [0, global_y_lim_3c]); grid(ax_g1, 'on');
 
-% Subplot 1 Legend restored to top
 lgd1 = legend(ax_g1, 'Location', 'north', 'Box', 'on');
 lgd1.FontSize = 14;
 
@@ -2921,7 +2911,7 @@ for i = 1:nB
 end
 yline(ax_g2, 1.0, 'k--', 'LineWidth', 2, 'DisplayName', 'Cued Baseline (1.0)');
 
-% --- RESTORED SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
+% --- SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
     if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
@@ -2929,7 +2919,7 @@ for b = 1:length(plot_bands)
     if size(G_data, 2) <= 1, continue; end
     
     band_max = max(Y_mean_B(b, :) + Y_se_B(b, :));
-    y_curr   = band_max + global_y_lim_5b * 0.04;
+    y_curr   = band_max + global_y_lim_3c * 0.04;
     
     for i = 2:nB
         c_idx = find(strcmp(cfg.all_conds, conds_plot_B{i}));
@@ -2941,53 +2931,49 @@ for b = 1:length(plot_bands)
         
         if p_val < 0.05
             x1 = get_xB(b, 1); x2 = get_xB(b, i);
-            h_bar = global_y_lim_5b * 0.018;
+            h_bar = global_y_lim_3c * 0.018;
             plot(ax_g2, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
                 'k-', 'LineWidth', 1.3, 'HandleVisibility', 'off');
             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
             text(ax_g2, mean([x1, x2]), y_curr + h_bar * 1.6, star, ...
                 'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-            y_curr = y_curr + global_y_lim_5b * 0.08;
+            y_curr = y_curr + global_y_lim_3c * 0.08;
         end
     end
 end
 
-% Explicit xlim removes the phantom empty space to the left of Raw
 xlim(ax_g2, [0.4, 4.6]);
 xticks(ax_g2, 1:length(plot_bands)); xticklabels(ax_g2, band_labels); xtickangle(ax_g2, 0);
-% title(ax_g2, 'Stimulus Omitted / Delayed Gain (All Subjects)', 'FontSize', 20, 'FontWeight', 'bold');
-ylim(ax_g2, [0, global_y_lim_5b]); grid(ax_g2, 'on');
+ylim(ax_g2, [0, global_y_lim_3c]); grid(ax_g2, 'on');
 
-% Subplot 2 Legend restored to top
 lgd2 = legend(ax_g2, 'Location', 'north', 'Box', 'on');
 lgd2.FontSize = 14;
 
-set(fig4B, 'Color', 'w', 'InvertHardcopy', 'off');
+set(fig3C, 'Color', 'w', 'InvertHardcopy', 'off');
 
-save_file_4b = fullfile(output_path, 'Figure_4B_Code5B_MultiBand_Gain');
-save_file_5b = fullfile(output_path, 'Figure_5B_MultiBand_Gain');
+save_file_3c = fullfile(output_path, 'Figure_3C_MultiBand_Gain');
 try
-    exportgraphics(fig4B, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-    exportgraphics(fig4B, [save_file_5b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-    saveas(fig4B, [save_file_4b, '.svg']);
-    saveas(fig4B, [save_file_5b, '.svg']);
+    exportgraphics(fig3C, [save_file_3c, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+    saveas(fig3C, [save_file_3c, '.svg']);
 catch
 end
-close(fig4B);
+close(fig3C);
 
 %% =========================================================================
-%% FIGURE 4A (old Figure 5C): DELTA LATENCY SCATTER PLOT (CUED EXCLUDED, TOP BRACKET)
+%% FIGURE 4A (FORMERLY 5C): DELTA LATENCY VIOLIN PLOT (CUED EXCLUDED, TOP BRACKET)
 %% =========================================================================
-fprintf('\nGenerating Figure 4A: Delta Latency Scatter Plot (Cued Excluded, Top Brackets)...\n');
+fprintf('\nGenerating Figure 4A: Delta Latency Violin Plots (Cued Excluded, Top Brackets)...\n');
 
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_titles = {'Broadband Raw', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)', 'Beta/Alpha Ratio'};
 
-fig4A = figure('Position', [80, 80, 1850, 750], 'Color', 'w', 'Visible', 'off');
+fig4A = figure('Position', [80, 80, 1850, 750], ...
+    'Name', 'Figure 4A: Delta Latency Violins', 'Color', 'w', 'Visible', 'off');
 tiledlayout(1, 4, 'TileSpacing', 'compact', 'Padding', 'normal');
 
 % Compare only the two delivered uncertain conditions against Cued baseline (0 ms)
 active_conds = {'P2_500', 'P3_500'}; 
+violin_max_half_w = 0.34; % Maximum half-width of each violin
 
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
@@ -3007,33 +2993,45 @@ for b = 1:length(plot_bands)
     for i = 1:2
         c_key = active_conds{i};
         c_idx = find(strcmp(cfg.all_conds, c_key));
+        col_c = cond_colors(c_key);
         
-        % Scatter all 5 directions x 12 subjects (60 points) with jitter
+        % All 5 directions x 12 subjects (60 points)
         pts_60 = reshape(lat_3d(c_idx, 1:cfg.m, :), [], 1);
         pts_60 = pts_60(~isnan(pts_60));
         
-        rng(42 + i);
-        x_jit = i + (rand(size(pts_60)) - 0.5) * 0.32;
-        scatter(ax, x_jit, pts_60, 65, cond_colors(c_key), 'filled', ...
-            'MarkerFaceAlpha', 0.65, 'MarkerEdgeColor', 'none', 'DisplayName', clean_name(c_key));
+        % --- 1. Draw Smooth Symmetric Violin Envelope via Kernel Density ---
+        if length(pts_60) > 2
+            y_grid = linspace(max(-148, min(pts_60)), min(148, max(pts_60)), 120);
+            [f_dens, y_eval_v] = ksdensity(pts_60, y_grid);
+            if max(f_dens) > 0
+                f_norm = (f_dens / max(f_dens)) * violin_max_half_w;
+                fill(ax, [i - f_norm, fliplr(i + f_norm)], [y_eval_v, fliplr(y_eval_v)], ...
+                    col_c, 'FaceAlpha', 0.25, 'EdgeColor', col_c, 'LineWidth', 1.6, ...
+                    'DisplayName', clean_name(c_key));
+            end
+        end
         
-        % Grand mean and SEM across subjects
+        % --- 2. Overlay Jittered Individual Data Points Inside the Violin ---
+        rng(42 + i);
+        x_jit = i + (rand(size(pts_60)) - 0.5) * 0.22;
+        scatter(ax, x_jit, pts_60, 45, col_c, 'filled', ...
+            'MarkerFaceAlpha', 0.70, 'MarkerEdgeColor', 'none', 'HandleVisibility', 'off');
+        
+        % --- 3. Grand Mean Horizontal Bar and SEM Error Bar Across Subjects ---
         subj_means = squeeze(mean(lat_3d(c_idx, 1:cfg.m, :), 2, 'omitnan'));
         m_val  = mean(subj_means, 'omitnan');
         se_val = std(subj_means, 0, 'omitnan') / sqrt(length(subj_means));
         
-        plot(ax, [i - 0.22, i + 0.22], [m_val, m_val], 'k-', 'LineWidth', 3.5, 'HandleVisibility', 'off');
+        plot(ax, [i - 0.20, i + 0.20], [m_val, m_val], 'k-', 'LineWidth', 3.5, 'HandleVisibility', 'off');
         errorbar(ax, i, m_val, se_val, 'k', 'LineWidth', 2.2, 'HandleVisibility', 'off');
         
-        % One-tailed Wilcoxon signed-rank test against 0 ms across 12 subjects
+        % --- 4. One-Tailed Wilcoxon Signed-Rank Test & Top Horizontal Bracket ---
         p_val = min(signrank(subj_means, 0, 'tail', 'right'), ...
                     signrank(subj_means, 0, 'tail', 'left'));
         
-        % Top horizontal bracket if significant
         if p_val < 0.05
             star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
             
-            % Draw bracket spanning the column at y = 125 ms
             bx_left  = i - 0.28;
             bx_right = i + 0.28;
             by_base  = 122;
@@ -3065,18 +3063,18 @@ end
 
 set(fig4A, 'Color', 'w', 'InvertHardcopy', 'off');
 
-fig4A_png = fullfile(output_path, 'Figure_4A_Latency_Scatter_600ppi.png');
-fig4A_svg = fullfile(output_path, 'Figure_4A_Latency_Scatter.svg');
+fig4A_png = fullfile(output_path, 'Figure_4A_Latency_Violin_600ppi.png');
+fig4A_svg = fullfile(output_path, 'Figure_4A_Latency_Violin.svg');
 exportgraphics(fig4A, fig4A_png, 'Resolution', 600, 'BackgroundColor', 'white');
 saveas(fig4A, fig4A_svg);
 close(fig4A);
 
 %% =========================================================================
-%% AGGREGATE FIGURE 5D: MULTI-BAND % SUSTAINED (TONIC VS PHASIC) BAR PLOTS
+%% AGGREGATE FIGURE 4B (FORMERLY 5D): MULTI-BAND % SUSTAINED BAR PLOTS
 %% =========================================================================
-disp('Generating Figure 5D: Multi-Band Sustained % Bar Plots (Wilcoxon Signed-Rank)...');
+disp('Generating Figure 4B: Multi-Band Sustained % Bar Plots (Wilcoxon Signed-Rank)...');
 
-plot_bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
+plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 idx_P1      = find(strcmp(cfg.all_conds, 'P1'));
 idx_P2_500  = find(strcmp(cfg.all_conds, 'P2_500'));
 idx_P3_500  = find(strcmp(cfg.all_conds, 'P3_500'));
@@ -3085,7 +3083,8 @@ idx_P3_mis  = find(strcmp(cfg.all_conds, 'P3_missing'));
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig5D = figure('Position', [100, 100, 1700, 880], 'Name', sprintf('Figure 5D: Sustained %s', cohort_str), 'Color', 'w');
+    fig4B = figure('Position', [100, 100, 1700, 880], ...
+        'Name', sprintf('Figure 4B: Sustained %s', cohort_str), 'Color', 'w', 'Visible', 'off');
     hold on; 
     set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
     
@@ -3233,13 +3232,14 @@ for g = 1:length(subj_group_names)
         end
     end
     
-    save_file_5d = fullfile(output_path, sprintf('Figure_5D_MultiBand_Sustained_%s', fig_tags{g}));
+    set(fig4B, 'Color', 'w', 'InvertHardcopy', 'off');
+    save_file_4b = fullfile(output_path, sprintf('Figure_4B_MultiBand_Sustained_%s', fig_tags{g}));
     try 
-        exportgraphics(fig5D, [save_file_5d, '.png'], 'Resolution', 600);
-        saveas(fig5D, [save_file_5d, '.svg']);
+        exportgraphics(fig4B, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+        saveas(fig4B, [save_file_4b, '.svg']);
     catch
     end
-    close(fig5D);
+    close(fig4B);
 end
 
 %% =========================================================================
