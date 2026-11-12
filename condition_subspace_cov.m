@@ -2772,8 +2772,8 @@ set(fig3C, 'Color', 'w', 'InvertHardcopy', 'off');
 
 save_file_4b = fullfile(output_path, 'Figure_4B_MultiBand_Gain');
 try
-    exportgraphics(fig3C, [save_file_3c, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-    saveas(fig3C, [save_file_3c, '.svg']);
+    exportgraphics(fig3C, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+    saveas(fig3C, [save_file_4b, '.svg']);
 catch
 end
 close(fig3C);
@@ -2796,9 +2796,6 @@ active_conds = {'P2_500', 'P3_500'};
 dx_offset    = [-0.18, +0.18]; % Horizontal offset for Unpred. 500 (left) and Rand. 500 (right)
 violin_hw    = 0.14;           % Half-width of each individual violin
 
-% Constrain to the first 3 statistically significant directions
-m_sig = 3; 
-
 for b = 1:length(plot_bands)
     b_name = plot_bands{b};
     
@@ -2817,14 +2814,14 @@ for b = 1:length(plot_bands)
     h_base = yline(ax, 0, 'k--', 'LineWidth', 1.8, 'DisplayName', 'Cued Baseline (0 ms)');
     
     % Subtle vertical dividers between the 3 spatial directions
-    for k_div = 1:(m_sig - 1)
+    for k_div = 1:(num_sig - 1)
         xline(ax, k_div + 0.5, ':', 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
     end
     
     h_cond_lgd = gobjects(1, 2);
     
     % Loop strictly across the 3 significant directions
-    for k = 1:m_sig
+    for k = 1:num_sig
         for i = 1:2
             c_key = active_conds{i};
             c_idx = find(strcmp(cfg.all_conds, c_key));
@@ -2891,9 +2888,9 @@ for b = 1:length(plot_bands)
         end
     end
     
-    xlim(ax, [0.4, m_sig + 0.6]); ylim(ax, [-150, 150]);
-    xticks(ax, 1:m_sig);
-    xticklabels(ax, arrayfun(@(d) sprintf('\\xi_%d', d), 1:m_sig, 'UniformOutput', false));
+    xlim(ax, [0.4, num_sig + 0.6]); ylim(ax, [-150, 150]);
+    xticks(ax, 1:num_sig);
+    xticklabels(ax, arrayfun(@(d) sprintf('\\xi_%d', d), 1:num_sig, 'UniformOutput', false));
     xtickangle(ax, 0);
     xlabel(ax, 'Spatial Direction', 'FontSize', 18, 'FontWeight', 'bold');
     
@@ -2924,9 +2921,6 @@ close(fig3C);
 %% =========================================================================
 fprintf('\nGenerating Unified Manuscript Figure 4A: log(r) Subspace Redistribution (Raw, Alpha, Beta)...\n');
 
-% Constrain to the 3 statistically validated spatial directions
-m_sig = 3;
-
 bands_4a       = {'Raw', 'Alpha', 'Beta'};
 band_titles_4a = {'Broadband Raw', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)'};
 
@@ -2936,21 +2930,21 @@ for g_chk = 1:length(subj_group_names)
     for b_chk = bands_4a
         b_name = b_chk{1};
         if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g_chk
-            m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean(:, 1:m_sig);
-            se_val = aggregate_log_r.(b_name).cohort(g_chk).se(:, 1:m_sig);
+            m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean(:, 1:num_sig);
+            se_val = aggregate_log_r.(b_name).cohort(g_chk).se(:, 1:num_sig);
             all_y_4a = [all_y_4a; m_val(:) + se_val(:); m_val(:) - se_val(:)]; %#ok<AGROW>
         end
     end
 end
 if isempty(all_y_4a) || all(isnan(all_y_4a(:))), all_y_4a = [-1.5, 1.5]; end
-global_4a_ymin = min(-1.5, floor(min(all_y_4a(:), [], 'omitnan') * 1.15 * 2) / 2);
-global_4a_ymax = max( 1.5, ceil(max(all_y_4a(:),  [], 'omitnan') * 1.15 * 2) / 2);
+global_4a_ymin = min(-0.6, floor(min(all_y_4a(:), [], 'omitnan') * 1.15 * 2) / 2);
+global_4a_ymax = max( 0.6, ceil(max(all_y_4a(:),  [], 'omitnan') * 1.15 * 2) / 2);
 star_offset = (global_4a_ymax - global_4a_ymin) * 0.035;
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
     
-    % Canvas sized for 3 rows x 2 columns (1600 px wide x 1400 px tall)
+    % Canvas sized for 3 rows x 2 columns (1650 px wide x 1400 px tall)
     fig4A_comb = figure('Position', [100, 40, 1650, 1400], ...
         'Name', sprintf('Figure 4A: Unified Subspace Redistribution — %s', cohort_str), ...
         'Color', 'w', 'Visible', 'off');
@@ -2979,23 +2973,21 @@ for g = 1:length(subj_group_names)
                 c_idx = find(strcmp(cfg.all_conds, c_key));
                 if isempty(c_idx), continue; end
                 
-                x_jitter = (1:m_sig) + (i - 1.5) * 0.12;
+                x_jitter = (1:num_sig) + (i - 1.5) * 0.12;
                 col_c    = cond_colors(c_key);
                 
-                errorbar(ax_del, x_jitter, grp_m(c_idx, 1:m_sig), grp_se(c_idx, 1:m_sig), ...
+                errorbar(ax_del, x_jitter, grp_m(c_idx, 1:num_sig), grp_se(c_idx, 1:num_sig), ...
                     'LineStyle', '-', 'Marker', 'o', 'Color', col_c, 'LineWidth', 2.8, ...
                     'MarkerSize', 10, 'MarkerFaceColor', col_c, 'DisplayName', clean_name(c_key));
                 
-                % Subject-level Wilcoxon Signed-Rank Test vs. 0 (Cued baseline)
+                % Subject-level TWO-TAILED Wilcoxon Signed-Rank Test vs. 0 (Cued baseline)
                 if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
                     s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
-                    for k = 1:m_sig
+                    for k = 1:num_sig
                         dist = squeeze(s_data(c_idx, k, :));
                         dist = dist(~isnan(dist));
                         if length(dist) > 1
-                            p_r   = signrank(dist, 0, 'tail', 'right');
-                            p_l   = signrank(dist, 0, 'tail', 'left');
-                            p_val = min(p_r, p_l);
+                            p_val = signrank(dist, 0, 'tail', 'both');
                             if p_val < 0.05
                                 star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                                 y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -3009,7 +3001,7 @@ for g = 1:length(subj_group_names)
             end
         end
         
-        grid(ax_del, 'on'); xlim(ax_del, [0.5, m_sig + 0.5]); xticks(ax_del, 1:m_sig);
+        grid(ax_del, 'on'); xlim(ax_del, [0.5, num_sig + 0.5]); xticks(ax_del, 1:num_sig);
         ylim(ax_del, [global_4a_ymin, global_4a_ymax]);
         ylabel(ax_del, 'log(r_i) \pm SEM', 'FontSize', 22, 'FontWeight', 'bold');
         title(ax_del, sprintf('%s — Delivered', b_title), 'FontSize', 21, 'FontWeight', 'bold');
@@ -3020,7 +3012,7 @@ for g = 1:length(subj_group_names)
         if r_idx < 3
             xticklabels(ax_del, {});
         else
-            xticklabels(ax_del, arrayfun(@(d) sprintf('\\xi_%d', d), 1:m_sig, 'UniformOutput', false));
+            xticklabels(ax_del, arrayfun(@(d) sprintf('\\xi_%d', d), 1:num_sig, 'UniformOutput', false));
             xlabel(ax_del, 'Spatial Direction', 'FontSize', 22, 'FontWeight', 'bold');
         end
         
@@ -3037,22 +3029,21 @@ for g = 1:length(subj_group_names)
                 c_idx = find(strcmp(cfg.all_conds, c_key));
                 if isempty(c_idx), continue; end
                 
-                x_jitter = (1:m_sig) + (i - 1.5) * 0.12;
+                x_jitter = (1:num_sig) + (i - 1.5) * 0.12;
                 col_c    = cond_colors(c_key);
                 
-                errorbar(ax_om, x_jitter, grp_m(c_idx, 1:m_sig), grp_se(c_idx, 1:m_sig), ...
+                errorbar(ax_om, x_jitter, grp_m(c_idx, 1:num_sig), grp_se(c_idx, 1:num_sig), ...
                     'LineStyle', '-', 'Marker', 's', 'Color', col_c, 'LineWidth', 2.8, ...
                     'MarkerSize', 10, 'MarkerFaceColor', col_c, 'DisplayName', clean_name(c_key));
                 
+                % Subject-level TWO-TAILED Wilcoxon Signed-Rank Test vs. 0 (Cued baseline)
                 if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
                     s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
-                    for k = 1:m_sig
+                    for k = 1:num_sig
                         dist = squeeze(s_data(c_idx, k, :));
                         dist = dist(~isnan(dist));
                         if length(dist) > 1
-                            p_r   = signrank(dist, 0, 'tail', 'right');
-                            p_l   = signrank(dist, 0, 'tail', 'left');
-                            p_val = min(p_r, p_l);
+                            p_val = signrank(dist, 0, 'tail', 'both');
                             if p_val < 0.05
                                 star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
                                 y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
@@ -3066,7 +3057,7 @@ for g = 1:length(subj_group_names)
             end
         end
         
-        grid(ax_om, 'on'); xlim(ax_om, [0.5, m_sig + 0.5]); xticks(ax_om, 1:m_sig);
+        grid(ax_om, 'on'); xlim(ax_om, [0.5, num_sig + 0.5]); xticks(ax_om, 1:num_sig);
         ylim(ax_om, [global_4a_ymin, global_4a_ymax]);
         title(ax_om, sprintf('%s — Omitted / Delayed', b_title), 'FontSize', 21, 'FontWeight', 'bold');
         
@@ -3076,7 +3067,7 @@ for g = 1:length(subj_group_names)
         if r_idx < 3
             xticklabels(ax_om, {});
         else
-            xticklabels(ax_om, arrayfun(@(d) sprintf('\\xi_%d', d), 1:m_sig, 'UniformOutput', false));
+            xticklabels(ax_om, arrayfun(@(d) sprintf('\\xi_%d', d), 1:num_sig, 'UniformOutput', false));
             xlabel(ax_om, 'Spatial Direction', 'FontSize', 22, 'FontWeight', 'bold');
         end
     end
@@ -3320,9 +3311,10 @@ for b = 1:length(plot_bands)
         lr_means = mean(squeeze(LR_mat(c_i, 1:cfg.m, :)), 2, 'omitnan');
         p_dirs   = ones(cfg.m, 1);
         if c_i > 1
-            for k_d = 1:cfg.m
+            % Inside the Table 1 loop (Geometry section):
+            for k_d = 1:num_sig
                 d_vec = squeeze(LR_mat(c_i, k_d, :));
-                p_dirs(k_d) = min(signrank(d_vec, 0, 'tail', 'right'), signrank(d_vec, 0, 'tail', 'left'));
+                p_dirs(k_d) = signrank(d_vec, 0, 'tail', 'both'); % Two-tailed
             end
         end
         % Benjamini-Hochberg FDR across m = 5 directions
@@ -3375,6 +3367,135 @@ writetable(Table1_PNAS, fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv
 fprintf('  -> Successfully exported Table 1 to: %s\n', fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv'));
 
 %% =========================================================================
+%% SUPPLEMENTAL TABLE 2: PER-DIRECTION LOG VARIANCE RATIOS (log r_i)
+%% =========================================================================
+% Toggle statistical tail & number of spatial directions to report:
+use_two_tailed = true;  % true = two-tailed signrank (matches updated Fig 4A); false = one-tailed (matches old screenshot)
+m_dirs         = num_sig; % Set to 3 (for Xi_1..Xi_3) or 5 (for Xi_1..Xi_5)
+
+if use_two_tailed
+    tail_label = 'TWO-TAILED';
+else
+    tail_label = 'ONE-TAILED';
+end
+
+fprintf('\n========================================================================================================================================\n');
+fprintf(' SUPPLEMENTAL TABLE: PER-DIRECTION LOG VARIANCE RATIOS (log r_i +/- SEM) ACROSS XI_1..XI_%d (%s WILCOXON + BH-FDR)\n', m_dirs, tail_label);
+fprintf('========================================================================================================================================\n');
+
+% Bands to include (add 'Raw' and 'BetaAlphaRatio' if you want all 4 signals, or keep {'Alpha', 'Beta'})
+supp_bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
+supp_band_labels = containers.Map( ...
+    {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'}, ...
+    {'Broadband Raw', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'});
+
+% Non-reference conditions (excluding P1 Cued reference)
+supp_conds = {'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
+supp_cond_labels = containers.Map( ...
+    {'P2_500', 'P3_500', 'P2_2000', 'P3_missing'}, ...
+    {'Unpred 500', 'Rand 500', 'Unpred 2000', 'Rand Null'});
+
+% Direction column headers matching your table
+dir_headers = { ...
+    'Xi_1_Anterior_Posterior', ...
+    'Xi_2_Centroparietal', ...
+    'Xi_3_Lateralized_Dipole', ...
+    'Xi_4_Frontoparietal_Complex', ...
+    'Xi_5_Higher_Order_Temporal'};
+dir_headers = dir_headers(1:m_dirs);
+
+st_band = {};
+st_cond = {};
+st_dirs = cell(0, m_dirs);
+
+for b_i = 1:length(supp_bands)
+    b_name = supp_bands{b_i};
+    if ~isfield(aggregate_log_r, b_name), continue; end
+    
+    LR_mat = aggregate_log_r.(b_name).cohort(1).subj_data; % [nConds x m x nSubjs]
+    
+    for c_i = 1:length(supp_conds)
+        c_key = supp_conds{c_i};
+        c_idx = find(strcmp(cfg.all_conds, c_key), 1);
+        if isempty(c_idx), continue; end
+        
+        means_k = nan(1, m_dirs);
+        sems_k  = nan(1, m_dirs);
+        p_dirs  = ones(1, m_dirs);
+        
+        % 1. Compute mean, SEM, and Wilcoxon signed-rank p-value per direction
+        for k = 1:m_dirs
+            d_vec = squeeze(LR_mat(c_idx, k, :));
+            d_vec = d_vec(~isnan(d_vec));
+            n_sub = length(d_vec);
+            
+            means_k(k) = mean(d_vec, 'omitnan');
+            sems_k(k)  = std(d_vec, 0, 'omitnan') / sqrt(n_sub);
+            
+            if n_sub > 1
+                if use_two_tailed
+                    p_dirs(k) = signrank(d_vec, 0, 'tail', 'both');
+                else
+                    p_r = signrank(d_vec, 0, 'tail', 'right');
+                    p_l = signrank(d_vec, 0, 'tail', 'left');
+                    p_dirs(k) = min(p_r, p_l);
+                end
+            end
+        end
+        
+        % 2. Benjamini-Hochberg FDR correction across the m_dirs directions within each condition
+        [p_sort, sort_idx] = sort(p_dirs);
+        q_sort = p_sort .* (m_dirs ./ (1:m_dirs));
+        for k = (m_dirs - 1):-1:1
+            q_sort(k) = min(q_sort(k), q_sort(k + 1));
+        end
+        q_dirs = ones(1, m_dirs);
+        q_dirs(sort_idx) = min(1, q_sort);
+        
+        % 3. Format strings for each spatial direction column
+        st_band{end+1, 1} = supp_band_labels(b_name); 
+        st_cond{end+1, 1} = supp_cond_labels(c_key);  
+        row_idx = length(st_band);
+        
+        row_print = sprintf('%-16s | %-11s', supp_band_labels(b_name), supp_cond_labels(c_key));
+        for k = 1:m_dirs
+            p_star = '';
+            if p_dirs(k) < 0.001, p_star = '***';
+            elseif p_dirs(k) < 0.01, p_star = '**';
+            elseif p_dirs(k) < 0.05, p_star = '*';
+            end
+            
+            q_star = '';
+            if q_dirs(k) < 0.001, q_star = '***';
+            elseif q_dirs(k) < 0.01, q_star = '**';
+            elseif q_dirs(k) < 0.05, q_star = '*';
+            end
+            
+            cell_str = sprintf('%+.3f +/- %.3f (p=%.3f%s, q=%.3f%s)', ...
+                means_k(k), sems_k(k), p_dirs(k), p_star, q_dirs(k), q_star);
+            
+            st_dirs{row_idx, k} = cell_str; 
+            row_print = [row_print, sprintf(' | %-36s', cell_str)]; %#ok<AGROW>
+        end
+        fprintf('%s\n', row_print);
+    end
+    fprintf('%s\n', repmat('-', 1, 32 + 39 * m_dirs));
+end
+
+% Convert to MATLAB Table and export to CSV & Excel
+SuppTable_LogR = table(st_band, st_cond, 'VariableNames', {'Band', 'Condition'});
+for k = 1:m_dirs
+    SuppTable_LogR.(dir_headers{k}) = st_dirs(:, k);
+end
+
+csv_supp_path  = fullfile(output_path, sprintf('Supplemental_Table_PerDirection_LogR_%dD_%s.csv', m_dirs, lower(tail_label)));
+xlsx_supp_path = fullfile(output_path, sprintf('Supplemental_Table_PerDirection_LogR_%dD_%s.xlsx', m_dirs, lower(tail_label)));
+
+writetable(SuppTable_LogR, csv_supp_path);
+try writetable(SuppTable_LogR, xlsx_supp_path); catch, end
+fprintf('  -> Saved Per-Direction Log(r) Supplemental Table to:\n     %s\n', csv_supp_path);
+
+%% =========================================================================
 %% BAYES FACTOR (BF01) FOR BETA GAIN (ONE-TAILED WILCOXON + JZS/BIC BF01)
 %% =========================================================================
 fprintf('\n--- BAYES FACTOR (BF_01, Evidence for Null Stability) IN BETA BAND ---\n');
@@ -3391,7 +3512,7 @@ for c_i = 2:length(cfg.all_conds)
         cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr_1t, stats_t.tstat, bf01_G);
 end
 %% =========================================================================
-%% SUPPLEMENTAL TABLE 2: PER-CONDITION BAYES FACTORS (BF01) FOR BETA GAIN
+%% SUPPLEMENTAL TABLE 3: PER-CONDITION BAYES FACTORS (BF01) FOR BETA GAIN
 %% =========================================================================
 fprintf('\n=========================================================================================================\n');
 fprintf(' SUPPLEMENTAL TABLE 2: PER-CONDITION BAYES FACTORS (BF_01) FOR BETA GAIN STABILITY\n');
@@ -3459,87 +3580,3 @@ Supp_Table_2 = table(supp_cond, supp_mean_gain, supp_diff_gain, supp_t_stat, sup
 csv_supp2 = fullfile(output_path, 'Supplemental_Table_2_Beta_Gain_BF01.csv');
 writetable(Supp_Table_2, csv_supp2);
 fprintf('  -> Successfully saved Supplemental Table 2 to: %s\n', csv_supp2);
-
-%% =========================================================================
-%% SUPPLEMENTAL FIGURE 1A: PROGRAMMATIC 32-CHANNEL 10-20 SCALP MONTAGE
-%% =========================================================================
-fprintf('\nGenerating Programmatic Supplemental Figure 1A: 32-Channel 10-20 Montage...\n');
-figS1A = figure('Position', [100, 100, 900, 860], 'Color', 'w', 'Visible', 'off');
-ax_s1a = axes('Parent', figS1A, 'Position', [0.06, 0.12, 0.88, 0.82], 'Color', 'w');
-hold(ax_s1a, 'on');
-axis(ax_s1a, 'equal');
-axis(ax_s1a, 'off');
-
-% Extract 2D Cartesian coordinates from EEG.chanlocs (polar angle theta & radius)
-th = pi/180 * [EEG.chanlocs.theta];
-rd = [EEG.chanlocs.radius];
-% Normalize radius so outermost electrodes fit cleanly inside head circle of radius 0.50
-max_rd = max(rd);
-if max_rd > 0, rd_norm = (rd / max_rd) * 0.44; else, rd_norm = rd; end
-[x_ch, y_ch] = pol2cart(th, rd_norm);
-plot_x = y_ch; % In EEGLAB polar coords, theta=0 is nose (+Y) and theta=90 is right ear (+X)
-plot_y = x_ch;
-
-% 1. Draw Head Outline, Nose, and Ears Programmatically (Radius = 0.50)
-head_r = 0.50;
-ang_circle = linspace(0, 2*pi, 300);
-plot(ax_s1a, head_r * cos(ang_circle), head_r * sin(ang_circle), 'k-', ...
-    'LineWidth', 2.8, 'HandleVisibility', 'off');
-
-% Nose at top (y = +0.50 to +0.56)
-nose_x = [-0.045, 0, 0.045];
-nose_y = [head_r - 0.005, head_r + 0.065, head_r - 0.005];
-plot(ax_s1a, nose_x, nose_y, 'k-', 'LineWidth', 2.8, 'HandleVisibility', 'off');
-
-% Left and Right Ears
-ear_t = linspace(-pi/2, pi/2, 60);
-ear_w = 0.028; ear_h = 0.085;
-plot(ax_s1a, -head_r - ear_w * cos(ear_t), ear_h * sin(ear_t), 'k-', 'LineWidth', 2.5, 'HandleVisibility', 'off');
-plot(ax_s1a,  head_r + ear_w * cos(ear_t), ear_h * sin(ear_t), 'k-', 'LineWidth', 2.5, 'HandleVisibility', 'off');
-
-% 2. Define Anatomical Region Groupings and Colors
-labels_all = {EEG.chanlocs.labels};
-reg_names  = {'Frontal', 'Central / Sensorimotor', 'Temporal', 'Parietal', 'Occipital'};
-reg_colors = {[0.85 0.33 0.10], [0.13 0.60 0.27], [0.00 0.45 0.74], [0.88 0.65 0.00], [0.55 0.35 0.65]};
-
-% 3. Plot Each Electrode & Channel Label
-for ch = 1:length(labels_all)
-    lbl = upper(strtrim(labels_all{ch}));
-    if startsWith(lbl, {'FP', 'AF', 'F3', 'F4', 'F7', 'F8', 'FZ', 'F1', 'F2', 'F5', 'F6'})
-        r_idx = 1; % Frontal
-    elseif startsWith(lbl, {'FC', 'C3', 'C4', 'CZ', 'C1', 'C2', 'C5', 'C6'})
-        r_idx = 2; % Central / Sensorimotor
-    elseif startsWith(lbl, {'T7', 'T8', 'TP', 'T3', 'T4', 'T5', 'T6', 'FT'})
-        r_idx = 3; % Temporal
-    elseif startsWith(lbl, {'CP', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'PZ', 'P1', 'P2'})
-        r_idx = 4; % Parietal
-    else
-        r_idx = 5; % Occipital (PO, O1, Oz, O2, Iz)
-    end
-    
-    scatter(ax_s1a, plot_x(ch), plot_y(ch), 360, reg_colors{r_idx}, 'filled', ...
-        'MarkerEdgeColor', 'k', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-    text(ax_s1a, plot_x(ch), plot_y(ch) + 0.032, labels_all{ch}, ...
-        'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
-        'FontSize', 14, 'FontWeight', 'bold', 'FontName', 'Arial', 'Color', 'k');
-end
-
-% 4. Add Clean Region Legend at Bottom
-h_leg_s1a = gobjects(1, length(reg_names));
-for r_i = 1:length(reg_names)
-    h_leg_s1a(r_i) = scatter(ax_s1a, nan, nan, 200, reg_colors{r_i}, 'filled', ...
-        'MarkerEdgeColor', 'k', 'LineWidth', 1.2, 'DisplayName', reg_names{r_i});
-end
-xlim(ax_s1a, [-0.62, 0.62]);
-ylim(ax_s1a, [-0.58, 0.62]);
-
-lgd_s1a = legend(ax_s1a, h_leg_s1a, reg_names, ...
-    'Location', 'southoutside', 'Orientation', 'horizontal', 'Box', 'off');
-lgd_s1a.FontSize = 14;
-lgd_s1a.FontWeight = 'bold';
-
-set(figS1A, 'Color', 'w', 'InvertHardcopy', 'off');
-exportgraphics(figS1A, fullfile(output_path, 'Supp_Figure_1A_Programmatic_Montage_600ppi.png'), ...
-    'Resolution', 600, 'BackgroundColor', 'white');
-saveas(figS1A, fullfile(output_path, 'Supp_Figure_1A_Programmatic_Montage.svg'));
-close(figS1A);
