@@ -804,7 +804,7 @@ for band_idx = 1:length(bands_to_process)
             erp_cA  = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
             b_cA    = mean(erp_cA(:, iBase), 2, 'omitnan');
             X_cA_bc = erp_cA(:, iWin) - b_cA;
-            X_concat_A = [X_concat_A, X_cA_bc]; %#ok<AGROW>
+            X_concat_A = [X_concat_A, X_cA_bc]; 
         end
         
         % 2. Centered dynamic covariance across the concatenated 5-condition matrix
@@ -936,7 +936,7 @@ for band_idx = 1:length(bands_to_process)
                     if k1 ~= k2
                         v1 = Xi_aligned(:, k1, s1);
                         v2 = Xi_aligned(:, k2, s2);
-                        off_diag_sims(end+1, 1) = abs(dot(v1, v2)) / (norm(v1) * norm(v2)); %#ok<AGROW>
+                        off_diag_sims(end+1, 1) = abs(dot(v1, v2)) / (norm(v1) * norm(v2)); 
                     end
                 end
             end
@@ -1115,7 +1115,7 @@ for band_idx = 1:length(bands_to_process)
                 erp_cpA  = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
                 b_cpA    = mean(erp_cpA(:, iBase), 2, 'omitnan');
                 X_cpA_bc = erp_cpA(:, iWin) - b_cpA;
-                X_concat_rep_A = [X_concat_rep_A, X_cpA_bc]; %#ok<AGROW>
+                X_concat_rep_A = [X_concat_rep_A, X_cpA_bc]; 
             end
             
             C_A_cent = covCentered(X_concat_rep_A, zeros(cfg.num_ch, 1));
@@ -1289,15 +1289,15 @@ for band_idx = 1:length(bands_to_process)
         aggregate_sust.(band_name).cohort(g).subj_dir_data = sust_dir_mean; % [5 x 5 x 12]
 
        % --- COMMAND WINDOW & LOG FILE SUMMARY TABLE PRINTOUT ---
-        sig_components = find(p_vals < 0.05)';
-        if isempty(sig_components), sig_components = 1:cfg.m; end
+        % Consistently evaluate the first 3 validated manifold directions (Xi_1..Xi_3)
+        num_sig        = min(3, cfg.m);
+        sig_components = 1:num_sig;
         
         % Safety check: sanitize dest_list to prevent invalid file identifier crash
         if exist('fid_sum', 'var') && ~isempty(fid_sum) && fid_sum > 2
-            % Check if fid_sum is currently open
             [~, open_mode] = fopen(fid_sum);
             if isempty(open_mode)
-                dest_list = 1; % File handle was closed, print to Command Window only
+                dest_list = 1;
             else
                 dest_list = [1, fid_sum];
             end
@@ -1310,7 +1310,7 @@ for band_idx = 1:length(bands_to_process)
             fprintf(dest, 'SUMMARY TABLE: %s REFERENCE (BAND: %s) [%s]\n', ...
                 cfg.ref_cond, upper(band_name), cohort_Vital{g});
             fprintf(dest, '======================================================================\n');
-            for k_idx = 1:length(sig_components)
+            for k_idx = 1:num_sig
                 k = sig_components(k_idx);
                 fprintf(dest, '\n--- SIGNIFICANT DIRECTION: \\xi_%d (Global p = %.3f) ---\n', k, p_vals(k));
                 fprintf(dest, '----------------------------------------------------------------------\n');
@@ -1392,13 +1392,13 @@ for band_idx = 1:length(bands_to_process)
         
         if fid_stat > 0
             fprintf(fid_stat, '=========================================================================================================\n');
-            fprintf(fid_stat, ' FIGURE 3 STATISTICAL REPORT: %s BAND (ACTIVE WINDOW: 0.0 to 1.0 s)\n', upper(band_name));
+            fprintf(fid_stat, ' FIGURE 2 STATISTICAL REPORT: %s BAND (ACTIVE WINDOW: 0.0 to 1.0 s)\n', upper(band_name));
             fprintf(fid_stat, '=========================================================================================================\n\n');
         end
         
         for k = 1:cfg.m
             stat_dir_names{k} = sprintf('Xi_%d', k);
-            Y_rm = squeeze(mean(subj_mean_traj(:, k, iWin_traj, curr_subjs), 3, 'omitnan'))'; % [n_subjs x 5 conds]
+            Y_rm = squeeze(mean(subj_mean_traj(:, k, iWin_traj, curr_subjs), 3, 'omitnan'))';
             p_homo = vartestn(Y_rm, 'TestType', 'Bartlett', 'Display', 'off');
             stat_bartlett_p(k) = p_homo;
             
@@ -1448,13 +1448,9 @@ for band_idx = 1:length(bands_to_process)
 
         % -----------------------------------------------------------------
         % 2. SUPPLEMENTAL FIGURE 3A: FULL TRAJECTORIES [-0.6 to 2.4 s]
-        %    (Saved in group_dir; tactile horizontal bar removed)
         % -----------------------------------------------------------------
         grp_mean_traj = squeeze(mean(subj_mean_traj(:, :, :, curr_subjs), 4, 'omitnan')); 
         grp_sem_traj  = squeeze(std(subj_mean_traj(:, :, :, curr_subjs), 0, 4, 'omitnan')) ./ sqrt(curr_n);
-        
-        num_sig = cfg.m;
-        sig_components = 1:cfg.m;
         
         figSupp3A = figure('Position', [100, 100, 1600, max(550, num_sig * 420)], 'Color', 'w', 'Visible', 'off');
         tiledlayout(num_sig, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
@@ -1515,12 +1511,6 @@ for band_idx = 1:length(bands_to_process)
         Xi_bar = Xi_bar ./ vecnorm(Xi_bar);
         topo_win_s = [0.2, 0.8];
         topo_idx   = find(time_s >= topo_win_s(1) & time_s <= topo_win_s(2));
-
-        % Analyze only the significant directions (first 3)
-        sig_components = find(p_vals < 0.05)';
-        if isempty(sig_components), sig_components = 1:min(3, cfg.m); end
-        num_sig = min(3, length(sig_components));
-        sig_components = sig_components(1:num_sig);
 
         % Canvas height scaled proportionally (350 px per row -> 1050 px for 3 rows)
         fig34 = figure('Position', [40, 40, 1750, 350 * num_sig], 'Color', 'w', 'Visible', 'off');
@@ -1591,7 +1581,6 @@ for band_idx = 1:length(bands_to_process)
             ylabel(ax_del, 'Projected Variance', 'FontSize', 18, 'FontWeight', 'bold');
             if k_i == 1, legend(ax_del, 'Location', 'northeast', 'Box', 'off', 'FontSize', 14); end
             
-            % Suppress tick marks on upper rows to avoid collision with the row below
             if k_i < num_sig
                 xticklabels(ax_del, {});
             else
@@ -2785,6 +2774,7 @@ fprintf('\nGenerating Figure 3C: Per-Direction Delta Latency Violin Plots (Black
 
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_titles = {'Broadband Raw', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)', 'Beta/Alpha Ratio'};
+raw_num_sig = 3;
 
 % Canvas sized for 4 frequency panels across the first 3 spatial directions
 fig3C = figure('Position', [40, 80, 2200, 900], ...
@@ -2814,14 +2804,14 @@ for b = 1:length(plot_bands)
     h_base = yline(ax, 0, 'k--', 'LineWidth', 1.8, 'DisplayName', 'Cued Baseline (0 ms)');
     
     % Subtle vertical dividers between the 3 spatial directions
-    for k_div = 1:(num_sig - 1)
+    for k_div = 1:(raw_num_sig - 1)
         xline(ax, k_div + 0.5, ':', 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
     end
     
     h_cond_lgd = gobjects(1, 2);
     
     % Loop strictly across the 3 significant directions
-    for k = 1:num_sig
+    for k = 1:raw_num_sig
         for i = 1:2
             c_key = active_conds{i};
             c_idx = find(strcmp(cfg.all_conds, c_key));
@@ -2888,9 +2878,9 @@ for b = 1:length(plot_bands)
         end
     end
     
-    xlim(ax, [0.4, num_sig + 0.6]); ylim(ax, [-150, 150]);
-    xticks(ax, 1:num_sig);
-    xticklabels(ax, arrayfun(@(d) sprintf('\\xi_%d', d), 1:num_sig, 'UniformOutput', false));
+    xlim(ax, [0.4, raw_num_sig + 0.6]); ylim(ax, [-150, 150]);
+    xticks(ax, 1:raw_num_sig);
+    xticklabels(ax, arrayfun(@(d) sprintf('\\xi_%d', d), 1:raw_num_sig, 'UniformOutput', false));
     xtickangle(ax, 0);
     xlabel(ax, 'Spatial Direction', 'FontSize', 18, 'FontWeight', 'bold');
     
@@ -2930,9 +2920,9 @@ for g_chk = 1:length(subj_group_names)
     for b_chk = bands_4a
         b_name = b_chk{1};
         if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g_chk
-            m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean(:, 1:num_sig);
-            se_val = aggregate_log_r.(b_name).cohort(g_chk).se(:, 1:num_sig);
-            all_y_4a = [all_y_4a; m_val(:) + se_val(:); m_val(:) - se_val(:)]; %#ok<AGROW>
+            m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean(:, 1:raw_num_sig);
+            se_val = aggregate_log_r.(b_name).cohort(g_chk).se(:, 1:raw_num_sig);
+            all_y_4a = [all_y_4a; m_val(:) + se_val(:); m_val(:) - se_val(:)]; 
         end
     end
 end
@@ -2973,35 +2963,50 @@ for g = 1:length(subj_group_names)
                 c_idx = find(strcmp(cfg.all_conds, c_key));
                 if isempty(c_idx), continue; end
                 
-                x_jitter = (1:num_sig) + (i - 1.5) * 0.12;
+                x_jitter = (1:raw_num_sig) + (i - 1.5) * 0.12;
                 col_c    = cond_colors(c_key);
                 
-                errorbar(ax_del, x_jitter, grp_m(c_idx, 1:num_sig), grp_se(c_idx, 1:num_sig), ...
+                errorbar(ax_del, x_jitter, grp_m(c_idx, 1:raw_num_sig), grp_se(c_idx, 1:raw_num_sig), ...
                     'LineStyle', '-', 'Marker', 'o', 'Color', col_c, 'LineWidth', 2.8, ...
                     'MarkerSize', 10, 'MarkerFaceColor', col_c, 'DisplayName', clean_name(c_key));
                 
                 % Subject-level TWO-TAILED Wilcoxon Signed-Rank Test vs. 0 (Cued baseline)
                 if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
                     s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
+                    p_dirs = ones(1, num_sig);
                     for k = 1:num_sig
                         dist = squeeze(s_data(c_idx, k, :));
                         dist = dist(~isnan(dist));
                         if length(dist) > 1
-                            p_val = signrank(dist, 0, 'tail', 'both');
-                            if p_val < 0.05
-                                star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                                y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                                v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                                text(ax_del, x_jitter(k), y_pos, star, 'Color', 'k', 'FontSize', 22, ...
-                                    'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                            end
+                            p_dirs(k) = signrank(dist, 0, 'tail', 'both');
+                        end
+                    end
+                    
+                    % Benjamini-Hochberg FDR across the num_sig = 3 directions
+                    [p_sort, sort_idx] = sort(p_dirs);
+                    q_sort = p_sort .* (num_sig ./ (1:num_sig));
+                    for k = (num_sig - 1):-1:1
+                        q_sort(k) = min(q_sort(k), q_sort(k + 1));
+                    end
+                    q_dirs = ones(1, num_sig);
+                    q_dirs(sort_idx) = min(1, q_sort);
+                    
+                    % Choose p_dirs(k) for uncorrected stars, or q_dirs(k) for FDR-corrected stars:
+                    for k = 1:num_sig
+                        stat_val = p_dirs(k); % <--- Change to q_dirs(k) if you want FDR-corrected asterisks
+                        if stat_val < 0.05
+                            star = '*'; if stat_val < 0.01, star = '**'; end; if stat_val < 0.001, star = '***'; end
+                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
+                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
+                            text(ax_del, x_jitter(k), y_pos, star, 'Color', 'k', 'FontSize', 22, ...
+                                'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
                         end
                     end
                 end
             end
         end
         
-        grid(ax_del, 'on'); xlim(ax_del, [0.5, num_sig + 0.5]); xticks(ax_del, 1:num_sig);
+        grid(ax_del, 'on'); xlim(ax_del, [0.5, raw_num_sig + 0.5]); xticks(ax_del, 1:raw_num_sig);
         ylim(ax_del, [global_4a_ymin, global_4a_ymax]);
         ylabel(ax_del, 'log(r_i) \pm SEM', 'FontSize', 22, 'FontWeight', 'bold');
         title(ax_del, sprintf('%s — Delivered', b_title), 'FontSize', 21, 'FontWeight', 'bold');
@@ -3012,7 +3017,7 @@ for g = 1:length(subj_group_names)
         if r_idx < 3
             xticklabels(ax_del, {});
         else
-            xticklabels(ax_del, arrayfun(@(d) sprintf('\\xi_%d', d), 1:num_sig, 'UniformOutput', false));
+            xticklabels(ax_del, arrayfun(@(d) sprintf('\\xi_%d', d), 1:raw_num_sig, 'UniformOutput', false));
             xlabel(ax_del, 'Spatial Direction', 'FontSize', 22, 'FontWeight', 'bold');
         end
         
@@ -3029,35 +3034,50 @@ for g = 1:length(subj_group_names)
                 c_idx = find(strcmp(cfg.all_conds, c_key));
                 if isempty(c_idx), continue; end
                 
-                x_jitter = (1:num_sig) + (i - 1.5) * 0.12;
+                x_jitter = (1:raw_num_sig) + (i - 1.5) * 0.12;
                 col_c    = cond_colors(c_key);
                 
-                errorbar(ax_om, x_jitter, grp_m(c_idx, 1:num_sig), grp_se(c_idx, 1:num_sig), ...
+                errorbar(ax_om, x_jitter, grp_m(c_idx, 1:raw_num_sig), grp_se(c_idx, 1:raw_num_sig), ...
                     'LineStyle', '-', 'Marker', 's', 'Color', col_c, 'LineWidth', 2.8, ...
                     'MarkerSize', 10, 'MarkerFaceColor', col_c, 'DisplayName', clean_name(c_key));
                 
                 % Subject-level TWO-TAILED Wilcoxon Signed-Rank Test vs. 0 (Cued baseline)
                 if isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data')
                     s_data = aggregate_log_r.(b_name).cohort(g).subj_data;
+                    p_dirs = ones(1, num_sig);
                     for k = 1:num_sig
                         dist = squeeze(s_data(c_idx, k, :));
                         dist = dist(~isnan(dist));
                         if length(dist) > 1
-                            p_val = signrank(dist, 0, 'tail', 'both');
-                            if p_val < 0.05
-                                star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                                y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
-                                v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                                text(ax_om, x_jitter(k), y_pos, star, 'Color', 'k', 'FontSize', 22, ...
-                                    'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
-                            end
+                            p_dirs(k) = signrank(dist, 0, 'tail', 'both');
+                        end
+                    end
+                    
+                    % Benjamini-Hochberg FDR across the num_sig = 3 directions
+                    [p_sort, sort_idx] = sort(p_dirs);
+                    q_sort = p_sort .* (num_sig ./ (1:num_sig));
+                    for k = (num_sig - 1):-1:1
+                        q_sort(k) = min(q_sort(k), q_sort(k + 1));
+                    end
+                    q_dirs = ones(1, num_sig);
+                    q_dirs(sort_idx) = min(1, q_sort);
+                    
+                    % Choose p_dirs(k) for uncorrected stars, or q_dirs(k) for FDR-corrected stars:
+                    for k = 1:num_sig
+                        stat_val = p_dirs(k); % <--- Change to q_dirs(k) if you want FDR-corrected asterisks
+                        if stat_val < 0.05
+                            star = '*'; if stat_val < 0.01, star = '**'; end; if stat_val < 0.001, star = '***'; end
+                            y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
+                            v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
+                            text(ax_del, x_jitter(k), y_pos, star, 'Color', 'k', 'FontSize', 22, ...
+                                'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
                         end
                     end
                 end
             end
         end
         
-        grid(ax_om, 'on'); xlim(ax_om, [0.5, num_sig + 0.5]); xticks(ax_om, 1:num_sig);
+        grid(ax_om, 'on'); xlim(ax_om, [0.5, raw_num_sig + 0.5]); xticks(ax_om, 1:raw_num_sig);
         ylim(ax_om, [global_4a_ymin, global_4a_ymax]);
         title(ax_om, sprintf('%s — Omitted / Delayed', b_title), 'FontSize', 21, 'FontWeight', 'bold');
         
@@ -3067,7 +3087,7 @@ for g = 1:length(subj_group_names)
         if r_idx < 3
             xticklabels(ax_om, {});
         else
-            xticklabels(ax_om, arrayfun(@(d) sprintf('\\xi_%d', d), 1:num_sig, 'UniformOutput', false));
+            xticklabels(ax_om, arrayfun(@(d) sprintf('\\xi_%d', d), 1:raw_num_sig, 'UniformOutput', false));
             xlabel(ax_om, 'Spatial Direction', 'FontSize', 22, 'FontWeight', 'bold');
         end
     end
@@ -3312,7 +3332,7 @@ for b = 1:length(plot_bands)
         p_dirs   = ones(cfg.m, 1);
         if c_i > 1
             % Inside the Table 1 loop (Geometry section):
-            for k_d = 1:num_sig
+            for k_d = 1:raw_num_sig
                 d_vec = squeeze(LR_mat(c_i, k_d, :));
                 p_dirs(k_d) = signrank(d_vec, 0, 'tail', 'both'); % Two-tailed
             end
@@ -3371,7 +3391,7 @@ fprintf('  -> Successfully exported Table 1 to: %s\n', fullfile(output_path, 'Ta
 %% =========================================================================
 % Toggle statistical tail & number of spatial directions to report:
 use_two_tailed = true;  % true = two-tailed signrank (matches updated Fig 4A); false = one-tailed (matches old screenshot)
-m_dirs         = num_sig; % Set to 3 (for Xi_1..Xi_3) or 5 (for Xi_1..Xi_5)
+m_dirs         = raw_num_sig; % Set to 3 (for Xi_1..Xi_3) or 5 (for Xi_1..Xi_5)
 
 if use_two_tailed
     tail_label = 'TWO-TAILED';
@@ -3475,7 +3495,7 @@ for b_i = 1:length(supp_bands)
                 means_k(k), sems_k(k), p_dirs(k), p_star, q_dirs(k), q_star);
             
             st_dirs{row_idx, k} = cell_str; 
-            row_print = [row_print, sprintf(' | %-36s', cell_str)]; %#ok<AGROW>
+            row_print = [row_print, sprintf(' | %-36s', cell_str)]; 
         end
         fprintf('%s\n', row_print);
     end
