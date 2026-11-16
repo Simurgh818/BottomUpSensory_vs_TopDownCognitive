@@ -132,6 +132,10 @@ b_beta    = fir1(ord_beta,  [15 30] ./ fn, 'bandpass');
 smooth_win = round(0.100 * fs);
 smoothing_kernel = ones(smooth_win, 1) / smooth_win;
 
+% NaN-safe Helper: computes evoked Beta/Alpha envelope ratio from trial-averaged [nc x nt] ERPs
+compute_evoked_ratio = @(erp_a, erp_b, ~) ...
+    local_compute_evoked_ratio(erp_a, erp_b, smooth_win);
+
 cond_names = fieldnames(data_all_conds.Raw);
 for c = 1:length(cond_names)
     c_name = cond_names{c};
@@ -141,27 +145,22 @@ for c = 1:length(cond_names)
         
         [nc, nt, ntr] = size(raw_data);
         
-        X_perm = permute(raw_data, [2, 1, 3]);
-        X_2D   = reshape(X_perm, nt, nc * ntr);
+        X_perm   = permute(raw_data, [2, 1, 3]);
+        X_2D     = double(reshape(X_perm, nt, nc * ntr));
+        nan_mask = isnan(X_2D);
+        X_2D(nan_mask) = 0; % Prevent filtfilt from propagating NaNs across entire trials
         
-        X_alpha_2D = filtfilt(b_alpha, 1, double(X_2D));
-        X_beta_2D  = filtfilt(b_beta, 1, double(X_2D));
+        X_alpha_2D = filtfilt(b_alpha, 1, X_2D);
+        X_beta_2D  = filtfilt(b_beta,  1, X_2D);
+        
+        X_alpha_2D(nan_mask) = NaN;
+        X_beta_2D(nan_mask)  = NaN;
         
         data_all_conds.Alpha.(c_name){s} = permute(reshape(X_alpha_2D, nt, nc, ntr), [2, 1, 3]);
         data_all_conds.Beta.(c_name){s}  = permute(reshape(X_beta_2D, nt, nc, ntr), [2, 1, 3]);
-        
-        env_alpha = abs(hilbert(X_alpha_2D));
-        env_beta  = abs(hilbert(X_beta_2D));
-        
-        env_alpha_smooth = filtfilt(smoothing_kernel, 1, env_alpha);
-        env_beta_smooth  = filtfilt(smoothing_kernel, 1, env_beta);
-        
-        ratio_2D = env_beta_smooth ./ (env_alpha_smooth + eps);
-        data_all_conds.BetaAlphaRatio.(c_name){s} = permute(reshape(ratio_2D, nt, nc, ntr), [2, 1, 3]);
     end
 end
-disp('Filtering and Beta/Alpha Ratio computation complete.');
-
+disp('Zero-phase Alpha and Beta filtering complete (Beta/Alpha Ratio will be computed from trial-averaged ERPs).');
 %% =========================================================================
 %% SECTION 1: SYSTEM CONFIGURATION (SET TO 5 STATISTICALLY VALIDATED DIRECTIONS)
 %% =========================================================================
@@ -441,9 +440,9 @@ for s = all_target_subjs
         if isfield(data_all_conds.Beta, c_name)
             data_all_conds.Beta.(c_name){s}(:, :, bad_trials) = NaN;
         end
-        if isfield(data_all_conds.BetaAlphaRatio, c_name)
-            data_all_conds.BetaAlphaRatio.(c_name){s}(:, :, bad_trials) = NaN;
-        end
+        % if isfield(data_all_conds.BetaAlphaRatio, c_name)
+        %     data_all_conds.BetaAlphaRatio.(c_name){s}(:, :, bad_trials) = NaN;
+        % end
         
         screening_stats(s).(c_name).bad_trials      = bad_trials;
         screening_stats(s).(c_name).trial_max_amp   = a_32;
@@ -771,7 +770,13 @@ n_sub_half = 10; % 10 clean trials for Half A (basis) and 10 for Half B (project
 
 for band_idx = 1:length(bands_to_process)
     band_name = bands_to_process{band_idx};
-    current_data = data_all_conds.(band_name); 
+    is_evoked_ratio = strcmp(band_name, 'BetaAlphaRatio');
+    
+    if is_evoked_ratio
+        current_data = data_all_conds.Alpha; % Used only to check condition fields & valid trial indices
+    else
+        current_data = data_all_conds.(band_name);
+    end
     num_subjects = length(current_data.(cfg.ref_cond));
     
     for dest = dest_list
@@ -801,7 +806,13 @@ for band_idx = 1:length(bands_to_process)
             perm_c  = valid_c(randperm(length(valid_c)));
             n_h     = min(n_sub_half, floor(length(valid_c) / 2));
             
-            erp_cA  = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
+            if is_evoked_ratio
+                erp_a  = mean(data_all_conds.Alpha.(c_pname){s}(:, :, perm_c(1:n_h)), 3, 'omitnan');
+                erp_b  = mean(data_all_conds.Beta.(c_pname){s}(:, :, perm_c(1:n_h)),  3, 'omitnan');
+                erp_cA = compute_evoked_ratio(erp_a, erp_b, smoothing_kernel);
+            else
+                erp_cA = mean(raw_c(:, :, perm_c(1:n_h)), 3, 'omitnan');
+            end
             b_cA    = mean(erp_cA(:, iBase), 2, 'omitnan');
             X_cA_bc = erp_cA(:, iWin) - b_cA;
             X_concat_A = [X_concat_A, X_cA_bc]; 
@@ -1112,7 +1123,13 @@ for band_idx = 1:length(bands_to_process)
                 halfA_idx.(cond_p) = perm_cp(1:n_sub);
                 halfB_idx.(cond_p) = perm_cp(n_sub + (1:n_sub));
                 
-                erp_cpA  = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
+                if is_evoked_ratio
+                    erp_a   = mean(data_all_conds.Alpha.(cond_p){subj}(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
+                    erp_b   = mean(data_all_conds.Beta.(cond_p){subj}(:, :, halfA_idx.(cond_p)),  3, 'omitnan');
+                    erp_cpA = compute_evoked_ratio(erp_a, erp_b, smoothing_kernel);
+                else
+                    erp_cpA = mean(raw_cp(:, :, halfA_idx.(cond_p)), 3, 'omitnan');
+                end
                 b_cpA    = mean(erp_cpA(:, iBase), 2, 'omitnan');
                 X_cpA_bc = erp_cpA(:, iWin) - b_cpA;
                 X_concat_rep_A = [X_concat_rep_A, X_cpA_bc]; 
@@ -1138,10 +1155,16 @@ for band_idx = 1:length(bands_to_process)
             raw_ref = current_data.(cfg.ref_cond){subj};
             iA      = halfA_idx.(cfg.ref_cond);
             iB      = halfB_idx.(cfg.ref_cond);
-            erpB    = mean(raw_ref(:, :, iB), 3, 'omitnan');
-            bB      = mean(erpB(:, iBase), 2, 'omitnan');
-            XB      = erpB(:, iWin) - bB;
-            
+            if is_evoked_ratio
+                erpB_a = mean(data_all_conds.Alpha.(cfg.ref_cond){subj}(:, :, iB), 3, 'omitnan');
+                erpB_b = mean(data_all_conds.Beta.(cfg.ref_cond){subj}(:, :, iB),  3, 'omitnan');
+                erpB   = compute_evoked_ratio(erpB_a, erpB_b, smoothing_kernel);
+            else
+                erpB   = mean(raw_ref(:, :, iB), 3, 'omitnan');
+            end
+            bB = mean(erpB(:, iBase), 2, 'omitnan');
+            XB = erpB(:, iWin) - bB;
+
             v_ceil = sum((Xi_rep' * XB).^2, 2) / T_win; % [5 x 1]
             V_ceil = sum(v_ceil);                       % Scalar 5D ceiling
             
@@ -1158,9 +1181,15 @@ for band_idx = 1:length(bands_to_process)
                 
                 raw_cond = current_data.(cond){subj};
                 idx_k    = halfB_idx.(cond); % Clean held-out Half B
-                erp_k    = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
-                bk       = mean(erp_k(:, iBase), 2, 'omitnan');
-                Xk       = erp_k(:, iWin) - bk;
+                if is_evoked_ratio
+                    erp_k_a = mean(data_all_conds.Alpha.(cond){subj}(:, :, idx_k), 3, 'omitnan');
+                    erp_k_b = mean(data_all_conds.Beta.(cond){subj}(:, :, idx_k),  3, 'omitnan');
+                    erp_k   = compute_evoked_ratio(erp_k_a, erp_k_b, smoothing_kernel);
+                else
+                    erp_k   = mean(raw_cond(:, :, idx_k), 3, 'omitnan');
+                end
+                bk = mean(erp_k(:, iBase), 2, 'omitnan');
+                Xk = erp_k(:, iWin) - bk;
                 
                 split_vars.(cond) = idx_k;
                 v_k = sum((Xi_rep' * Xk).^2, 2) / T_win;
@@ -1227,7 +1256,13 @@ for band_idx = 1:length(bands_to_process)
             Xi_grp_c = Xi_grp_c ./ (vecnorm(Xi_grp_c) + eps);
             for c_idx = 1:length(cfg.all_conds)
                 cond = cfg.all_conds{c_idx};
-                erp_grp = mean(cat(3, current_data.(cond){grp_s}), 3, 'omitnan');
+                if is_evoked_ratio
+                    erp_grp_a = mean(cat(3, data_all_conds.Alpha.(cond){grp_s}), 3, 'omitnan');
+                    erp_grp_b = mean(cat(3, data_all_conds.Beta.(cond){grp_s}),  3, 'omitnan');
+                    erp_grp   = compute_evoked_ratio(erp_grp_a, erp_grp_b, smoothing_kernel);
+                else
+                    erp_grp   = mean(cat(3, current_data.(cond){grp_s}), 3, 'omitnan');
+                end
                 max_c = max(max_c, max(abs(Xi_grp_c(:, k)' * erp_grp)) * 0.5);
                 if k == 1
                     g_lr_m = mean(subj_mean_log_r(c_idx, :, grp_s), 3, 'omitnan');
@@ -1538,7 +1573,13 @@ for band_idx = 1:length(bands_to_process)
             y_row = bottom_margin + (num_sig - k_i) * (h_row + v_gap);
             
             % Canonical topoplot for direction Xi_k
-            erp_cued  = mean(cat(3, current_data.P1{curr_subjs}), 3, 'omitnan');
+            if is_evoked_ratio
+                erp_cued_a = mean(cat(3, data_all_conds.Alpha.P1{curr_subjs}), 3, 'omitnan');
+                erp_cued_b = mean(cat(3, data_all_conds.Beta.P1{curr_subjs}),  3, 'omitnan');
+                erp_cued   = compute_evoked_ratio(erp_cued_a, erp_cued_b, smoothing_kernel);
+            else
+                erp_cued   = mean(cat(3, current_data.P1{curr_subjs}), 3, 'omitnan');
+            end
             topo_vec  = xi * mean(xi' * erp_cued(:, topo_idx), 2, 'omitnan');
             max_abs_c = max(abs(topo_vec)) + eps;
             c_lim_k   = [-max_abs_c, max_abs_c];
@@ -2000,6 +2041,26 @@ warning(orig_warn_1B);
 %% =========================================================================
 %% LOCAL HELPER FUNCTIONS FOR FIGURE 1B WILCOXON BARS
 %% =========================================================================
+function ratio_erp = local_compute_evoked_ratio(erp_a, erp_b, smooth_win)
+    % Safely computes the smoothed Hilbert envelope ratio [nc x nt] without NaN propagation
+    erp_a_clean = double(erp_a);
+    erp_b_clean = double(erp_b);
+    erp_a_clean(~isfinite(erp_a_clean)) = 0;
+    erp_b_clean(~isfinite(erp_b_clean)) = 0;
+    
+    % Hilbert transform operates down columns (time = dim 1 after transpose)
+    env_a = abs(hilbert(erp_a_clean')); % [nt x nc]
+    env_b = abs(hilbert(erp_b_clean')); % [nt x nc]
+    
+    % Zero-phase moving-average smoothing (NaN-safe)
+    env_a_sm = movmean(env_a, smooth_win, 1, 'omitnan');
+    env_b_sm = movmean(env_b, smooth_win, 1, 'omitnan');
+    
+    % Robust floor to prevent 0/0 = NaN or Inf spikes
+    denom_floor = max(eps, 1e-6 * median(env_a_sm(:), 'omitnan'));
+    ratio_erp   = (env_b_sm ./ (env_a_sm + denom_floor))'; % Back to [nc x nt]
+end
+
 function sig_mask = apply_bh_fdr(p_vals, alpha_lvl, do_fdr)
     p_vals = p_vals(:)';
     if ~do_fdr
@@ -2585,189 +2646,6 @@ end
 warning(orig_warn_3b);
 
 %% =========================================================================
-%% MANUSCRIPT FIGURE 3C (FORMERLY 4B / 5B): GLOBAL SUBSPACE GAIN (G)
-%% (RAW LABEL, INDIVIDUAL SUBPLOT LEGENDS, STATISTICAL BRACKETS RESTORED)
-%% =========================================================================
-disp('Generating Manuscript Figure 3C: Global Subspace Gain...');
-
-plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
-band_labels = {'Raw', 'Alpha', 'Beta', sprintf('Beta/Alpha\nRatio')};
-
-conds_plot_A = [{'P1'}, cfg.group_A];                  
-conds_plot_B = [{'P1'}, intersect(cfg.group_B, cfg.all_conds, 'stable')]; 
-idx_P1       = find(strcmp(cfg.all_conds, 'P1'));
-
-% --- 1. COMPUTE SYNCHRONIZED Y-LIMIT ---
-global_max_gain = 0;
-for b = 1:length(plot_bands)
-    b_name = plot_bands{b};
-    if isfield(aggregate_G, b_name) && ~isempty(aggregate_G.(b_name).cohort)
-        m_v  = aggregate_G.(b_name).cohort(1).mean;
-        se_v = aggregate_G.(b_name).cohort(1).se;
-        global_max_gain = max(global_max_gain, max(m_v + se_v, [], 'omitnan'));
-    end
-end
-global_y_lim_3c = max(global_max_gain * 1.25, 2.5);
-
-fig3C = figure('Position', [100, 100, 1850, 780], 'Name', 'Figure 3C: Global Subspace Gain', 'Color', 'w', 'Visible', 'off');
-tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
-
-% =========================================================================
-% SUBPLOT 1: STIMULUS DELIVERED (INDEPENDENT NORTH LEGEND + WILCOXON BRACKETS)
-% =========================================================================
-ax_g1 = nexttile; hold(ax_g1, 'on');
-set(ax_g1, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
-
-nA = length(conds_plot_A);
-Y_mean_A = zeros(length(plot_bands), nA);
-Y_se_A   = zeros(length(plot_bands), nA);
-
-for b = 1:length(plot_bands)
-    b_name = plot_bands{b};
-    for i = 1:nA
-        c_idx = find(strcmp(cfg.all_conds, conds_plot_A{i}));
-        Y_mean_A(b, i) = aggregate_G.(b_name).cohort(1).mean(c_idx);
-        Y_se_A(b, i)   = aggregate_G.(b_name).cohort(1).se(c_idx);
-    end
-end
-
-b_hA = bar(ax_g1, Y_mean_A, 'grouped');
-for i = 1:nA
-    b_hA(i).FaceColor   = cond_colors(conds_plot_A{i});
-    b_hA(i).DisplayName = clean_name(conds_plot_A{i});
-end
-
-groupwidthA = min(0.8, nA / (nA + 1.5));
-get_xA = @(b, i) b - groupwidthA/2 + (2*i - 1) * groupwidthA / (2*nA);
-
-for i = 1:nA
-    x = (1:length(plot_bands)) - groupwidthA/2 + (2*i - 1) * groupwidthA / (2*nA);
-    errorbar(ax_g1, x, Y_mean_A(:, i), Y_se_A(:, i), 'k', 'LineStyle', 'none', 'LineWidth', 2.0, 'HandleVisibility', 'off');
-end
-yline(ax_g1, 1.0, 'k--', 'LineWidth', 2, 'DisplayName', 'Cued Baseline (1.0)');
-
-% --- SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
-for b = 1:length(plot_bands)
-    b_name = plot_bands{b};
-    if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
-    G_data = aggregate_G.(b_name).cohort(1).subj_data;
-    if size(G_data, 2) <= 1, continue; end
-    
-    band_max = max(Y_mean_A(b, :) + Y_se_A(b, :));
-    y_curr   = band_max + global_y_lim_3c * 0.04;
-    
-    for i = 2:nA
-        c_idx = find(strcmp(cfg.all_conds, conds_plot_A{i}));
-        if isempty(c_idx) || isempty(idx_P1), continue; end
-        
-        p_right = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'right');
-        p_left  = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'left');
-        p_val   = min(p_right, p_left);
-        
-        if p_val < 0.05
-            x1 = get_xA(b, 1); x2 = get_xA(b, i);
-            h_bar = global_y_lim_3c * 0.018;
-            plot(ax_g1, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
-                'k-', 'LineWidth', 1.3, 'HandleVisibility', 'off');
-            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-            text(ax_g1, mean([x1, x2]), y_curr + h_bar * 1.6, star, ...
-                'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-            y_curr = y_curr + global_y_lim_3c * 0.08;
-        end
-    end
-end
-
-xlim(ax_g1, [0.4, 4.6]);
-xticks(ax_g1, 1:length(plot_bands)); xticklabels(ax_g1, band_labels); xtickangle(ax_g1, 0);
-ylabel(ax_g1, 'Global Subspace Gain (G)', 'FontSize', 22, 'FontWeight', 'bold');
-ylim(ax_g1, [0, global_y_lim_3c]); grid(ax_g1, 'on');
-
-lgd1 = legend(ax_g1, 'Location', 'north', 'Box', 'on');
-lgd1.FontSize = 14;
-
-% =========================================================================
-% SUBPLOT 2: STIMULUS OMITTED / DELAYED (NO PHANTOM GAP + INDEPENDENT LEGEND)
-% =========================================================================
-ax_g2 = nexttile; hold(ax_g2, 'on');
-set(ax_g2, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
-
-nB = length(conds_plot_B);
-Y_mean_B = zeros(length(plot_bands), nB);
-Y_se_B   = zeros(length(plot_bands), nB);
-
-for b = 1:length(plot_bands)
-    b_name = plot_bands{b};
-    for i = 1:nB
-        c_idx = find(strcmp(cfg.all_conds, conds_plot_B{i}));
-        Y_mean_B(b, i) = aggregate_G.(b_name).cohort(1).mean(c_idx);
-        Y_se_B(b, i)   = aggregate_G.(b_name).cohort(1).se(c_idx);
-    end
-end
-
-b_hB = bar(ax_g2, Y_mean_B, 'grouped');
-for i = 1:nB
-    b_hB(i).FaceColor   = cond_colors(conds_plot_B{i});
-    b_hB(i).DisplayName = clean_name(conds_plot_B{i});
-end
-
-groupwidthB = min(0.8, nB / (nB + 1.5));
-get_xB = @(b, i) b - groupwidthB/2 + (2*i - 1) * groupwidthB / (2*nB);
-
-for i = 1:nB
-    x = (1:length(plot_bands)) - groupwidthB/2 + (2*i - 1) * groupwidthB / (2*nB);
-    errorbar(ax_g2, x, Y_mean_B(:, i), Y_se_B(:, i), 'k', 'LineStyle', 'none', 'LineWidth', 2.0, 'HandleVisibility', 'off');
-end
-yline(ax_g2, 1.0, 'k--', 'LineWidth', 2, 'DisplayName', 'Cued Baseline (1.0)');
-
-% --- SIGNIFICANCE BRACKETS (WILCOXON SIGNED-RANK VS P1) ---
-for b = 1:length(plot_bands)
-    b_name = plot_bands{b};
-    if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
-    G_data = aggregate_G.(b_name).cohort(1).subj_data;
-    if size(G_data, 2) <= 1, continue; end
-    
-    band_max = max(Y_mean_B(b, :) + Y_se_B(b, :));
-    y_curr   = band_max + global_y_lim_3c * 0.04;
-    
-    for i = 2:nB
-        c_idx = find(strcmp(cfg.all_conds, conds_plot_B{i}));
-        if isempty(c_idx) || isempty(idx_P1), continue; end
-        
-        p_right = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'right');
-        p_left  = signrank(G_data(c_idx, :), G_data(idx_P1, :), 'tail', 'left');
-        p_val   = min(p_right, p_left);
-        
-        if p_val < 0.05
-            x1 = get_xB(b, 1); x2 = get_xB(b, i);
-            h_bar = global_y_lim_3c * 0.018;
-            plot(ax_g2, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
-                'k-', 'LineWidth', 1.3, 'HandleVisibility', 'off');
-            star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-            text(ax_g2, mean([x1, x2]), y_curr + h_bar * 1.6, star, ...
-                'FontSize', 18, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-            y_curr = y_curr + global_y_lim_3c * 0.08;
-        end
-    end
-end
-
-xlim(ax_g2, [0.4, 4.6]);
-xticks(ax_g2, 1:length(plot_bands)); xticklabels(ax_g2, band_labels); xtickangle(ax_g2, 0);
-ylim(ax_g2, [0, global_y_lim_3c]); grid(ax_g2, 'on');
-
-lgd2 = legend(ax_g2, 'Location', 'north', 'Box', 'on');
-lgd2.FontSize = 14;
-
-set(fig3C, 'Color', 'w', 'InvertHardcopy', 'off');
-
-save_file_4b = fullfile(output_path, 'Figure_4B_MultiBand_Gain');
-try
-    exportgraphics(fig3C, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-    saveas(fig3C, [save_file_4b, '.svg']);
-catch
-end
-close(fig3C);
-
-%% =========================================================================
 %% FIGURE 3C: PER-DIRECTION DELTA LATENCY VIOLIN PLOTS (BLACK & PROMINENT BRACKETS)
 %% =========================================================================
 fprintf('\nGenerating Figure 3C: Per-Direction Delta Latency Violin Plots (Black & Prominent Brackets)...\n');
@@ -3069,7 +2947,7 @@ for g = 1:length(subj_group_names)
                             star = '*'; if stat_val < 0.01, star = '**'; end; if stat_val < 0.001, star = '***'; end
                             y_pos = grp_m(c_idx, k) + sign(grp_m(c_idx, k) + eps) * (grp_se(c_idx, k) + star_offset);
                             v_align = 'bottom'; if grp_m(c_idx, k) < 0, v_align = 'top'; end
-                            text(ax_del, x_jitter(k), y_pos, star, 'Color', 'k', 'FontSize', 22, ...
+                            text(ax_om, x_jitter(k), y_pos, star, 'Color', 'k', 'FontSize', 22, ...
                                 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'VerticalAlignment', v_align);
                         end
                     end
@@ -3106,103 +2984,335 @@ for g = 1:length(subj_group_names)
 end
 
 %% =========================================================================
-%% AGGREGATE FIGURE 4B (FORMERLY 5D): MULTI-BAND % SUSTAINED BAR PLOTS
+%% MANUSCRIPT FIGURE 4B: GLOBAL SUBSPACE GAIN (G) VIOLIN PLOTS
+%% (TWO-TAILED WILCOXON SIGNED-RANK TESTS VS. CUED BASELINE = 1.0)
 %% =========================================================================
-disp('Generating Figure 4B: Multi-Band Sustained % Bar Plots (Wilcoxon Signed-Rank)...');
+disp('Generating Manuscript Figure 4B: Global Subspace Gain Violin Plots (Two-Tailed Wilcoxon)...');
 
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
+band_labels = {'Raw', 'Alpha', 'Beta', sprintf('Beta/Alpha\nRatio')};
+
+conds_plot_A = [{'P1'}, cfg.group_A];                  
+conds_plot_B = [{'P1'}, intersect(cfg.group_B, cfg.all_conds, 'stable')]; 
+idx_P1       = find(strcmp(cfg.all_conds, 'P1'));
+
+% --- 1. COMPUTE SYNCHRONIZED Y-LIMIT ACROSS SUBJECT DATA ---
+global_max_gain = 0;
+for b = 1:length(plot_bands)
+    b_name = plot_bands{b};
+    if isfield(aggregate_G, b_name) && ~isempty(aggregate_G.(b_name).cohort)
+        s_mat = aggregate_G.(b_name).cohort(1).subj_data;
+        global_max_gain = max(global_max_gain, max(s_mat(:), [], 'omitnan'));
+    end
+end
+if isempty(global_max_gain) || ~isfinite(global_max_gain) || global_max_gain <= 0
+    global_max_gain = 2.0;
+end
+% Extra headroom so top-left ('northwest') legend never collides with Raw violins
+global_y_lim_4b = max(global_max_gain * 1.30, 2.6);
+
+fig4B_gain = figure('Position', [80, 80, 1900, 820], ...
+    'Name', 'Figure 4B: Global Subspace Gain Violins', 'Color', 'w', 'Visible', 'off');
+tiledlayout(1, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
+
+for panel_idx = 1:2
+    if panel_idx == 1
+        conds_panel = conds_plot_A; % {'P1', 'P2_500', 'P3_500'}
+    else
+        conds_panel = conds_plot_B; % {'P1', 'P2_2000', 'P3_missing'}
+    end
+    nC = length(conds_panel);
+    
+    ax_g = nexttile; hold(ax_g, 'on');
+    set(ax_g, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
+    
+    % Subtle vertical dividers between the 4 signal tiers
+    for b_div = 1:(length(plot_bands) - 1)
+        xline(ax_g, b_div + 0.5, ':', 'Color', [0.82 0.82 0.82], 'LineWidth', 1.3, 'HandleVisibility', 'off');
+    end
+    
+    % Cued reference baseline (G = 1.0)
+    h_base_line = yline(ax_g, 1.0, 'k--', 'LineWidth', 2.0, 'DisplayName', 'Cued Baseline (1.0)');
+    
+    groupwidth = min(0.80, nC / (nC + 1.5));
+    get_x_pos  = @(b, i) b - groupwidth/2 + (2*i - 1) * groupwidth / (2*nC);
+    violin_hw  = (groupwidth / (2 * nC)) * 0.82; % Half-width of each violin
+    
+    Y_mean_p = zeros(length(plot_bands), nC);
+    Y_se_p   = zeros(length(plot_bands), nC);
+    Y_top_p  = zeros(length(plot_bands), nC); % Tracks top of violin/points for bracket placement
+    h_lgd_p  = gobjects(1, nC);
+    
+    for b = 1:length(plot_bands)
+        b_name = plot_bands{b};
+        if ~isfield(aggregate_G, b_name) || isempty(aggregate_G.(b_name).cohort), continue; end
+        G_data = aggregate_G.(b_name).cohort(1).subj_data; % [5 conds x 12 subjs]
+        
+        for i = 1:nC
+            c_key = conds_panel{i};
+            c_idx = find(strcmp(cfg.all_conds, c_key));
+            col_c = cond_colors(c_key);
+            x_pos = get_x_pos(b, i);
+            
+            pts = G_data(c_idx, :);
+            pts = pts(isfinite(pts));
+            if isempty(pts), continue; end
+            
+            Y_mean_p(b, i) = mean(pts, 'omitnan');
+            Y_se_p(b, i)   = std(pts, 0, 'omitnan') / sqrt(length(pts));
+            Y_top_p(b, i)  = max(pts);
+            
+            % 1. Draw Smooth Symmetric Violin Envelope (tapers cleanly to 0 at tails)
+            if length(pts) > 2 && std(pts) > 1e-4
+                [f_dens, y_eval_v] = ksdensity(pts);
+                % Clip any negative density evaluation below 0
+                valid_v  = y_eval_v >= 0;
+                f_dens   = f_dens(valid_v);
+                y_eval_v = y_eval_v(valid_v);
+                
+                if max(f_dens) > 0
+                    f_norm = (f_dens / max(f_dens)) * violin_hw;
+                    h_patch = fill(ax_g, [x_pos - f_norm, fliplr(x_pos + f_norm)], ...
+                        [y_eval_v, fliplr(y_eval_v)], col_c, ...
+                        'FaceAlpha', 0.28, 'EdgeColor', col_c, 'LineWidth', 1.4, ...
+                        'DisplayName', clean_name(c_key));
+                    Y_top_p(b, i) = max(Y_top_p(b, i), max(y_eval_v(f_norm > 0.05 * violin_hw)));
+                    if b == 1
+                        h_lgd_p(i) = h_patch;
+                    else
+                        h_patch.HandleVisibility = 'off';
+                    end
+                end
+            end
+            
+            % 2. Overlay 12 Individual Participant Dots Inside the Violin
+            rng(300 * panel_idx + 50 * b + i);
+            x_jit = x_pos + (rand(size(pts)) - 0.5) * (violin_hw * 0.80);
+            h_sc = scatter(ax_g, x_jit, pts, 40, col_c, 'filled', ...
+                'MarkerFaceAlpha', 0.80, 'MarkerEdgeColor', 'k', 'LineWidth', 0.5, ...
+                'DisplayName', clean_name(c_key));
+            if b == 1 && ~isgraphics(h_lgd_p(i))
+                h_lgd_p(i) = h_sc;
+            else
+                h_sc.HandleVisibility = 'off';
+            end
+            
+            % 3. Horizontal Mean Bar & Vertical SEM Error Bar
+            plot(ax_g, [x_pos - violin_hw*0.75, x_pos + violin_hw*0.75], ...
+                [Y_mean_p(b, i), Y_mean_p(b, i)], 'k-', 'LineWidth', 2.8, 'HandleVisibility', 'off');
+            errorbar(ax_g, x_pos, Y_mean_p(b, i), Y_se_p(b, i), 'k', ...
+                'LineStyle', 'none', 'LineWidth', 1.8, 'CapSize', 4, 'HandleVisibility', 'off');
+        end
+        
+        % --- 4. TWO-TAILED WILCOXON SIGNED-RANK TESTS VS. P1 (G = 1.0) ---
+        if size(G_data, 2) > 1
+            band_top = max(Y_top_p(b, :));
+            y_curr   = band_top + global_y_lim_4b * 0.035;
+            
+            for i = 2:nC
+                c_idx = find(strcmp(cfg.all_conds, conds_panel{i}));
+                if isempty(c_idx) || isempty(idx_P1), continue; end
+                
+                vec_cond   = G_data(c_idx, :);
+                vec_ref    = G_data(idx_P1, :);
+                valid_pair = isfinite(vec_cond) & isfinite(vec_ref);
+                if sum(valid_pair) < 2, continue; end
+                
+                p_val = signrank(vec_cond(valid_pair), vec_ref(valid_pair), 'tail', 'both');
+                
+                if p_val < 0.05
+                    x1 = get_x_pos(b, 1); x2 = get_x_pos(b, i);
+                    h_bar = global_y_lim_4b * 0.018;
+                    plot(ax_g, [x1, x1, x2, x2], [y_curr, y_curr + h_bar, y_curr + h_bar, y_curr], ...
+                        'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
+                    text(ax_g, mean([x1, x2]), y_curr + h_bar * 1.4, star, ...
+                        'FontSize', 20, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    y_curr = y_curr + global_y_lim_4b * 0.075;
+                end
+            end
+        end
+    end
+    
+    xlim(ax_g, [0.4, length(plot_bands) + 0.6]);
+    xticks(ax_g, 1:length(plot_bands)); xticklabels(ax_g, band_labels); xtickangle(ax_g, 0);
+    if panel_idx == 1
+        ylabel(ax_g, 'Global Subspace Gain (G)', 'FontSize', 22, 'FontWeight', 'bold');
+    end
+    ylim(ax_g, [0, global_y_lim_4b]); grid(ax_g, 'on'); box(ax_g, 'off');
+    
+    % Legend positioned at top-left ('northwest')
+    valid_handles = [h_lgd_p(isgraphics(h_lgd_p)), h_base_line];
+    lgd = legend(ax_g, valid_handles, 'Location', 'northwest', 'Box', 'on');
+    lgd.FontSize = 14;
+end
+
+set(fig4B_gain, 'Color', 'w', 'InvertHardcopy', 'off');
+
+save_file_4b = fullfile(output_path, 'Figure_4B_MultiBand_Gain');
+try
+    exportgraphics(fig4B_gain, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+    saveas(fig4B_gain, [save_file_4b, '.svg']);
+    fprintf('  -> Successfully saved Figure 4B Violin Plot: %s\n', [save_file_4b, '.png']);
+catch
+end
+close(fig4B_gain);
+
+%% =========================================================================
+%% AGGREGATE FIGURE 4C (FORMERLY 4B / 5D): MULTI-BAND % SUSTAINED VIOLIN PLOTS
+%% (TWO-TAILED WILCOXON SIGNED-RANK TESTS)
+%% =========================================================================
+disp('Generating Figure 4C: Multi-Band Sustained % Violin Plots (Two-Tailed Wilcoxon Signed-Rank)...');
+
+plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
+band_labels_4c = {'Broadband', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)', 'Beta/Alpha Ratio'};
+
 idx_P1      = find(strcmp(cfg.all_conds, 'P1'));
 idx_P2_500  = find(strcmp(cfg.all_conds, 'P2_500'));
 idx_P3_500  = find(strcmp(cfg.all_conds, 'P3_500'));
 idx_P2_2000 = find(strcmp(cfg.all_conds, 'P2_2000'));
 idx_P3_mis  = find(strcmp(cfg.all_conds, 'P3_missing'));
 
+n_conds_4c  = length(cfg.all_conds); % 5 conditions
+groupwidth  = 0.76;
+get_x_pos   = @(b, c) b - groupwidth/2 + (2*c - 1) * groupwidth / (2*n_conds_4c);
+violin_hw   = (groupwidth / (2 * n_conds_4c)) * 0.84; % Half-width of each violin
+
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig4B = figure('Position', [100, 100, 1700, 880], ...
-        'Name', sprintf('Figure 4B: Sustained %s', cohort_str), 'Color', 'w', 'Visible', 'off');
-    hold on; 
-    set(gca, 'FontSize', 24, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
+    fig4C = figure('Position', [80, 80, 1800, 880], ...
+        'Name', sprintf('Figure 4C: Sustained Violin Plot (%s)', cohort_str), ...
+        'Color', 'w', 'Visible', 'off');
+    ax_4c = axes('Parent', fig4C, 'Color', 'w');
+    hold(ax_4c, 'on');
+    set(ax_4c, 'FontSize', 22, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
     
-    Y_mean = zeros(length(plot_bands), length(cfg.all_conds));
-    Y_se   = zeros(length(plot_bands), length(cfg.all_conds));
+    % Subtle vertical dividers between signal tiers
+    for b_div = 1:(length(plot_bands) - 1)
+        xline(ax_4c, b_div + 0.5, ':', 'Color', [0.80 0.80 0.80], 'LineWidth', 1.4, 'HandleVisibility', 'off');
+    end
+    
+    Y_mean = zeros(length(plot_bands), n_conds_4c);
+    Y_se   = zeros(length(plot_bands), n_conds_4c);
+    Y_max  = zeros(length(plot_bands), n_conds_4c);
+    h_lgd  = gobjects(1, n_conds_4c);
     
     for b = 1:length(plot_bands)
         b_name = plot_bands{b};
-        if isfield(aggregate_sust, b_name) && length(aggregate_sust.(b_name).cohort) >= g
-            Y_mean(b, :) = reshape(aggregate_sust.(b_name).cohort(g).mean, 1, []);
-            Y_se(b, :)   = reshape(aggregate_sust.(b_name).cohort(g).se, 1, []);
+        if ~isfield(aggregate_sust, b_name) || length(aggregate_sust.(b_name).cohort) < g
+            continue;
+        end
+        
+        % Subject-level sustained % matrix: [5 conds x 12 subjects]
+        sust_mat = aggregate_sust.(b_name).cohort(g).subj_data;
+        
+        for c = 1:n_conds_4c
+            cond_k = cfg.all_conds{c};
+            col_c  = cond_colors(cond_k);
+            x_pos  = get_x_pos(b, c);
+            
+            pts = sust_mat(c, :);
+            pts = pts(~isnan(pts));
+            if isempty(pts), continue; end
+            
+            Y_mean(b, c) = mean(pts, 'omitnan');
+            Y_se(b, c)   = std(pts, 0, 'omitnan') / sqrt(length(pts));
+            Y_max(b, c)  = max(pts);
+            
+            % 1. Draw Smooth Symmetric Violin Envelope
+            if length(pts) > 2 && std(pts) > 1e-4
+                y_min_v = max(0, min(pts) - 1.5 * std(pts));
+                y_max_v = min(68, max(pts) + 1.5 * std(pts));
+                y_grid  = linspace(y_min_v, y_max_v, 100);
+                [f_dens, y_eval_v] = ksdensity(pts, y_grid);
+                if max(f_dens) > 0
+                    f_norm = (f_dens / max(f_dens)) * violin_hw;
+                    h_patch = fill(ax_4c, [x_pos - f_norm, fliplr(x_pos + f_norm)], ...
+                        [y_eval_v, fliplr(y_eval_v)], col_c, ...
+                        'FaceAlpha', 0.28, 'EdgeColor', col_c, 'LineWidth', 1.4, ...
+                        'DisplayName', clean_name(cond_k));
+                    if b == 1
+                        h_lgd(c) = h_patch;
+                    else
+                        h_patch.HandleVisibility = 'off';
+                    end
+                end
+            end
+            
+            % 2. Overlay 12 Individual Participant Dots Inside the Violin
+            rng(500 * b + 20 * c);
+            x_jit = x_pos + (rand(size(pts)) - 0.5) * (violin_hw * 0.80);
+            h_sc = scatter(ax_4c, x_jit, pts, 42, col_c, 'filled', ...
+                'MarkerFaceAlpha', 0.80, 'MarkerEdgeColor', 'k', 'LineWidth', 0.5, ...
+                'DisplayName', clean_name(cond_k));
+            if b == 1 && ~isgraphics(h_lgd(c))
+                h_lgd(c) = h_sc;
+            else
+                h_sc.HandleVisibility = 'off';
+            end
+            
+            % 3. Horizontal Mean Bar + Vertical SEM Error Bar
+            plot(ax_4c, [x_pos - violin_hw*0.75, x_pos + violin_hw*0.75], ...
+                [Y_mean(b, c), Y_mean(b, c)], 'k-', 'LineWidth', 2.8, 'HandleVisibility', 'off');
+            errorbar(ax_4c, x_pos, Y_mean(b, c), Y_se(b, c), 'k', ...
+                'LineStyle', 'none', 'LineWidth', 1.8, 'CapSize', 4, 'HandleVisibility', 'off');
         end
     end
     
-    b_handle = bar(Y_mean, 'grouped');
+    xlim(ax_4c, [0.4, length(plot_bands) + 0.6]);
+    xticks(ax_4c, 1:length(plot_bands));
+    xticklabels(ax_4c, band_labels_4c);
+    ylabel(ax_4c, 'Sustained Baseline Shift (%)', 'FontSize', 26, 'FontWeight', 'bold');
     
-    for i = 1:length(b_handle)
-        cond_k = cfg.all_conds{i};
-        b_handle(i).FaceColor   = cond_colors(cond_k);
-        b_handle(i).DisplayName = clean_name(cond_k);
+    valid_lgd = h_lgd(isgraphics(h_lgd));
+    if ~isempty(valid_lgd)
+        lgd = legend(ax_4c, valid_lgd, 'Location', 'north', 'Box', 'off', 'Orientation', 'horizontal');
+        lgd.FontSize = 18;
     end
+    grid(ax_4c, 'on');
+    box(ax_4c, 'off');
     
-    ngroups    = size(Y_mean, 1);
-    nbars      = size(Y_mean, 2);
-    groupwidth = min(0.8, nbars / (nbars + 1.5));
-    get_x_pos  = @(b, c) b - groupwidth/2 + (2*c-1) * groupwidth / (2*nbars);
+    % Dynamically size y-axis ceiling to accommodate violin tops and brackets
+    y_ceil = max(62, ceil(max(Y_max(:)) * 1.18));
+    ylim(ax_4c, [0, y_ceil]);
     
-    for i = 1:nbars
-        x = (1:ngroups) - groupwidth/2 + (2*i-1) * groupwidth / (2*nbars);
-        errorbar(x, Y_mean(:, i), Y_se(:, i), 'k', 'LineStyle', 'none', 'LineWidth', 1.8, 'HandleVisibility', 'off');
-    end
-    
-    xticks(1:length(plot_bands));
-    xticklabels({'Broadband', 'Alpha', 'Beta', 'Beta/Alpha Ratio'});
-    % Jargon-free y-axis label replacing "Sustained Variance (%)"
-    ylabel('Sustained Baseline Shift (%)', 'FontSize', 26, 'FontWeight', 'bold');
-    
-    lgd = legend('Location', 'north', 'Box', 'off');
-    lgd.FontSize = 18;
-    grid on;
-    
-    ylim([0, 52]);
-    
-    plot([1.6, 3.4], [3.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    plot([1.6, 1.6], [2.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    plot([3.4, 3.4], [2.5, 3.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
-    % Jargon-free annotation replacing "Purely Phasic (< 3%)"
-    text(2.5, 5.5, 'Transient Waves Only (< 3% Baseline Shift)', 'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
+    % Bracket & Annotation for Narrowband AC Signals (Alpha & Beta)
+    plot(ax_4c, [1.6, 3.4], [4.5, 4.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot(ax_4c, [1.6, 1.6], [3.2, 4.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    plot(ax_4c, [3.4, 3.4], [3.2, 4.5], 'k-', 'LineWidth', 2, 'HandleVisibility', 'off');
+    text(ax_4c, 2.5, 6.8, 'Transient Waves Only (< 3% Baseline Shift)', ...
+        'FontSize', 20, 'Color', 'k', 'FontWeight', 'bold', ...
         'HorizontalAlignment', 'center', 'BackgroundColor', 'w', 'Margin', 2);
     
+    % =====================================================================
+    % TWO-TAILED WILCOXON SIGNED-RANK TESTS (`signrank(x, y)`)
+    % =====================================================================
     % 1. Raw Band (b=1): Cued vs Rand 500 & Cued vs Rand Missing
     if isfield(aggregate_sust, 'Raw') && length(aggregate_sust.Raw.cohort) >= g && ~isempty(idx_P1)
         raw_data = aggregate_sust.Raw.cohort(g).subj_data;
         if size(raw_data, 2) > 1 
-            y_shift = 4; 
+            y_shift = 3.0; 
             
             if ~isempty(idx_P3_500)
-                p_r1 = signrank(raw_data(idx_P1, :), raw_data(idx_P3_500, :), 'tail', 'right');
-                p_l1 = signrank(raw_data(idx_P1, :), raw_data(idx_P3_500, :), 'tail', 'left');
-                p1   = min(p_r1, p_l1);
-                
+                p1 = signrank(raw_data(idx_P1, :), raw_data(idx_P3_500, :), 'tail', 'both');
                 if ~isnan(p1) && p1 < 0.05
                     x1 = get_x_pos(1, idx_P1); x2 = get_x_pos(1, idx_P3_500);
-                    y  = max(Y_mean(1, [idx_P1, idx_P3_500]) + Y_se(1, [idx_P1, idx_P3_500])) + y_shift;
-                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    y  = max(Y_max(1, [idx_P1, idx_P3_500])) + y_shift;
+                    plot(ax_4c, [x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.8, 'HandleVisibility', 'off');
                     star = '*'; if p1 < 0.01, star = '**'; end; if p1 < 0.001, star = '***'; end
-                    text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-                    y_shift = y_shift + 8; 
+                    text(ax_4c, mean([x1, x2]), y+2.0, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    y_shift = y_shift + 6.0; 
                 end
             end
             
             if ~isempty(idx_P3_mis)
-                p_r2 = signrank(raw_data(idx_P1, :), raw_data(idx_P3_mis, :), 'tail', 'right');
-                p_l2 = signrank(raw_data(idx_P1, :), raw_data(idx_P3_mis, :), 'tail', 'left');
-                p2   = min(p_r2, p_l2);
-                
+                p2 = signrank(raw_data(idx_P1, :), raw_data(idx_P3_mis, :), 'tail', 'both');
                 if ~isnan(p2) && p2 < 0.05
                     x1 = get_x_pos(1, idx_P1); x2 = get_x_pos(1, idx_P3_mis);
-                    y  = max(Y_mean(1, [idx_P1, idx_P3_mis]) + Y_se(1, [idx_P1, idx_P3_mis])) + y_shift;
-                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    y  = max(Y_max(1, [idx_P1, idx_P3_mis])) + y_shift;
+                    plot(ax_4c, [x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.8, 'HandleVisibility', 'off');
                     star = '*'; if p2 < 0.01, star = '**'; end; if p2 < 0.001, star = '***'; end
-                    text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    text(ax_4c, mean([x1, x2]), y+2.0, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
                 end
             end
         end
@@ -3213,21 +3323,14 @@ for g = 1:length(subj_group_names)
         b_name = plot_bands{b_idx};
         if isfield(aggregate_sust, b_name) && length(aggregate_sust.(b_name).cohort) >= g && ~isempty(idx_P1)
             sust_data = aggregate_sust.(b_name).cohort(g).subj_data;
-            if size(sust_data, 2) > 1 
-                y_shift = 8; 
-                
-                if ~isempty(idx_P3_500)
-                    p_rab1 = signrank(sust_data(idx_P1, :), sust_data(idx_P3_500, :), 'tail', 'right');
-                    p_lab1 = signrank(sust_data(idx_P1, :), sust_data(idx_P3_500, :), 'tail', 'left');
-                    p_ab1  = min(p_rab1, p_lab1);
-                    
-                    if ~isnan(p_ab1) && p_ab1 < 0.05
-                        x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_500);
-                        y  = max(Y_mean(b_idx, [idx_P1, idx_P3_500]) + Y_se(b_idx, [idx_P1, idx_P3_500])) + y_shift;
-                        plot([x1, x1, x2, x2], [y, y+1, y+1, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
-                        star = '*'; if p_ab1 < 0.01, star = '**'; end; if p_ab1 < 0.001, star = '***'; end
-                        text(mean([x1, x2]), y+2, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-                    end
+            if size(sust_data, 2) > 1 && ~isempty(idx_P3_500)
+                p_ab1 = signrank(sust_data(idx_P1, :), sust_data(idx_P3_500, :), 'tail', 'both');
+                if ~isnan(p_ab1) && p_ab1 < 0.05
+                    x1 = get_x_pos(b_idx, idx_P1); x2 = get_x_pos(b_idx, idx_P3_500);
+                    y  = max(Y_max(b_idx, [idx_P1, idx_P3_500])) + 9.5;
+                    plot(ax_4c, [x1, x1, x2, x2], [y, y+1.0, y+1.0, y], 'k-', 'LineWidth', 1.8, 'HandleVisibility', 'off');
+                    star = '*'; if p_ab1 < 0.01, star = '**'; end; if p_ab1 < 0.001, star = '***'; end
+                    text(ax_4c, mean([x1, x2]), y+1.5, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
                 end
             end
         end
@@ -3237,47 +3340,41 @@ for g = 1:length(subj_group_names)
     if isfield(aggregate_sust, 'BetaAlphaRatio') && length(aggregate_sust.BetaAlphaRatio.cohort) >= g && ~isempty(idx_P2_2000)
         ratio_data = aggregate_sust.BetaAlphaRatio.cohort(g).subj_data;
         if size(ratio_data, 2) > 1
-            y_shift = 4;
+            y_shift = 2.5;
             
             if ~isempty(idx_P1)
-                p_r3 = signrank(ratio_data(idx_P2_2000, :), ratio_data(idx_P1, :), 'tail', 'right');
-                p_l3 = signrank(ratio_data(idx_P2_2000, :), ratio_data(idx_P1, :), 'tail', 'left');
-                p3   = min(p_r3, p_l3);
-                
+                p3 = signrank(ratio_data(idx_P2_2000, :), ratio_data(idx_P1, :), 'tail', 'both');
                 if ~isnan(p3) && p3 < 0.05
                     x1 = get_x_pos(4, idx_P1); x2 = get_x_pos(4, idx_P2_2000);
-                    y  = max(Y_mean(4, [idx_P1, idx_P2_2000]) + Y_se(4, [idx_P1, idx_P2_2000])) + y_shift;
-                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    y  = max(Y_max(4, [idx_P1, idx_P2_2000])) + y_shift;
+                    plot(ax_4c, [x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.8, 'HandleVisibility', 'off');
                     star = '*'; if p3 < 0.01, star = '**'; end; if p3 < 0.001, star = '***'; end
-                    text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
-                    y_shift = y_shift + 8;
+                    text(ax_4c, mean([x1, x2]), y+2.0, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    y_shift = y_shift + 5.5;
                 end
             end
             
             if ~isempty(idx_P2_500)
-                p_r4 = signrank(ratio_data(idx_P2_2000, :), ratio_data(idx_P2_500, :), 'tail', 'right');
-                p_l4 = signrank(ratio_data(idx_P2_2000, :), ratio_data(idx_P2_500, :), 'tail', 'left');
-                p4   = min(p_r4, p_l4);
-                
+                p4 = signrank(ratio_data(idx_P2_2000, :), ratio_data(idx_P2_500, :), 'tail', 'both');
                 if ~isnan(p4) && p4 < 0.05
                     x1 = get_x_pos(4, idx_P2_500); x2 = get_x_pos(4, idx_P2_2000);
-                    y  = max(Y_mean(4, [idx_P2_500, idx_P2_2000]) + Y_se(4, [idx_P2_500, idx_P2_2000])) + y_shift;
-                    plot([x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.5, 'HandleVisibility', 'off');
+                    y  = max(Y_max(4, [idx_P2_500, idx_P2_2000])) + y_shift;
+                    plot(ax_4c, [x1, x1, x2, x2], [y, y+1.5, y+1.5, y], 'k-', 'LineWidth', 1.8, 'HandleVisibility', 'off');
                     star = '*'; if p4 < 0.01, star = '**'; end; if p4 < 0.001, star = '***'; end
-                    text(mean([x1, x2]), y+3, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
+                    text(ax_4c, mean([x1, x2]), y+2.0, star, 'FontSize', 22, 'FontWeight', 'bold', 'HorizontalAlignment', 'center');
                 end
             end
         end
     end
     
-    set(fig4B, 'Color', 'w', 'InvertHardcopy', 'off');
+    set(fig4C, 'Color', 'w', 'InvertHardcopy', 'off');
     save_file_4c = fullfile(output_path, sprintf('Figure_4C_MultiBand_Sustained_%s', fig_tags{g}));
     try 
-        exportgraphics(fig4B, [save_file_4c, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-        saveas(fig4B, [save_file_4c, '.svg']);
+        exportgraphics(fig4C, [save_file_4c, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+        saveas(fig4C, [save_file_4c, '.svg']);
     catch
     end
-    close(fig4B);
+    close(fig4C);
 end
 
 %% =========================================================================
@@ -3359,13 +3456,11 @@ for b = 1:length(plot_bands)
             lat_str = 'N/A (Withheld)';
         end
         
-        % 4. Sustained Share (%, one-tailed signrank p vs P1 / Cued)
+        % 4. Sustained Share (%, two-tailed signrank p vs P1 / Cued)
         su_vals = SU_mat(c_i, :);
         p_su    = 1.000; 
         if c_i > 1
-            p_su_r = signrank(su_vals, SU_mat(1, :), 'tail', 'right');
-            p_su_l = signrank(su_vals, SU_mat(1, :), 'tail', 'left');
-            p_su   = min(p_su_r, p_su_l);
+            p_su = signrank(su_vals, SU_mat(1, :), 'tail', 'both');
         end
         sust_str = sprintf('%.2f +/- %.2f%% (p=%.3f)', mean(su_vals,'omitnan'), std(su_vals,0,'omitnan')/sqrt(length(su_vals)), p_su);
         
