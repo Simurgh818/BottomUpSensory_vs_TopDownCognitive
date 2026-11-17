@@ -2984,6 +2984,218 @@ for g = 1:length(subj_group_names)
 end
 
 %% =========================================================================
+%% MANUSCRIPT FIGURE 4A: UNIFIED SUBSPACE REDISTRIBUTION GEOMETRY log(r) VIOLINS
+%% (3x2 GRID: RAW [ROW 1], ALPHA [ROW 2], BETA [ROW 3] | TOP BRACKETS + STARS)
+%% =========================================================================
+fprintf('\nGenerating Unified Manuscript Figure 4A: log(r) Subspace Redistribution Violins (Top Brackets)...\n');
+
+bands_4a       = {'Raw', 'Alpha', 'Beta'};
+band_titles_4a = {'Broadband Raw', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)'};
+if ~exist('raw_num_sig', 'var') || isempty(raw_num_sig), raw_num_sig = 3; end
+num_sig = raw_num_sig;
+
+% --- 1. COMPUTE SYNCHRONIZED Y-LIMITS WITH HEADROOM FOR TOP BRACKETS ---
+all_y_4a = [];
+for g_chk = 1:length(subj_group_names)
+    for b_chk = bands_4a
+        b_name = b_chk{1};
+        if isfield(aggregate_log_r, b_name) && length(aggregate_log_r.(b_name).cohort) >= g_chk
+            if isfield(aggregate_log_r.(b_name).cohort(g_chk), 'subj_data')
+                s_mat = aggregate_log_r.(b_name).cohort(g_chk).subj_data(:, 1:raw_num_sig, :);
+                all_y_4a = [all_y_4a; s_mat(:)]; %#ok<AGROW>
+            else
+                m_val  = aggregate_log_r.(b_name).cohort(g_chk).mean(:, 1:raw_num_sig);
+                se_val = aggregate_log_r.(b_name).cohort(g_chk).se(:, 1:raw_num_sig);
+                all_y_4a = [all_y_4a; m_val(:) + se_val(:); m_val(:) - se_val(:)]; %#ok<AGROW>
+            end
+        end
+    end
+end
+all_y_4a = all_y_4a(isfinite(all_y_4a));
+if isempty(all_y_4a), all_y_4a = [-1.0, 1.0]; end
+global_4a_ymin = min(-2.1, floor(min(all_y_4a) * 1.15 * 2) / 2);
+global_4a_ymax = max( 1.45, ceil(max(all_y_4a) * 1.25 * 2) / 2); % Headroom up to 1.45 for top brackets
+
+dx_offset_4a = [-0.18, +0.18]; % Horizontal offsets for condition 1 (left) and condition 2 (right)
+violin_hw_4a = 0.14;           % Half-width of each individual violin
+
+for g = 1:length(subj_group_names)
+    cohort_str = strrep(subj_group_names{g}, '_', ' ');
+    
+    % Canvas sized for 3 rows x 2 columns (1650 px wide x 1400 px tall)
+    fig4A_comb = figure('Position', [100, 40, 1650, 1400], ...
+        'Name', sprintf('Figure 4A: Unified Subspace Redistribution Violins — %s', cohort_str), ...
+        'Color', 'w', 'Visible', 'off');
+    tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
+    
+    for r_idx = 1:3
+        b_name  = bands_4a{r_idx};
+        b_title = band_titles_4a{r_idx};
+        has_band_data = isfield(aggregate_log_r, b_name) && ...
+                        length(aggregate_log_r.(b_name).cohort) >= g && ...
+                        isfield(aggregate_log_r.(b_name).cohort(g), 'subj_data');
+        if has_band_data
+            s_data = aggregate_log_r.(b_name).cohort(g).subj_data; % [nConds x m x nSubjs]
+        end
+        
+        for col_idx = 1:2
+            if col_idx == 1
+                cond_group  = cfg.group_A; % {'P2_500', 'P3_500'}
+                panel_label = sprintf('%s — Delivered', b_title);
+            else
+                cond_group  = cfg.group_B; % {'P2_2000', 'P3_missing'}
+                panel_label = sprintf('%s — Omitted / Delayed', b_title);
+            end
+            
+            ax_curr = nexttile; hold(ax_curr, 'on');
+            set(ax_curr, 'FontSize', 20, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
+            
+            % Cued reference line (log(r) = 0)
+            h_base_4a = yline(ax_curr, 0, 'k--', 'LineWidth', 2.0, 'DisplayName', 'Cued Baseline (0)');
+            
+            % Subtle vertical dividers between spatial directions
+            for k_div = 1:(raw_num_sig - 1)
+                xline(ax_curr, k_div + 0.5, ':', 'Color', [0.82 0.82 0.82], 'LineWidth', 1.2, 'HandleVisibility', 'off');
+            end
+            
+            h_lgd_4a = gobjects(1, length(cond_group));
+            
+            if has_band_data
+                for i = 1:length(cond_group)
+                    c_key = cond_group{i};
+                    c_idx = find(strcmp(cfg.all_conds, c_key));
+                    if isempty(c_idx), continue; end
+                    col_c = cond_colors(c_key);
+                    
+                    p_dirs   = ones(1, raw_num_sig);
+                    y_top_k  = zeros(1, raw_num_sig);
+                    
+                    for k = 1:raw_num_sig
+                        x_pos = k + dx_offset_4a(i);
+                        pts   = squeeze(s_data(c_idx, k, :));
+                        pts   = pts(isfinite(pts));
+                        if isempty(pts), continue; end
+                        
+                        m_val  = mean(pts, 'omitnan');
+                        se_val = std(pts, 0, 'omitnan') / sqrt(length(pts));
+                        y_top_k(k) = max(pts);
+                        
+                        % 1. Draw Smooth Symmetric Violin Envelope
+                        if length(pts) > 2 && std(pts) > 1e-4
+                            [f_dens, y_eval_v] = ksdensity(pts);
+                            % Keep violin top below bracket zone (1.15)
+                            valid_v  = (y_eval_v >= global_4a_ymin * 0.96) & (y_eval_v <= 1.12);
+                            f_dens   = f_dens(valid_v);
+                            y_eval_v = y_eval_v(valid_v);
+                            
+                            if ~isempty(f_dens) && max(f_dens) > 0
+                                f_norm = (f_dens / max(f_dens)) * violin_hw_4a;
+                                h_patch = fill(ax_curr, [x_pos - f_norm, fliplr(x_pos + f_norm)], ...
+                                    [y_eval_v, fliplr(y_eval_v)], col_c, ...
+                                    'FaceAlpha', 0.28, 'EdgeColor', col_c, 'LineWidth', 1.4, ...
+                                    'DisplayName', clean_name(c_key));
+                                vis_env = y_eval_v(f_norm > 0.05 * violin_hw_4a);
+                                if ~isempty(vis_env)
+                                    y_top_k(k) = max(y_top_k(k), max(vis_env));
+                                end
+                                if k == 1
+                                    h_lgd_4a(i) = h_patch;
+                                else
+                                    h_patch.HandleVisibility = 'off';
+                                end
+                            end
+                        end
+                        
+                        % 2. Overlay 12 Individual Participant Dots Inside the Violin
+                        rng(700 * r_idx + 100 * col_idx + 10 * k + i);
+                        x_jit = x_pos + (rand(size(pts)) - 0.5) * (violin_hw_4a * 0.80);
+                        h_sc = scatter(ax_curr, x_jit, pts, 38, col_c, 'filled', ...
+                            'MarkerFaceAlpha', 0.80, 'MarkerEdgeColor', 'k', 'LineWidth', 0.5, ...
+                            'DisplayName', clean_name(c_key));
+                        if k == 1 && ~isgraphics(h_lgd_4a(i))
+                            h_lgd_4a(i) = h_sc;
+                        else
+                            h_sc.HandleVisibility = 'off';
+                        end
+                        
+                        % 3. Horizontal Mean Bar & Vertical SEM Error Bar
+                        plot(ax_curr, [x_pos - violin_hw_4a*0.75, x_pos + violin_hw_4a*0.75], ...
+                            [m_val, m_val], 'k-', 'LineWidth', 2.8, 'HandleVisibility', 'off');
+                        errorbar(ax_curr, x_pos, m_val, se_val, 'k', ...
+                            'LineStyle', 'none', 'LineWidth', 1.8, 'CapSize', 4, 'HandleVisibility', 'off');
+                        
+                        % 4. Two-Tailed Wilcoxon Signed-Rank Test vs. 0
+                        if length(pts) > 1
+                            p_dirs(k) = signrank(pts, 0, 'tail', 'both');
+                        end
+                    end
+                    
+                    % Benjamini-Hochberg FDR across the raw_num_sig = 3 directions
+                    [p_sort, sort_idx] = sort(p_dirs);
+                    q_sort = p_sort .* (raw_num_sig ./ (1:raw_num_sig));
+                    for k = (raw_num_sig - 1):-1:1
+                        q_sort(k) = min(q_sort(k), q_sort(k + 1));
+                    end
+                    q_dirs = ones(1, raw_num_sig);
+                    q_dirs(sort_idx) = min(1, q_sort);
+                    
+                    % 5. Draw Prominent Black Bracket + Large Asterisks on TOP of Each Significant Violin
+                    for k = 1:raw_num_sig
+                        stat_val = p_dirs(k); % Change to q_dirs(k) if you want FDR-corrected stars
+                        if stat_val < 0.05
+                            x_pos    = k + dx_offset_4a(i);
+                            star     = '*'; if stat_val < 0.01, star = '**'; end; if stat_val < 0.001, star = '***'; end
+                            
+                            % Place bracket cleanly right above the top of the violin
+                            by_base  = max(y_top_k(k) + 0.08, 0.90);
+                            by_tick  = by_base - 0.05;
+                            bx_left  = x_pos - violin_hw_4a * 0.95;
+                            bx_right = x_pos + violin_hw_4a * 0.95;
+                            
+                            plot(ax_curr, [bx_left, bx_left, bx_right, bx_right], ...
+                                     [by_tick, by_base, by_base, by_tick], ...
+                                     'k-', 'LineWidth', 2.5, 'HandleVisibility', 'off');
+                            text(ax_curr, x_pos, by_base + 0.01, star, 'FontSize', 26, 'FontWeight', 'bold', ...
+                                'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'Color', 'k');
+                        end
+                    end
+                end
+            end
+            
+            grid(ax_curr, 'on'); box(ax_curr, 'off');
+            xlim(ax_curr, [0.4, raw_num_sig + 0.6]); xticks(ax_curr, 1:raw_num_sig);
+            ylim(ax_curr, [global_4a_ymin, global_4a_ymax]);
+            title(ax_curr, panel_label, 'FontSize', 21, 'FontWeight', 'bold');
+            
+            if col_idx == 1
+                ylabel(ax_curr, 'log(r_i)', 'FontSize', 22, 'FontWeight', 'bold');
+            end
+            if r_idx == 1
+                valid_h = [h_lgd_4a(isgraphics(h_lgd_4a)), h_base_4a];
+                legend(ax_curr, valid_h, 'Location', 'southwest', 'Box', 'on', 'FontSize', 14);
+            end
+            if r_idx < 3
+                xticklabels(ax_curr, {});
+            else
+                xticklabels(ax_curr, arrayfun(@(d) sprintf('\\xi_%d', d), 1:raw_num_sig, 'UniformOutput', false));
+                xlabel(ax_curr, 'Spatial Direction', 'FontSize', 22, 'FontWeight', 'bold');
+            end
+        end
+    end
+    
+    set(fig4A_comb, 'Color', 'w', 'InvertHardcopy', 'off');
+    
+    save_file_4a = fullfile(output_path, sprintf('Figure_4A_Unified_LogR_%s', fig_tags{g}));
+    try 
+        exportgraphics(fig4A_comb, [save_file_4a, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+        saveas(fig4A_comb, [save_file_4a, '.svg']);
+        fprintf('  -> Successfully saved Unified Figure 4A Violin Plot: %s\n', [save_file_4a, '.png']);
+    catch
+        saveas(fig4A_comb, [save_file_4a, '.png']);
+    end
+    close(fig4A_comb);
+end
+%% =========================================================================
 %% MANUSCRIPT FIGURE 4B: GLOBAL SUBSPACE GAIN (G) VIOLIN PLOTS
 %% (TWO-TAILED WILCOXON SIGNED-RANK TESTS VS. CUED BASELINE = 1.0)
 %% =========================================================================
