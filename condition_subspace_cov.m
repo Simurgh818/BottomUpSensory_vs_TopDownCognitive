@@ -1482,12 +1482,12 @@ for band_idx = 1:length(bands_to_process)
         end
 
         % -----------------------------------------------------------------
-        % 2. SUPPLEMENTAL FIGURE 3A: FULL TRAJECTORIES [-0.6 to 2.4 s]
+        % 2. SUPPLEMENTAL FIGURE 2: FULL TRAJECTORIES [-0.6 to 2.4 s]
         % -----------------------------------------------------------------
         grp_mean_traj = squeeze(mean(subj_mean_traj(:, :, :, curr_subjs), 4, 'omitnan')); 
         grp_sem_traj  = squeeze(std(subj_mean_traj(:, :, :, curr_subjs), 0, 4, 'omitnan')) ./ sqrt(curr_n);
         
-        figSupp3A = figure('Position', [100, 100, 1600, max(550, num_sig * 420)], 'Color', 'w', 'Visible', 'off');
+        figsupp2 = figure('Position', [100, 100, 1600, max(550, num_sig * 420)], 'Color', 'w', 'Visible', 'off');
         tiledlayout(num_sig, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
         
         for k_idx = 1:num_sig
@@ -1533,13 +1533,13 @@ for band_idx = 1:length(bands_to_process)
             if k_idx == 1, legend('Location', 'northeast', 'Box', 'off', 'FontSize', 15); end
             if k_idx == num_sig, xlabel('Time (s)', 'FontSize', 18, 'FontWeight', 'bold'); end
         end
-        set(figSupp3A, 'Color', 'w', 'InvertHardcopy', 'off');
+        set(figsupp2, 'Color', 'w', 'InvertHardcopy', 'off');
         save_supp_3a = fullfile(group_dir, sprintf('Supp_Fig3A_FullTrajectories_%s_%s', band_name, g_name));
-        try exportgraphics(figSupp3A, [save_supp_3a, '.png'], 'Resolution', 600, 'BackgroundColor', 'white'); saveas(figSupp3A, [save_supp_3a, '.svg']); catch, end
-        close(figSupp3A);
+        try exportgraphics(figsupp2, [save_supp_3a, '.png'], 'Resolution', 600, 'BackgroundColor', 'white'); saveas(figsupp2, [save_supp_3a, '.svg']); catch, end
+        close(figsupp2);
 
         % -----------------------------------------------------------------
-        % 3. MAIN FIGURE 3: EXPLICIT GEOMETRY, PARULA, WHITE BG, NO CLIPPING
+        % 3. FIGURE 3A: EXPLICIT GEOMETRY, PARULA, WHITE BG (+10 PT FONTS)
         % -----------------------------------------------------------------
         orig_warn_state = warning('off', 'all');
         Xi_bar = mean(Xi_aligned(:, :, curr_subjs), 3, 'omitnan');
@@ -1547,25 +1547,25 @@ for band_idx = 1:length(bands_to_process)
         topo_win_s = [0.2, 0.8];
         topo_idx   = find(time_s >= topo_win_s(1) & time_s <= topo_win_s(2));
 
-        % Canvas height scaled proportionally (350 px per row -> 1050 px for 3 rows)
-        fig34 = figure('Position', [40, 40, 1750, 350 * num_sig], 'Color', 'w', 'Visible', 'off');
+        % Canvas height scaled proportionally (380 px per row -> 1140 px for 3 rows)
+        fig34 = figure('Position', [40, 40, 1850, 380 * num_sig], 'Color', 'w', 'Visible', 'off');
         
-        % Vertical spacing coordinates (spacious bottom margin and 60 px row gap)
-        top_margin    = 0.040;
-        bottom_margin = 0.090; % Prevents bottom 'Time (s)' clipping
-        v_gap         = 0.060; % Prevents row-to-row collision
+        % Vertical spacing coordinates adjusted for +10 pt larger fonts
+        top_margin    = 0.045;
+        bottom_margin = 0.110; % Extra headroom for 28 pt 'Time (s)' and tick labels
+        v_gap         = 0.065; % Prevents row-to-row collision
         h_row         = (1.0 - top_margin - bottom_margin - (num_sig - 1) * v_gap) / num_sig;
         
-        % Horizontal geometry coordinates (ample left and right margins)
-        x_topo    = 0.060;     % Shifted right to prevent \xi label clipping
+        % Horizontal geometry coordinates
+        x_topo    = 0.065;     % Shifted right to prevent 32 pt \xi label clipping
         w_topo    = 0.080;
-        x_cb      = 0.148;
+        x_cb      = 0.150;
         w_cb      = 0.010;
         
-        x_del     = 0.220;
-        w_plot    = 0.330;
-        gap_plots = 0.065;
-        x_om      = x_del + w_plot + gap_plots; % Ends at 0.945 (leaves 55 px right margin)
+        x_del     = 0.255;     % Extra gap for 22 pt colorbar ticks & 28 pt ylabel
+        w_plot    = 0.310;
+        gap_plots = 0.075;
+        x_om      = x_del + w_plot + gap_plots; % Ends at 0.950
         
         for k_i = 1:num_sig
             k     = sig_components(k_i);
@@ -1584,16 +1584,18 @@ for band_idx = 1:length(bands_to_process)
             max_abs_c = max(abs(topo_vec)) + eps;
             c_lim_k   = [-max_abs_c, max_abs_c];
             
-            % COL 1: Topoplot for Direction Xi_k
+            % COL 1: Topoplot for Direction Xi_k (+10 pt -> 32 pt)
             ax_topo = axes('Position', [x_topo, y_row, w_topo, h_row], 'Color', 'w');
             topoplot(topo_vec, EEG.chanlocs, 'maplimits', c_lim_k, ...
                 'electrodes', 'on', 'style', 'map', 'shading', 'interp', 'colormap', parula(256));
             colormap(ax_topo, parula(256)); clim(ax_topo, c_lim_k);
-            text(ax_topo, -0.75, 0, sprintf('\\xi_%d', k), 'FontSize', 22, ...
+            text(ax_topo, -0.78, 0, sprintf('\\xi_%d', k), 'FontSize', 32, ...
                 'FontWeight', 'bold', 'HorizontalAlignment', 'center', 'Clipping', 'off');
             
+            % Colorbar (+10 pt -> 22 pt)
             cb_k = colorbar(ax_topo, 'Position', [x_cb, y_row + 0.015, w_cb, h_row - 0.030]);
-            cb_k.FontSize = 12;
+            cb_k.FontSize = 22;
+            cb_k.FontWeight = 'bold';
             
             % Synchronized y-limits for row k
             time_mask_zoom = (t_centers >= -0.1 & t_centers <= 1.0);
@@ -1601,10 +1603,10 @@ for band_idx = 1:length(bands_to_process)
             max_y   = max(zoom_up(:), [], 'omitnan') * 1.18;
             if isempty(max_y) || ~isfinite(max_y) || max_y <= 0, max_y = 10; end
             
-            % COL 2: Stimulus Delivered Trajectory
+            % COL 2: Stimulus Delivered Trajectory (+10 pt -> 28 pt axes/labels, 24 pt legend)
             ax_del = axes('Position', [x_del, y_row, w_plot, h_row], 'Color', 'w'); 
             hold(ax_del, 'on');
-            set(ax_del, 'FontSize', 18, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+            set(ax_del, 'FontSize', 28, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
             xline(ax_del, 0, 'k--', 'LineWidth', 1.4, 'HandleVisibility', 'off');
             
             for c_cell = {'P1', 'P2_500', 'P3_500'}
@@ -1619,20 +1621,20 @@ for band_idx = 1:length(bands_to_process)
             end
             xlim(ax_del, [-0.1, 1.0]); ylim(ax_del, [0, max_y]);
             xticks(ax_del, 0:0.2:1.0);
-            ylabel(ax_del, 'Projected Variance', 'FontSize', 18, 'FontWeight', 'bold');
-            if k_i == 1, legend(ax_del, 'Location', 'northeast', 'Box', 'off', 'FontSize', 14); end
+            ylabel(ax_del, 'Projected Variance', 'FontSize', 28, 'FontWeight', 'bold');
+            if k_i == 1, legend(ax_del, 'Location', 'northeast', 'Box', 'off', 'FontSize', 24); end
             
             if k_i < num_sig
                 xticklabels(ax_del, {});
             else
-                xlabel(ax_del, 'Time (s)', 'FontSize', 18, 'FontWeight', 'bold');
+                xlabel(ax_del, 'Time (s)', 'FontSize', 28, 'FontWeight', 'bold');
             end
             grid(ax_del, 'on');
             
-            % COL 3: Stimulus Omitted / Delayed Trajectory
+            % COL 3: Stimulus Omitted / Delayed Trajectory (+10 pt -> 28 pt axes/labels, 24 pt legend)
             ax_om = axes('Position', [x_om, y_row, w_plot, h_row], 'Color', 'w'); 
             hold(ax_om, 'on');
-            set(ax_om, 'FontSize', 18, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+            set(ax_om, 'FontSize', 28, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
             xline(ax_om, 0, 'k--', 'LineWidth', 1.4, 'HandleVisibility', 'off');
             
             for c_cell = {'P1', 'P2_2000', 'P3_missing'}
@@ -1647,12 +1649,12 @@ for band_idx = 1:length(bands_to_process)
             end
             xlim(ax_om, [-0.1, 1.0]); ylim(ax_om, [0, max_y]);
             xticks(ax_om, 0:0.2:1.0);
-            if k_i == 1, legend(ax_om, 'Location', 'northeast', 'Box', 'off', 'FontSize', 14); end
+            if k_i == 1, legend(ax_om, 'Location', 'northeast', 'Box', 'off', 'FontSize', 24); end
             
             if k_i < num_sig
                 xticklabels(ax_om, {});
             else
-                xlabel(ax_om, 'Time (s)', 'FontSize', 18, 'FontWeight', 'bold');
+                xlabel(ax_om, 'Time (s)', 'FontSize', 28, 'FontWeight', 'bold');
             end
             grid(ax_om, 'on');
         end
@@ -2505,7 +2507,7 @@ saveas(fig2A, fullfile(output_path, 'Figure_2A_ScreePlot.svg'));
 close(fig2A);
 
 %% =========================================================================
-%% NEW FIGURE 3B: SIGNIFICANT ALPHA (\xi_3) & BETA (\xi_2) TRAJECTORIES
+%% NEW FIGURE 3B: SIGNIFICANT ALPHA (\xi_3) & BETA (\xi_2) TRAJECTORIES (+10 PT FONTS)
 %% (1 ROW x 2 COLUMNS: ALPHA \xi_3 LEFT | BETA \xi_2 RIGHT, INDEPENDENT COLORBARS)
 %% =========================================================================
 fprintf('\nGenerating New Figure 3B: Significant Alpha (\\xi_3) and Beta (\\xi_2) Trajectories...\n');
@@ -2553,13 +2555,13 @@ if exist(res_alpha_file, 'file') && exist(sim_alpha_file, 'file') && ...
     topo_idx_3b    = find(time_s >= 0.2 & time_s <= 0.8);
     time_mask_zoom = (t_centers >= -0.1 & t_centers <= 1.0);
     
-    % --- RENDER 1x2 FIGURE 3B ---
-    fig3B_new = figure('Position', [40, 80, 2250, 520], ...
+    % --- RENDER 1x2 FIGURE 3B (Height increased to 600 px for +10 pt fonts) ---
+    fig3B_new = figure('Position', [40, 80, 2800, 700], ...
         'Name', 'Figure 3B: Significant Alpha and Beta Trajectories', 'Color', 'w', 'Visible', 'off');
     
-    y_row        = 0.18;
-    h_row        = 0.68;
-    col_x_starts = [0.025, 0.515]; 
+    y_row        = 0.22; % Extra bottom headroom for 38 pt 'Time (s)' and 36 pt ticks
+    h_row        = 0.62;
+    col_x_starts = [0.020, 0.515]; 
     
     for c_col = 1:2
         k_dir  = col_dirs(c_col);
@@ -2585,26 +2587,26 @@ if exist(res_alpha_file, 'file') && exist(sim_alpha_file, 'file') && ...
         local_clim = [-max_c, max_c];
         
         % Representative Topoplot with Independent Color Range
-        ax_t3b = axes('Position', [x_base, y_row, 0.09, h_row], 'Color', 'w');
+        ax_t3b = axes('Position', [x_base, y_row, 0.085, h_row], 'Color', 'w');
         topoplot(topo_vec, EEG.chanlocs, 'maplimits', local_clim, ...
             'electrodes', 'on', 'style', 'map', 'shading', 'interp', 'colormap', parula(256));
         colormap(ax_t3b, parula(256)); clim(ax_t3b, local_clim);
         
-        % Direction label placed cleanly on TOP of the topoplot
-        text(ax_t3b, 0, 0.72, sprintf('\\xi_%d', k_dir), 'FontSize', 24, ...
+        % Direction label on TOP of the topoplot (+10 pt -> 34 pt)
+        text(ax_t3b, 0, 0.72, sprintf('\\xi_%d', k_dir), 'FontSize', 34, ...
             'FontWeight', 'bold', 'HorizontalAlignment', 'center', ...
             'VerticalAlignment', 'bottom', 'Clipping', 'off');
         
-        % Colorbar (+10 pts font size = 24 pt)
-        cb_3b = colorbar(ax_t3b, 'Position', [x_base + 0.095, y_row + 0.06, 0.010, h_row - 0.12]);
+        % Colorbar (+10 pt -> 34 pt)
+        cb_3b = colorbar(ax_t3b, 'Position', [x_base + 0.090, y_row + 0.06, 0.010, h_row - 0.12]);
         cb_3b.Limits = local_clim;
-        cb_3b.FontSize = 24;
+        cb_3b.FontSize = 34;
         cb_3b.FontWeight = 'bold';
         
-        % Trajectory Subplot (width = 0.265 so right column ends at 0.965, preventing right-edge clipping)
-        ax_tr3b = axes('Position', [x_base + 0.185, y_row, 0.265, h_row], 'Color', 'w');
+        % Trajectory Subplot (+10 pt -> 36 pt ticks, 37 pt ylabel, 38 pt xlabel, 32 pt title, 26 pt legend)
+        ax_tr3b = axes('Position', [x_base + 0.195, y_row, 0.255, h_row], 'Color', 'w');
         hold(ax_tr3b, 'on');
-        set(ax_tr3b, 'FontSize', 26, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
+        set(ax_tr3b, 'FontSize', 36, 'FontWeight', 'bold', 'LineWidth', 1.4, 'TickDir', 'out', 'Color', 'w');
         xline(ax_tr3b, 0, 'k--', 'LineWidth', 1.4, 'HandleVisibility', 'off');
         
         zoom_up = grp_m([1,2,3], k_dir, time_mask_zoom) + grp_se([1,2,3], k_dir, time_mask_zoom);
@@ -2624,12 +2626,12 @@ if exist(res_alpha_file, 'file') && exist(sim_alpha_file, 'file') && ...
         
         xlim(ax_tr3b, [-0.1, 1.0]); ylim(ax_tr3b, [0, max_y]);
         xticks(ax_tr3b, 0:0.2:1.0);
-        ylabel(ax_tr3b, 'Projected Variance', 'FontSize', 27, 'FontWeight', 'bold');
-        xlabel(ax_tr3b, 'Time (s)', 'FontSize', 28, 'FontWeight', 'bold');
-        title(ax_tr3b, panel_title, 'FontSize', 22, 'FontWeight', 'bold');
+        ylabel(ax_tr3b, 'Projected Variance', 'FontSize', 37, 'FontWeight', 'bold');
+        xlabel(ax_tr3b, 'Time (s)', 'FontSize', 38, 'FontWeight', 'bold');
+        title(ax_tr3b, panel_title, 'FontSize', 32, 'FontWeight', 'bold');
         
         if c_col == 1
-            legend(ax_tr3b, 'Location', 'northeast', 'Box', 'off', 'FontSize', 16);
+            legend(ax_tr3b, 'Location', 'northeast', 'Box', 'off', 'FontSize', 26);
         end
         grid(ax_tr3b, 'on');
     end
@@ -2646,16 +2648,16 @@ end
 warning(orig_warn_3b);
 
 %% =========================================================================
-%% FIGURE 3C: PER-DIRECTION DELTA LATENCY VIOLIN PLOTS (BLACK & PROMINENT BRACKETS)
+%% FIGURE 3C: PER-DIRECTION DELTA LATENCY VIOLIN PLOTS (+15 PT FONTS)
 %% =========================================================================
-fprintf('\nGenerating Figure 3C: Per-Direction Delta Latency Violin Plots (Black & Prominent Brackets)...\n');
+fprintf('\nGenerating Figure 3C: Per-Direction Delta Latency Violin Plots (+15 pt Fonts)...\n');
 
 plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_titles = {'Broadband Raw', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)', 'Beta/Alpha Ratio'};
 raw_num_sig = 3;
 
-% Canvas sized for 4 frequency panels across the first 3 spatial directions
-fig3C = figure('Position', [40, 80, 2200, 900], ...
+% Widened and heightened canvas (2450 x 850) to accommodate +15 pt fonts across 4 panels
+fig3C = figure('Position', [30, 60, 2450, 700], ...
     'Name', 'Figure 3C: Per-Direction Delta Latency Violins', 'Color', 'w', 'Visible', 'off');
 tiledlayout(1, 4, 'TileSpacing', 'compact', 'Padding', 'normal');
 
@@ -2676,7 +2678,8 @@ for b = 1:length(plot_bands)
     end
     
     ax = nexttile; hold(ax, 'on');
-    set(ax, 'FontSize', 18, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
+    % Axes ticks increased by +15 pt (18 -> 33 pt)
+    set(ax, 'FontSize', 33, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
     
     % Cued reference line (0 ms)
     h_base = yline(ax, 0, 'k--', 'LineWidth', 1.8, 'DisplayName', 'Cued Baseline (0 ms)');
@@ -2736,13 +2739,12 @@ for b = 1:length(plot_bands)
             errorbar(ax, x_pos, m_val, se_val, 'k', 'LineStyle', 'none', ...
                 'LineWidth', 1.8, 'CapSize', 4, 'HandleVisibility', 'off');
             
-            % Wilcoxon Signed-Rank Test vs. 0 ms & Prominent Black Bracket
-            p_val = min(signrank(pts_12, 0, 'tail', 'right'), ...
-                        signrank(pts_12, 0, 'tail', 'left'));
+            % Two-tailed Wilcoxon Signed-Rank Test vs. 0 ms
+            p_val = signrank(pts_12, 0, 'tail', 'both');
             
             if p_val < 0.05
                 star = '*'; if p_val < 0.01, star = '**'; end; if p_val < 0.001, star = '***'; end
-                by_base  = 124 + (i - 1) * 11;
+                by_base  = 120 + (i - 1) * 11;
                 by_tick  = by_base - 8;
                 bx_left  = x_pos - violin_hw * 0.95;
                 bx_right = x_pos + violin_hw * 0.95;
@@ -2750,7 +2752,7 @@ for b = 1:length(plot_bands)
                 plot(ax, [bx_left, bx_left, bx_right, bx_right], ...
                          [by_tick, by_base, by_base, by_tick], ...
                          'k-', 'LineWidth', 2.5, 'HandleVisibility', 'off');
-                text(ax, x_pos, by_base + 1, star, 'FontSize', 26, 'FontWeight', 'bold', ...
+                text(ax, x_pos, by_base + 1, star, 'FontSize', 41, 'FontWeight', 'bold', ...
                     'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', 'Color', 'k');
             end
         end
@@ -2760,19 +2762,26 @@ for b = 1:length(plot_bands)
     xticks(ax, 1:raw_num_sig);
     xticklabels(ax, arrayfun(@(d) sprintf('\\xi_%d', d), 1:raw_num_sig, 'UniformOutput', false));
     xtickangle(ax, 0);
-    xlabel(ax, 'Spatial Direction', 'FontSize', 18, 'FontWeight', 'bold');
+    % xlabel increased by +15 pt (18 -> 33 pt)
+    xlabel(ax, 'Spatial Direction', 'FontSize', 30);
     
-    title(ax, band_titles{b}, 'FontSize', 21, 'FontWeight', 'bold');
+    % title increased by +15 pt (21 -> 36 pt)
+    title(ax, band_titles{b}, 'FontSize', 33);
     if b == 1
-        ylabel(ax, '\Delta Latency vs. Cued (ms)', 'FontSize', 22, 'FontWeight', 'bold');
-        legend(ax, [h_cond_lgd(1), h_cond_lgd(2), h_base], ...
-            {'Unpred. 500', 'Rand. 500', 'Cued (0 ms)'}, ...
-            'Location', 'southwest', 'Box', 'on', 'FontSize', 13);
+        % ylabel (+15 pt: 22 -> 37 pt) and legend (+15 pt: 13 -> 28 pt)
+        ylabel(ax, '\Delta Latency vs. Cued (ms)', 'FontSize', 37);
+        
     else
         yticklabels(ax, {});
     end
     grid(ax, 'on');
     box(ax, 'off');
+    if b==4
+        legend(ax, [h_cond_lgd(1), h_cond_lgd(2), h_base], ...
+            {'Unpred. 500', 'Rand. 500', 'Cued (0 ms)'}, ...
+            'Location', 'eastoutside', 'Box', 'on', 'FontSize', 28);
+    end
+
 end
 
 set(fig3C, 'Color', 'w', 'InvertHardcopy', 'off');
@@ -3023,7 +3032,7 @@ for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
     
     % Canvas sized for 3 rows x 2 columns (1650 px wide x 1400 px tall)
-    fig4A_comb = figure('Position', [100, 40, 1650, 1400], ...
+    fig4A_comb = figure('Position', [100, 40, 1750, 1400], ...
         'Name', sprintf('Figure 4A: Unified Subspace Redistribution Violins — %s', cohort_str), ...
         'Color', 'w', 'Visible', 'off');
     tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'normal');
@@ -3361,7 +3370,7 @@ end
 
 set(fig4B_gain, 'Color', 'w', 'InvertHardcopy', 'off');
 
-save_file_4b = fullfile(output_path, 'Figure_4B_MultiBand_Gain');
+save_file_4b = fullfile(output_path, 'Supplemental_Figure_2B_MultiBand_Sustained_All_Subject');
 try
     exportgraphics(fig4B_gain, [save_file_4b, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
     saveas(fig4B_gain, [save_file_4b, '.svg']);
@@ -3371,7 +3380,7 @@ end
 close(fig4B_gain);
 
 %% =========================================================================
-%% AGGREGATE FIGURE 4C (FORMERLY 4B / 5D): MULTI-BAND % SUSTAINED VIOLIN PLOTS
+%% Supplemental FIGURE 2B (FORMERLY 4C): MULTI-BAND % SUSTAINED VIOLIN PLOTS
 %% (TWO-TAILED WILCOXON SIGNED-RANK TESTS)
 %% =========================================================================
 disp('Generating Figure 4C: Multi-Band Sustained % Violin Plots (Two-Tailed Wilcoxon Signed-Rank)...');
@@ -3392,10 +3401,10 @@ violin_hw   = (groupwidth / (2 * n_conds_4c)) * 0.84; % Half-width of each violi
 
 for g = 1:length(subj_group_names)
     cohort_str = strrep(subj_group_names{g}, '_', ' ');
-    fig4C = figure('Position', [80, 80, 1800, 880], ...
+    supplFig2B = figure('Position', [80, 80, 1800, 880], ...
         'Name', sprintf('Figure 4C: Sustained Violin Plot (%s)', cohort_str), ...
         'Color', 'w', 'Visible', 'off');
-    ax_4c = axes('Parent', fig4C, 'Color', 'w');
+    ax_4c = axes('Parent', supplFig2B, 'Color', 'w');
     hold(ax_4c, 'on');
     set(ax_4c, 'FontSize', 22, 'FontWeight', 'bold', 'LineWidth', 1.5, 'TickDir', 'out', 'Color', 'w');
     
@@ -3579,21 +3588,26 @@ for g = 1:length(subj_group_names)
         end
     end
     
-    set(fig4C, 'Color', 'w', 'InvertHardcopy', 'off');
+    set(supplFig2B, 'Color', 'w', 'InvertHardcopy', 'off');
     save_file_4c = fullfile(output_path, sprintf('Figure_4C_MultiBand_Sustained_%s', fig_tags{g}));
     try 
-        exportgraphics(fig4C, [save_file_4c, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-        saveas(fig4C, [save_file_4c, '.svg']);
+        exportgraphics(supplFig2B, [save_file_4c, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
+        saveas(supplFig2B, [save_file_4c, '.svg']);
     catch
     end
-    close(fig4C);
+    close(supplFig2B);
 end
 
 %% =========================================================================
-%% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE (ONE-TAILED)
+%% GENERATE PNAS TABLE 1: SUMMARY OF GAIN, GEOMETRY, TIMING & SUSTAINED SHARE (TWO-TAILED)
 %% =========================================================================
+% Ensure raw_num_sig is locked to the 3 validated directions
+if ~exist('raw_num_sig', 'var') || isempty(raw_num_sig)
+    raw_num_sig = 3;
+end
+
 fprintf('\n===============================================================================================================================\n');
-fprintf(' PNAS TABLE 1: FREQUENCY-SPECIFIC DIVISION OF LABOR (ONE-TAILED WILCOXON SIGNED-RANK TESTS)\n');
+fprintf(' PNAS TABLE 1: FREQUENCY-SPECIFIC DIVISION OF LABOR (TWO-TAILED WILCOXON SIGNED-RANK TESTS ACROSS %d DIRECTIONS)\n', raw_num_sig);
 fprintf('===============================================================================================================================\n');
 
 % Fallback definition for clean_name if not already in memory
@@ -3626,49 +3640,47 @@ for b = 1:length(plot_bands)
         c_str  = cfg.all_conds{c_i};
         c_disp = clean_name(c_str); % Use descriptive condition label
         
-        % 1. Gain (G +/- SEM, one-tailed signrank p vs P1 / Cued)
+        % 1. Gain (G +/- SEM, TWO-TAILED signrank p vs P1 / Cued)
         g_vals = G_mat(c_i, :);
         p_g    = 1.000; 
         if c_i > 1
-            p_g_r = signrank(g_vals, G_mat(1, :), 'tail', 'right');
-            p_g_l = signrank(g_vals, G_mat(1, :), 'tail', 'left');
-            p_g   = min(p_g_r, p_g_l);
+            p_g = signrank(g_vals, G_mat(1, :), 'tail', 'both');
         end
         g_str = sprintf('%.2f +/- %.2f (p=%.3f)', mean(g_vals,'omitnan'), std(g_vals,0,'omitnan')/sqrt(length(g_vals)), p_g);
         
-        % 2. Geometry range across Xi_1..Xi_m + min one-tailed FDR-corrected q across directions
-        lr_means = mean(squeeze(LR_mat(c_i, 1:cfg.m, :)), 2, 'omitnan');
-        p_dirs   = ones(cfg.m, 1);
+        % 2. Geometry range across Xi_1..Xi_3 + min TWO-TAILED FDR-corrected q across the 3 directions
+        lr_means = mean(squeeze(LR_mat(c_i, 1:raw_num_sig, :)), 2, 'omitnan');
+        p_dirs   = ones(raw_num_sig, 1);
         if c_i > 1
-            % Inside the Table 1 loop (Geometry section):
             for k_d = 1:raw_num_sig
                 d_vec = squeeze(LR_mat(c_i, k_d, :));
-                p_dirs(k_d) = signrank(d_vec, 0, 'tail', 'both'); % Two-tailed
+                p_dirs(k_d) = signrank(d_vec, 0, 'tail', 'both');
             end
         end
-        % Benjamini-Hochberg FDR across m = 5 directions
+        % Benjamini-Hochberg FDR across raw_num_sig = 3 directions
         [p_sort, sort_idx] = sort(p_dirs);
-        q_sort = p_sort .* (cfg.m ./ (1:cfg.m)');
-        for k_d = cfg.m-1:-1:1, q_sort(k_d) = min(q_sort(k_d), q_sort(k_d+1)); end
-        q_dirs = ones(cfg.m, 1); q_dirs(sort_idx) = min(1, q_sort);
+        q_sort = p_sort .* (raw_num_sig ./ (1:raw_num_sig)');
+        for k_d = (raw_num_sig - 1):-1:1
+            q_sort(k_d) = min(q_sort(k_d), q_sort(k_d+1));
+        end
+        q_dirs = ones(raw_num_sig, 1);
+        q_dirs(sort_idx) = min(1, q_sort);
         
         geom_str = sprintf('[%+.2f, %+.2f] (min p=%.3f, q=%.3f)', min(lr_means), max(lr_means), min(p_dirs), min(q_dirs));
         
-        % 3. Latency shift (only for stimulus-delivered Cued, Unpred. 500, Rand. 500, one-tailed)
+        % 3. Latency shift (only for stimulus-delivered Cued, Unpred. 500, Rand. 500, TWO-TAILED)
         if ismember(c_str, {'P1', 'P2_500', 'P3_500'})
             lt_vals = LT_mat(c_i, :);
             p_lt    = 1.000; 
             if c_i > 1
-                p_lt_r = signrank(lt_vals, 0, 'tail', 'right');
-                p_lt_l = signrank(lt_vals, 0, 'tail', 'left');
-                p_lt   = min(p_lt_r, p_lt_l);
+                p_lt = signrank(lt_vals, 0, 'tail', 'both');
             end
             lat_str = sprintf('%+.1f +/- %.1f ms (p=%.3f)', mean(lt_vals,'omitnan'), std(lt_vals,0,'omitnan')/sqrt(length(lt_vals)), p_lt);
         else
             lat_str = 'N/A (Withheld)';
         end
         
-        % 4. Sustained Share (%, two-tailed signrank p vs P1 / Cued)
+        % 4. Sustained Share (%, TWO-TAILED signrank p vs P1 / Cued)
         su_vals = SU_mat(c_i, :);
         p_su    = 1.000; 
         if c_i > 1
@@ -3694,35 +3706,25 @@ writetable(Table1_PNAS, fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv
 fprintf('  -> Successfully exported Table 1 to: %s\n', fullfile(output_path, 'Table1_PNAS_Division_of_Labor.csv'));
 
 %% =========================================================================
-%% SUPPLEMENTAL TABLE 2: PER-DIRECTION LOG VARIANCE RATIOS (log r_i)
+%% SUPPLEMENTAL TABLE 2: PER-DIRECTION LOG VARIANCE RATIOS (log r_i, TWO-TAILED)
 %% =========================================================================
-% Toggle statistical tail & number of spatial directions to report:
-use_two_tailed = true;  % true = two-tailed signrank (matches updated Fig 4A); false = one-tailed (matches old screenshot)
-m_dirs         = raw_num_sig; % Set to 3 (for Xi_1..Xi_3) or 5 (for Xi_1..Xi_5)
-
-if use_two_tailed
-    tail_label = 'TWO-TAILED';
-else
-    tail_label = 'ONE-TAILED';
-end
+m_dirs     = raw_num_sig; % Locked to 3 (Xi_1..Xi_3)
+tail_label = 'TWO-TAILED';
 
 fprintf('\n========================================================================================================================================\n');
-fprintf(' SUPPLEMENTAL TABLE: PER-DIRECTION LOG VARIANCE RATIOS (log r_i +/- SEM) ACROSS XI_1..XI_%d (%s WILCOXON + BH-FDR)\n', m_dirs, tail_label);
+fprintf(' SUPPLEMENTAL TABLE 2: PER-DIRECTION LOG VARIANCE RATIOS (log r_i +/- SEM) ACROSS XI_1..XI_%d (TWO-TAILED WILCOXON + BH-FDR)\n', m_dirs);
 fprintf('========================================================================================================================================\n');
 
-% Bands to include (add 'Raw' and 'BetaAlphaRatio' if you want all 4 signals, or keep {'Alpha', 'Beta'})
 supp_bands = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 supp_band_labels = containers.Map( ...
     {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'}, ...
     {'Broadband Raw', 'Alpha (8-12 Hz)', 'Beta (15-30 Hz)', 'Beta/Alpha Ratio'});
 
-% Non-reference conditions (excluding P1 Cued reference)
 supp_conds = {'P2_500', 'P3_500', 'P2_2000', 'P3_missing'};
 supp_cond_labels = containers.Map( ...
     {'P2_500', 'P3_500', 'P2_2000', 'P3_missing'}, ...
     {'Unpred 500', 'Rand 500', 'Unpred 2000', 'Rand Null'});
 
-% Direction column headers matching your table
 dir_headers = { ...
     'Xi_1_Anterior_Posterior', ...
     'Xi_2_Centroparietal', ...
@@ -3750,7 +3752,7 @@ for b_i = 1:length(supp_bands)
         sems_k  = nan(1, m_dirs);
         p_dirs  = ones(1, m_dirs);
         
-        % 1. Compute mean, SEM, and Wilcoxon signed-rank p-value per direction
+        % 1. Compute mean, SEM, and TWO-TAILED Wilcoxon signed-rank p-value per direction
         for k = 1:m_dirs
             d_vec = squeeze(LR_mat(c_idx, k, :));
             d_vec = d_vec(~isnan(d_vec));
@@ -3760,13 +3762,7 @@ for b_i = 1:length(supp_bands)
             sems_k(k)  = std(d_vec, 0, 'omitnan') / sqrt(n_sub);
             
             if n_sub > 1
-                if use_two_tailed
-                    p_dirs(k) = signrank(d_vec, 0, 'tail', 'both');
-                else
-                    p_r = signrank(d_vec, 0, 'tail', 'right');
-                    p_l = signrank(d_vec, 0, 'tail', 'left');
-                    p_dirs(k) = min(p_r, p_l);
-                end
+                p_dirs(k) = signrank(d_vec, 0, 'tail', 'both');
             end
         end
         
@@ -3802,7 +3798,7 @@ for b_i = 1:length(supp_bands)
                 means_k(k), sems_k(k), p_dirs(k), p_star, q_dirs(k), q_star);
             
             st_dirs{row_idx, k} = cell_str; 
-            row_print = [row_print, sprintf(' | %-36s', cell_str)]; 
+            row_print = [row_print, sprintf(' | %-36s', cell_str)]; %#ok<AGROW>
         end
         fprintf('%s\n', row_print);
     end
@@ -3815,15 +3811,15 @@ for k = 1:m_dirs
     SuppTable_LogR.(dir_headers{k}) = st_dirs(:, k);
 end
 
-csv_supp_path  = fullfile(output_path, sprintf('Supplemental_Table_PerDirection_LogR_%dD_%s.csv', m_dirs, lower(tail_label)));
-xlsx_supp_path = fullfile(output_path, sprintf('Supplemental_Table_PerDirection_LogR_%dD_%s.xlsx', m_dirs, lower(tail_label)));
+csv_supp_path  = fullfile(output_path, sprintf('Supplemental_Table_2_PerDirection_LogR_%dD_%s.csv', m_dirs, lower(tail_label)));
+xlsx_supp_path = fullfile(output_path, sprintf('Supplemental_Table_2_PerDirection_LogR_%dD_%s.xlsx', m_dirs, lower(tail_label)));
 
 writetable(SuppTable_LogR, csv_supp_path);
 try writetable(SuppTable_LogR, xlsx_supp_path); catch, end
-fprintf('  -> Saved Per-Direction Log(r) Supplemental Table to:\n     %s\n', csv_supp_path);
+fprintf('  -> Saved Per-Direction Log(r) Supplemental Table 2 to:\n     %s\n', csv_supp_path);
 
 %% =========================================================================
-%% BAYES FACTOR (BF01) FOR BETA GAIN (ONE-TAILED WILCOXON + JZS/BIC BF01)
+%% BAYES FACTOR (BF01) FOR BETA GAIN (TWO-TAILED WILCOXON + JZS/BIC BF01)
 %% =========================================================================
 fprintf('\n--- BAYES FACTOR (BF_01, Evidence for Null Stability) IN BETA BAND ---\n');
 G_beta_subjs = aggregate_G.Beta.cohort(1).subj_data; % [5 conds x 12 subjs]
@@ -3831,18 +3827,18 @@ n_s = size(G_beta_subjs, 2);
 for c_i = 2:length(cfg.all_conds)
     diff_G = G_beta_subjs(c_i, :) - G_beta_subjs(1, :);
     [~, ~, ~, stats_t] = ttest(diff_G, 0);
-    p_sr_1t = min(signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'right'), ...
-                  signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'left'));
+    p_sr_2t = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'both');
     % BIC / unit-information Bayes factor approximation for BF01 (Wagenmakers, 2007; Rouder et al., 2009)
     bf01_G = sqrt(n_s) * (1 + (stats_t.tstat^2) / (n_s - 1))^(-n_s / 2);
-    fprintf('Beta Gain %-12s vs P1: Mean G = %.3f | 1-tailed signrank p = %.3f | t = %+.2f | BF_01 = %.2f\n', ...
-        cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr_1t, stats_t.tstat, bf01_G);
+    fprintf('Beta Gain %-12s vs P1: Mean G = %.3f | 2-tailed signrank p = %.3f | t = %+.2f | BF_01 = %.2f\n', ...
+        cfg.all_conds{c_i}, mean(G_beta_subjs(c_i, :)), p_sr_2t, stats_t.tstat, bf01_G);
 end
+
 %% =========================================================================
-%% SUPPLEMENTAL TABLE 3: PER-CONDITION BAYES FACTORS (BF01) FOR BETA GAIN
+%% SUPPLEMENTAL TABLE 3: PER-CONDITION BAYES FACTORS (BF01) FOR BETA GAIN (TWO-TAILED)
 %% =========================================================================
 fprintf('\n=========================================================================================================\n');
-fprintf(' SUPPLEMENTAL TABLE 2: PER-CONDITION BAYES FACTORS (BF_01) FOR BETA GAIN STABILITY\n');
+fprintf(' SUPPLEMENTAL TABLE 3: PER-CONDITION BAYES FACTORS (BF_01) FOR BETA GAIN STABILITY (TWO-TAILED WILCOXON)\n');
 fprintf('=========================================================================================================\n');
 
 G_beta_subjs = aggregate_G.Beta.cohort(1).subj_data; % [5 conds x 12 subjs]
@@ -3853,7 +3849,6 @@ supp_mean_gain = {};
 supp_diff_gain = {};
 supp_t_stat    = [];
 supp_df        = [];
-supp_p_sr_1t   = [];
 supp_p_sr_2t   = [];
 supp_bf01      = [];
 supp_evidence  = {};
@@ -3863,12 +3858,10 @@ for c_i = 2:length(cfg.all_conds)
     c_disp = clean_name(c_str);
     
     diff_G = G_beta_subjs(c_i, :) - G_beta_subjs(1, :);
-    [~, p_t, ~, stats_t] = ttest(diff_G, 0);
+    [~, ~, ~, stats_t] = ttest(diff_G, 0);
     
-    p_r = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'right');
-    p_l = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'left');
-    p_sr_1t = min(p_r, p_l);
-    p_sr_2t = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :));
+    % Two-tailed Wilcoxon signed-rank test vs. Cued (P1)
+    p_sr_2t = signrank(G_beta_subjs(c_i, :), G_beta_subjs(1, :), 'tail', 'both');
     
     % JZS / Unit-information Bayes factor approximation for BF01 (Wagenmakers, 2007; Rouder et al., 2009)
     bf01_val = sqrt(n_s) * (1 + (stats_t.tstat^2) / (n_s - 1))^(-n_s / 2);
@@ -3890,20 +3883,19 @@ for c_i = 2:length(cfg.all_conds)
     supp_diff_gain{end+1, 1} = diff_g_str;
     supp_t_stat(end+1, 1)    = round(stats_t.tstat, 2);
     supp_df(end+1, 1)        = n_s - 1;
-    supp_p_sr_1t(end+1, 1)   = round(p_sr_1t, 3);
     supp_p_sr_2t(end+1, 1)   = round(p_sr_2t, 3);
     supp_bf01(end+1, 1)      = round(bf01_val, 2);
     supp_evidence{end+1, 1}  = ev_str;
     
-    fprintf('%-14s | Gain: %-18s | Diff: %-18s | t(%d) = %+.2f | p(1-tail)=%.3f | BF_01 = %4.2f | %s\n', ...
-        c_disp, mean_g_str, diff_g_str, n_s-1, stats_t.tstat, p_sr_1t, bf01_val, ev_str);
+    fprintf('%-14s | Gain: %-18s | Diff: %-18s | t(%d) = %+.2f | p(2-tail)=%.3f | BF_01 = %4.2f | %s\n', ...
+        c_disp, mean_g_str, diff_g_str, n_s-1, stats_t.tstat, p_sr_2t, bf01_val, ev_str);
 end
 
-Supp_Table_2 = table(supp_cond, supp_mean_gain, supp_diff_gain, supp_t_stat, supp_df, ...
-    supp_p_sr_1t, supp_p_sr_2t, supp_bf01, supp_evidence, ...
+Supp_Table_3 = table(supp_cond, supp_mean_gain, supp_diff_gain, supp_t_stat, supp_df, ...
+    supp_p_sr_2t, supp_bf01, supp_evidence, ...
     'VariableNames', {'Condition', 'Beta_Gain_Mean_SEM', 'Delta_Gain_vs_Cued', 't_stat', 'df', ...
-                     'Wilcoxon_p_1tailed', 'Wilcoxon_p_2tailed', 'Bayes_Factor_BF01', 'Evidence_Interpretation'});
+                     'Wilcoxon_p_2tailed', 'Bayes_Factor_BF01', 'Evidence_Interpretation'});
 
-csv_supp2 = fullfile(output_path, 'Supplemental_Table_2_Beta_Gain_BF01.csv');
-writetable(Supp_Table_2, csv_supp2);
-fprintf('  -> Successfully saved Supplemental Table 2 to: %s\n', csv_supp2);
+csv_supp3 = fullfile(output_path, 'Supplemental_Table_3_Beta_Gain_BF01.csv');
+writetable(Supp_Table_3, csv_supp3);
+fprintf('  -> Successfully saved Supplemental Table 3 to: %s\n', csv_supp3);
