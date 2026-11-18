@@ -2556,8 +2556,12 @@ if exist(res_alpha_file, 'file') && exist(sim_alpha_file, 'file') && ...
     time_mask_zoom = (t_centers >= -0.1 & t_centers <= 1.0);
     
     % --- RENDER 1x2 FIGURE 3B (Height increased to 600 px for +10 pt fonts) ---
-    fig3B_new = figure('Position', [40, 80, 2800, 700], ...
-        'Name', 'Figure 3B: Significant Alpha and Beta Trajectories', 'Color', 'w', 'Visible', 'off');
+    % --- RENDER 1x2 FIGURE 3B (Locked 28:7 Aspect Ratio for both PNG & Vector SVG) ---
+    fig3B_new = figure('Units', 'pixels', 'Position', [40, 80, 2800, 700], ...
+        'Name', 'Figure 3B: Significant Alpha and Beta Trajectories', ...
+        'Color', 'w', 'Visible', 'off', ...
+        'PaperUnits', 'inches', 'PaperSize', [28, 7], ...
+        'PaperPosition', [0, 0, 28, 7], 'PaperPositionMode', 'manual');
     
     y_row        = 0.22; % Extra bottom headroom for 38 pt 'Time (s)' and 36 pt ticks
     h_row        = 0.62;
@@ -2640,9 +2644,15 @@ if exist(res_alpha_file, 'file') && exist(sim_alpha_file, 'file') && ...
     for a = 1:length(all_ax_3b), colormap(all_ax_3b(a), parula(256)); end
     set(fig3B_new, 'Color', 'w', 'InvertHardcopy', 'off');
     
+    % Re-enforce paper dimensions right before export in case topoplot modified figure properties
+    set(fig3B_new, 'PaperUnits', 'inches', 'PaperSize', [28, 7], ...
+        'PaperPosition', [0, 0, 28, 7], 'PaperPositionMode', 'manual');
+    
     save_3b_new = fullfile(output_path, 'Figure_3B_Alpha_Beta_Trajectories');
     exportgraphics(fig3B_new, [save_3b_new, '.png'], 'Resolution', 600, 'BackgroundColor', 'white');
-    saveas(fig3B_new, [save_3b_new, '.svg']);
+    
+    % Export SVG using print with locked PaperPosition so width is never squished
+    print(fig3B_new, [save_3b_new, '.svg'], '-dsvg', '-vector');
     close(fig3B_new);
 end
 warning(orig_warn_3b);
@@ -2656,9 +2666,12 @@ plot_bands  = {'Raw', 'Alpha', 'Beta', 'BetaAlphaRatio'};
 band_titles = {'Broadband Raw', 'Alpha (8–12 Hz)', 'Beta (15–30 Hz)', 'Beta/Alpha Ratio'};
 raw_num_sig = 3;
 
-% Widened and heightened canvas (2450 x 850) to accommodate +15 pt fonts across 4 panels
-fig3C = figure('Position', [30, 60, 2450, 700], ...
-    'Name', 'Figure 3C: Per-Direction Delta Latency Violins', 'Color', 'w', 'Visible', 'off');
+% Locked 26:7.5 Aspect Ratio (2600 x 750 px) for both PNG & Vector SVG
+fig3C = figure('Units', 'pixels', 'Position', [30, 60, 2200, 900], ...
+    'Name', 'Figure 3C: Per-Direction Delta Latency Violins', ...
+    'Color', 'w', 'Visible', 'off', ...
+    'PaperUnits', 'inches', 'PaperSize', [22, 9], ...
+    'PaperPosition', [0, 0, 22, 9], 'PaperPositionMode', 'manual');
 tiledlayout(1, 4, 'TileSpacing', 'compact', 'Padding', 'normal');
 
 % Compare the two delivered uncertain conditions against Cued baseline (0 ms)
@@ -2762,34 +2775,34 @@ for b = 1:length(plot_bands)
     xticks(ax, 1:raw_num_sig);
     xticklabels(ax, arrayfun(@(d) sprintf('\\xi_%d', d), 1:raw_num_sig, 'UniformOutput', false));
     xtickangle(ax, 0);
-    % xlabel increased by +15 pt (18 -> 33 pt)
-    xlabel(ax, 'Spatial Direction', 'FontSize', 30);
+    xlabel(ax, 'Spatial Direction', 'FontSize', 30, 'FontWeight', 'bold');
     
-    % title increased by +15 pt (21 -> 36 pt)
-    title(ax, band_titles{b}, 'FontSize', 33);
+    title(ax, band_titles{b}, 'FontSize', 33, 'FontWeight', 'bold');
     if b == 1
-        % ylabel (+15 pt: 22 -> 37 pt) and legend (+15 pt: 13 -> 28 pt)
-        ylabel(ax, '\Delta Latency vs. Cued (ms)', 'FontSize', 37);
-        
+        ylabel(ax, '\Delta Latency vs. Cued (ms)', 'FontSize', 37, 'FontWeight', 'bold');
     else
         yticklabels(ax, {});
     end
     grid(ax, 'on');
     box(ax, 'off');
-    if b==4
-        legend(ax, [h_cond_lgd(1), h_cond_lgd(2), h_base], ...
+    
+    if b == 4
+        lgd = legend(ax, [h_cond_lgd(1), h_cond_lgd(2), h_base], ...
             {'Unpred. 500', 'Rand. 500', 'Cued (0 ms)'}, ...
-            'Location', 'eastoutside', 'Box', 'on', 'FontSize', 28);
+            'Box', 'on', 'FontSize', 28);
+        % Dock to tiledlayout east so Panel 4 stays the same width as Panels 1-3
+        lgd.Layout.Tile = 'east';
     end
-
 end
 
 set(fig3C, 'Color', 'w', 'InvertHardcopy', 'off');
+set(fig3C, 'PaperUnits', 'inches', 'PaperSize', [22, 9], ...
+    'PaperPosition', [0, 0, 22, 9], 'PaperPositionMode', 'manual');
 
 fig3C_lat_png = fullfile(output_path, 'Figure_3C_PerDirection_Latency_Violin_600ppi.png');
 fig3C_lat_svg = fullfile(output_path, 'Figure_3C_PerDirection_Latency_Violin.svg');
 exportgraphics(fig3C, fig3C_lat_png, 'Resolution', 600, 'BackgroundColor', 'white');
-saveas(fig3C, fig3C_lat_svg);
+print(fig3C, fig3C_lat_svg, '-dsvg', '-vector');
 close(fig3C);
 
 %% =========================================================================
